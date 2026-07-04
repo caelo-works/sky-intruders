@@ -19,7 +19,7 @@ set -euo pipefail
 NAME="SkyIntruders"                          # class-case: entry file, package dir, icon
 SLUG="sky-intruders"                         # kebab-case: site slug
 TITLE="Sky Intruders"                        # human name
-DESCRIPTION_HTML="<p>One-paragraph description for the update dialog.</p>"
+DESCRIPTION_HTML="<p>Who crossed your photo last night? Sky Intruders scans your light frames for trails and identifies them: satellites by TLE cross-match (CelesTrak + SGP4), probable meteors by active-shower radiant alignment, plus slow movers as asteroid candidates. Renders a chronological night log with fun stats, persistent personal records and a Reddit-ready post.</p>"
 PI_VERSION_RANGE="1.9.4:1.9.99"
 # -----------------------------------------------------------------------------
 

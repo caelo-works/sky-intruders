@@ -10,11 +10,44 @@ permissions:
   contents: read
 
 jobs:
+  sidecar:
+    name: Sidecar (vet + race tests + gofmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sidecar/go.mod
+      - name: go vet
+        run: cd sidecar && go vet ./...
+      - name: go test -race
+        run: cd sidecar && go test -race ./...
+      - name: gofmt clean
+        run: |
+          bad="$(gofmt -l sidecar)"
+          [ -z "$bad" ] || { echo "::error::gofmt needed on: $bad"; exit 1; }
+
+  pjsr:
+    name: PJSR pure-logic tests (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run test harness
+        run: bash tests/run.sh
+
   package:
     name: Package builds + reproducible
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sidecar/go.mod
+      - name: Cross-compile the sidecar
+        run: bash scripts/build-sidecar.sh 0.0.0-ci
       - name: Build the update package
         run: bash scripts/build-update-package.sh 0.0.0-ci
       - name: Zip is reproducible (same content -> same SHA-1)
