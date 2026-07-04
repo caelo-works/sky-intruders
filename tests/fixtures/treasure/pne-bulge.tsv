@@ -1,0 +1,81 @@
+#
+#   VizieR Astronomical Server vizier.cds.unistra.fr
+#    Date: 2026-07-04T15:10:54 [V7.5.6]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-07-04T15:10:54	  Query execution date
+#INFO	request=https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=V/127A/mash1&-c=270.0+-30.0&-c.rd=2&-out.add=_RAJ,_DEJ&-out=PNG,Name,MajDiam,MinDiam&-out.max=40	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.5.6	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+#INFO	-c=270.000000-30.000000,rd=2.	
+#Constraint -out.max=40
+
+#RESOURCE=yCat_5127
+#Name: V/127A
+#Title: MASH Catalogues of Planetary Nebulae (Parker+ 2006-2008)
+#INFO	ivoid=ivo://cds.vizier/v/127a	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/v/127a	    IVOID of underlying data collection
+#INFO	creator=Parker Q.A.	    First author or institution
+#INFO	cites=bibcode:2006MNRAS.373...79P	    Article or Data origin sources
+#INFO	journal=MNRA	    Journal name
+#INFO	original_date=2006	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/V/127A	    Dataset landing page
+#INFO	publication_date=2018-10-17	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Table	V_127A_mash1:
+#Name: V/127A/mash1
+#Title: The MASH Catalog of Planetary Nebulae (paper I)
+#Column	_RAJ2000	(F10.6)	Right ascension (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.ra]
+#Column	_DEJ2000	(F10.6)	Declination (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.dec]
+#Column	PNG	(A12)	Name of PN, based on Galactic position (1)	[ucd=meta.id;meta.main]
+#Column	Name	(A13)	Usual name of the PN (2)	[ucd=meta.id]
+#Column	MajDiam	(F6.1)	? Major diameter of the PN from H{alpha} image	[ucd=phys.angSize]
+#Column	MinDiam	(F6.1)	? Minor diameter of the PN from H{alpha} image	[ucd=phys.angSize]
+_RAJ2000	_DEJ2000	PNG	Name	MajDiam	MinDiam
+deg	deg	 	 	arcsec	arcsec
+----------	----------	------------	-------------	------	------
+267.751667	-29.564167	G000.0-01.3 	PPA1751-2933 	  12.0	  10.0
+267.934167	-30.213056	G359.5-01.8 	PHR1751-3012 	  41.0	  39.0
+268.203750	-29.699722	G000.1-01.7 	PHR1752-2941 	  15.5	  12.5
+268.217083	-29.500278	G000.3-01.6 	PHR1752-2930 	   8.0	   8.0
+268.243333	-29.889722	G000.0-01.8 	PHR1752-2953 	  17.0	  14.5
+268.252917	-29.098056	G000.6-01.4 	PHR1753-2905 	  14.0	  13.0
+268.317917	-30.644444	G359.3-02.3 	PHR1753-3038 	  17.0	  10.0
+268.415833	-30.856944	G359.2-02.4 	PHR1753-3051 	  12.5	   9.0
+268.497500	-30.363611	G359.7-02.2 	PPA1753-3021 	  20.0	  19.0
+268.902917	-28.424444	G001.5-01.6 	PHR1755-2825 	  24.0	  17.0
+268.929583	-29.068056	G001.0-01.9 	PHR1755-2904 	  14.5	  12.5
+269.027500	-30.326667	G359.9-02.6 	PHR1756-3019 	  12.0	  10.5
+269.119583	-31.209722	G359.2-03.1 	PHR1756-3112 	  14.0	  10.0
+269.151667	-28.955000	G001.2-02.0 	PHR1756-2857 	  23.0	  15.0
+269.425833	-28.401944	G001.8-02.0 	PHR1757-2824 	  14.0	   6.0
+269.452500	-31.734722	G358.9-03.6 	PPA1757-3144 	   6.5	   6.0
+269.465417	-31.103056	G359.4-03.3 	PHR1757-3106 	  13.0	  12.5
+269.705000	-28.882222	G001.5-02.4 	PHR1758-2852 	  14.0	  13.0
+269.761667	-29.250278	G001.2-02.6 	PHR1759-2915 	  33.0	  33.0
+269.948750	-30.509722	G000.2-03.4 	PHR1759-3030 	  19.0	  14.0
+269.969167	-28.579722	G001.9-02.5 	PPA1759-2834 	  16.0	  15.5
+269.986667	-28.898611	G001.6-02.6 	PHR1759-2853 	  25.0	  22.0
+270.002500	-28.774167	G001.7-02.6 	PPA1800-2846 	  16.5	  13.0
+270.077917	-28.435556	G002.0-02.5 	PPA1800-2826 	  18.0	  16.5
+270.078333	-28.309722	G002.1-02.4 	PPA1800-2818 	  16.0	  12.0
+270.093333	-29.077500	G001.5-02.8 	PPA1800-2904 	   8.5	   7.5
+270.150417	-28.714167	G001.8-02.7 	PHR1800-2842 	   9.0	   5.0
+270.305833	-29.783333	G000.9-03.3 	PHR1801-2947 	  36.0	  36.0
+270.384583	-28.529167	G002.1-02.8 	PHR1801-2831 	  19.0	  14.0
+270.438750	-28.160278	G002.4-02.6 	PHR1801-2809 	  43.0	  41.0
+270.626250	-31.404722	G359.7-04.4a	PPA1802-3124 	  17.0	  12.0
+270.702083	-28.794722	G002.0-03.1 	PHR1802-2847 	  18.5	  17.0
+270.791250	-28.814167	G002.0-03.2 	PHR1803-2848 	  31.0	  24.5
+270.852917	-28.440278	G002.4-03.1 	PPA1803-2826 	   6.0	   6.0
+270.879583	-29.786389	G001.2-03.8 	PHR1803-2947 	  47.0	  40.0
+270.906250	-28.928056	G002.0-03.4 	PPA1803-2855 	  16.0	  13.5
+271.054583	-28.270000	G002.6-03.1 	PHR1804-2816 	  13.0	  13.0
+271.118750	-29.232500	G001.8-03.7 	PHR1804-2913 	   7.5	   6.0
+271.200417	-30.280278	G000.9-04.2 	PHR1804-3016 	  10.0	  10.0
+271.230833	-28.552222	G002.4-03.4 	PHR1804-2833 	  16.0	  15.0
+

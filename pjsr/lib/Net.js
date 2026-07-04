@@ -137,3 +137,38 @@ var SITleNet = ( function()
       DEFAULT_BASE: DEFAULT_BASE
    };
 } )();
+
+// ---------------------------------------------------------------------------
+
+/*
+ * SINet — a generic text getter over NetworkTransfer, shared by the Treasure
+ * Hunt catalog queries. Same chunk-accumulate pattern as SITleNet's private
+ * httpGet, exposed as a public one-shot call. Callers own retry/backoff and
+ * payload validation.
+ */
+var SINet = ( function()
+{
+   function getText( url, timeoutSec )
+   {
+      // -> { ok, code, text, error }. code 0 is the NetworkTransfer "no HTTP
+      // status" value (e.g. non-HTTP transfer); treat 0 or 200 as success.
+      var T = new NetworkTransfer;
+      var chunks = [];
+      T.onDownloadDataAvailable = function( data )
+      {
+         chunks.push( data );
+         return true;
+      };
+      if ( typeof T.setConnectionTimeout == "function" )
+         T.setConnectionTimeout( ( timeoutSec > 0 ) ? timeoutSec : 30 );
+      T.setURL( url );
+      var ok = T.download();
+      var text = "";
+      for ( var i = 0; i < chunks.length; ++i )
+         text += chunks[ i ].toString();
+      return { ok: ok, code: T.responseCode, text: text,
+               error: String( T.errorInformation || "" ) };
+   }
+
+   return { getText: getText };
+} )();

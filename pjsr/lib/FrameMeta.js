@@ -397,6 +397,82 @@ var SIFrameMeta = ( function()
       }
    }
 
+   function normalizeImagePoint( r, width, height )
+   {
+      // window.celestialToImage may return a Point or an [x,y] array. Accept
+      // it only when the pixel lands on (or very near) the image.
+      if ( r === null || r === undefined )
+         return null;
+      var x = null, y = null;
+      if ( typeof r.x === "number" && typeof r.y === "number" )
+      {
+         x = r.x; y = r.y;
+      }
+      else if ( typeof r.length === "number" && r.length >= 2 )
+      {
+         x = r[0]; y = r[1];
+      }
+      if ( x === null || y === null || !isFinite( x ) || !isFinite( y ) )
+         return null;
+      return { x: x, y: y };
+   }
+
+   function makeSolutionInverse( window, width, height, forwardProjector )
+   {
+      // Probe window.celestialToImage defensively, mirroring the
+      // makeSolutionProjector style: availability, ( ra, dec ) vs Point
+      // argument shape and return shape all vary across core versions.
+      // Verified by round-tripping the image center through the forward
+      // projector before it is trusted.
+      try
+      {
+         if ( !window || typeof window.celestialToImage !== "function" )
+            return null;
+
+         var call = null;
+         var inverse = function( raDeg, decDeg )
+         {
+            try
+            {
+               var r;
+               if ( call === "radec" )
+                  r = window.celestialToImage( raDeg, decDeg );
+               else if ( call === "point" )
+                  r = window.celestialToImage( new Point( raDeg, decDeg ) );
+               else
+               {
+                  try { r = window.celestialToImage( raDeg, decDeg ); call = "radec"; }
+                  catch ( e ) { r = window.celestialToImage( new Point( raDeg, decDeg ) ); call = "point"; }
+               }
+               return normalizeImagePoint( r, width, height );
+            }
+            catch ( e )
+            {
+               return null;
+            }
+         };
+
+         // Round-trip the image center: forward to sky, back to pixels.
+         if ( forwardProjector && width > 1 && height > 1 )
+         {
+            var cx = ( width - 1 )/2, cy = ( height - 1 )/2;
+            var sky = forwardProjector( cx, cy );
+            if ( !sky )
+               return null;
+            var back = inverse( sky.raDeg, sky.decDeg );
+            if ( back === null ||
+                 Math.abs( back.x - cx ) > Math.max( 2, width*0.02 ) ||
+                 Math.abs( back.y - cy ) > Math.max( 2, height*0.02 ) )
+               return null;
+         }
+         return inverse;
+      }
+      catch ( e )
+      {
+         return null;
+      }
+   }
+
    function firstAngle( kw, names )
    {
       for ( var i = 0; i < names.length; ++i )
@@ -480,12 +556,25 @@ var SIFrameMeta = ( function()
             kind = "approx";
       }
 
+      // --- Inverse projector: sky -> pixels, for placing catalog objects ---
+      var inverse = null;
+      if ( kind === "solution" )
+         inverse = makeSolutionInverse( window, width, height, projector );
+      else if ( kind === "tan" && tan !== null )
+         inverse = function( raDeg, decDeg )
+         {
+            return Core.tanCelestialToImage( tan, raDeg, decDeg );
+         };
+
       var fovCached = null, fovComputed = false;
       var wcs = {
          kind: kind,
          imageToCelestial: ( projector !== null )
             ? projector
             : function( x, y ) { return null; },
+         celestialToImage: ( inverse !== null )
+            ? inverse
+            : function( raDeg, decDeg ) { return null; },
          fov: function()
          {
             if ( !fovComputed )
