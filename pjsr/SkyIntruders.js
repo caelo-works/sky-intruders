@@ -615,7 +615,8 @@ function collectTrashTrails( frames )
          }
          var operator = tr.operator || ( tr.name ? SIReport.classifyOperator( tr.name ) : null );
          trails.push( { x1: tr.x1, y1: tr.y1, x2: tr.x2, y2: tr.y2,
-                        klass: klass, operator: operator, timeUtc: timeUtc } );
+                        p1: tr.p1 || null, p2: tr.p2 || null,
+                        frameIndex: i, klass: klass, operator: operator, timeUtc: timeUtc } );
       }
    }
    return trails;
@@ -642,6 +643,50 @@ function trashSummaryFromTrails( trails, dateLabel )
    return s;
 }
 
+// Align trail endpoints across dithered/rotated frames by projecting their sky
+// coordinates onto one reference frame's pixel grid (via its WCS). Without
+// registration, dithering leaves every frame on a different pixel grid and the
+// superposition is misaligned. Frames lacking sky coordinates keep their own
+// pixel coordinates (best effort). Returns { trails, refW, refH, method,
+// projected, total }.
+function alignTrailsByWcs( trails, frames )
+{
+   var refIdx = -1;
+   for ( var i = 0; i < frames.length; ++i )
+   {
+      var wcs = frames[ i ].meta ? frames[ i ].meta.wcs : null;
+      if ( wcs && ( wcs.kind === "solution" || wcs.kind === "tan" ) &&
+           typeof wcs.celestialToImage === "function" )
+      {
+         refIdx = i;
+         break;
+      }
+   }
+   if ( refIdx < 0 )
+      return { trails: trails, refW: frames[ 0 ].srcW || 1600, refH: frames[ 0 ].srcH || 1600,
+               method: "none", projected: 0, total: trails.length };
+
+   var ref = frames[ refIdx ].meta.wcs;
+   var refW = frames[ refIdx ].srcW, refH = frames[ refIdx ].srcH;
+   var out = [], projected = 0;
+   for ( var t = 0; t < trails.length; ++t )
+   {
+      var tr = trails[ t ];
+      var a = tr.p1 ? ref.celestialToImage( tr.p1.raDeg, tr.p1.decDeg ) : null;
+      var b = tr.p2 ? ref.celestialToImage( tr.p2.raDeg, tr.p2.decDeg ) : null;
+      var o = {};
+      for ( var k in tr ) o[ k ] = tr[ k ];
+      if ( a != null && b != null )
+      {
+         o.x1 = a.x; o.y1 = a.y; o.x2 = b.x; o.y2 = b.y;
+         ++projected;
+      }
+      out.push( o );
+   }
+   return { trails: out, refW: refW, refH: refH, method: "wcs",
+            projected: projected, total: trails.length };
+}
+
 function runTrashToArt( frames, framePaths, params, onProgress )
 {
    function progress( msg )
@@ -651,11 +696,22 @@ function runTrashToArt( frames, framePaths, params, onProgress )
       processEvents();
    }
 
-   var trails = collectTrashTrails( frames );
-   progress( trails.length + " trail(s) across " + frames.length + " frame(s)." );
+   var rawTrails = collectTrashTrails( frames );
+   progress( rawTrails.length + " trail(s) across " + frames.length + " frame(s)." );
 
-   // Canvas: first frame dimensions, capped to a 1600px long side.
-   var srcW = frames[ 0 ].srcW || 1600, srcH = frames[ 0 ].srcH || 1600;
+   // Register trails onto a common grid so dithering/rotation don't scatter the
+   // superposition.
+   var aligned = alignTrailsByWcs( rawTrails, frames );
+   var trails = aligned.trails;
+   if ( aligned.method === "wcs" )
+      progress( "Aligned " + aligned.projected + "/" + aligned.total +
+                " trail(s) via WCS onto a common grid." );
+   else
+      progress( "No astrometric solution found — trails drawn in native pixels " +
+                "(dithering may misalign the superposition)." );
+
+   // Canvas: reference frame dimensions, capped to a 1600px long side.
+   var srcW = aligned.refW || 1600, srcH = aligned.refH || 1600;
    var longSide = Math.max( srcW, srcH );
    var scale = ( longSide > 1600 ) ? 1600/longSide : 1;
    var dstW = Math.max( 1, Math.round( srcW*scale ) );
