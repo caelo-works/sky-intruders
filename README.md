@@ -1,27 +1,55 @@
 # Sky Intruders
 
-**Who crossed your photo last night?**
+**The hidden and discarded life of your astrophotos.**
 
-Sky Intruders is a [PixInsight](https://pixinsight.com) script that scans a night's
-light frames for trails — and instead of just rejecting them, **identifies them**:
+Sky Intruders is a [PixInsight](https://pixinsight.com) script — a small suite of
+three modes that surface what you photographed but never noticed, and turn what you
+threw away into art. Everything runs inside PixInsight; there is no native helper to
+install or trust.
 
-- 🛰️ **Satellites** — trails are cross-matched against up-to-date TLE orbital data
-  (CelesTrak), so the report reads *"02:13 — STARLINK-4512"*, not just "trail".
-- ☄️ **Meteors** — unmatched trails are tested against the active meteor showers
+## 🛰️ Night trails — *who crossed your photo last night?*
+
+Scans a night's light frames for trails and, instead of just rejecting them,
+**identifies them**:
+
+- **Satellites** — trails are cross-matched against up-to-date TLE orbital data
+  (CelesTrak) propagated with SGP4, so the report reads *"02:13 — STARLINK-4512"*,
+  not just "trail".
+- **Meteors** — unmatched trails are tested against the active meteor showers
   (radiant alignment, brightness profile): *"04:02 — probable Perseid"*.
-- 🪨 **Asteroid candidates** — slow movers drifting coherently across frames.
+- **Asteroid candidates** — slow movers drifting coherently across frames.
 
 Every session ends with a **night log**: a chronological journal of everything that
 crossed your field, fun stats ("14 satellites, 11 of them Starlink — personal
-record"), persistent personal records, and a Reddit-ready markdown post.
+record"), persistent personal records, and a Reddit-ready post.
+
+## 💎 Treasure Hunt — *what you photographed without knowing*
+
+Point it at a single plate-solved final image and it hunts the deep catalogs for
+everything hiding in your field: PGC galaxies down to mag ~17, quasars with their
+redshift, asteroids that drifted through at the moment of capture, tiny planetary
+nebulae. Then it tells the story — *"this 4-pixel smudge is a quasar at z = 2.3: its
+light left 11 billion years ago, before the Sun existed. You captured 47 galaxies
+without knowing."* — as an interactive annotated overlay in PixInsight and a
+standalone illustrated HTML post ready for a forum.
+
+## 🎨 Trash to Art — *your rejects have talent*
+
+Recycles the frames the analyzers set aside (satellite trails, wind gusts, clouds)
+into art instead of the bin: an intruder-choreography poster of the night's passes
+(color-coded by time, type or operator), a classic star-trail composite, or a
+designed *"the 47 intruders of my night"* poster. Works on the current session's
+rejects or any folder of discarded frames. *Your trash, we make it art.*
 
 ## Requirements
 
 - PixInsight ≥ 1.9.4
-- Light frames with `DATE-OBS` and `EXPTIME` headers; satellite identification
+- **Night trails**: light frames with `DATE-OBS`/`EXPTIME`; satellite identification
   needs an observer site (`SITELAT`/`SITELONG` headers or a manual fallback) and
-  works best on plate-solved frames (WCS)
-- Internet access for TLE downloads (cached, with graceful offline degradation)
+  works best on plate-solved frames.
+- **Treasure Hunt**: a plate-solved image (valid WCS).
+- Internet access for the online catalogs (TLE, VizieR, SkyBoT) — all cached, with
+  graceful offline degradation.
 
 ## Installation
 
@@ -37,14 +65,15 @@ then *Check for Updates*. The script appears under
 
 ## How it works
 
-Everything runs inside PixInsight — no native helper to install or trust. Trail
-detection uses robust background statistics, a Hough transform, and contiguity
-validation to reject chance star alignments. TLE catalogs are downloaded and
-cached through PixInsight's own network layer, then propagated with SGP4 (via
-the bundled MIT-licensed [satellite.js](https://github.com/shashwatak/satellite-js))
-to find which satellites crossed each frame's field of view during its exposure.
+All computation is native PJSR: robust background statistics, a Hough transform and
+contiguity validation for trail detection; SGP4 orbital propagation (via the bundled
+MIT-licensed [satellite.js](https://github.com/shashwatak/satellite-js)) for
+satellite identification; VizieR and SkyBoT cone searches for the deep catalogs;
+Bitmap/Graphics rendering for the overlays, posters and thumbnails. Networking uses
+PixInsight's own `NetworkTransfer` — nothing leaves the application.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design.
+Design docs: [Night trails](docs/ARCHITECTURE.md) ·
+[Treasure Hunt](docs/TREASURE-HUNT.md) · [Trash to Art](docs/TRASH-TO-ART.md).
 
 ## License
 

@@ -19,7 +19,7 @@ set -euo pipefail
 NAME="SkyIntruders"                          # class-case: entry file, package dir, icon
 SLUG="sky-intruders"                         # kebab-case: site slug
 TITLE="Sky Intruders"                        # human name
-DESCRIPTION_HTML="<p>Who crossed your photo last night? Sky Intruders scans your light frames for trails and identifies them: satellites by TLE cross-match (CelesTrak + SGP4), probable meteors by active-shower radiant alignment, plus slow movers as asteroid candidates. Renders a chronological night log with fun stats, persistent personal records and a Reddit-ready post.</p>"
+DESCRIPTION_HTML="<p>The hidden and discarded life of your astrophotos, in three modes. <b>Night trails</b>: scans your light frames for trails and identifies them &mdash; satellites by TLE cross-match (CelesTrak + SGP4), probable meteors by active-shower radiant alignment, slow movers as asteroid candidates &mdash; then writes a night log with fun stats and a ready-to-post report. <b>Treasure Hunt</b>: on a plate-solved image, finds the galaxies, quasars (with redshift), planetary nebulae and passing asteroids hiding in your field and tells their story, as a PixInsight overlay and an illustrated HTML post. <b>Trash to Art</b>: recycles rejected frames into an intruder-choreography poster, a star-trail composite, or a designed poster. All computation runs inside PixInsight.</p>"
 PI_VERSION_RANGE="1.9.4:1.9.99"
 # -----------------------------------------------------------------------------
 
