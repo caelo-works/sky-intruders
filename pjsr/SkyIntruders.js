@@ -40,6 +40,15 @@
 /* beautify ignore:end */
 
 // ---------------------------------------------------------------------------
+// Unlike FrameStyle / StdButton / StdIcon, TextAlign is NOT injected as a
+// runtime global under #engine v8 (and pjsr headers do not load). Define it
+// from the official pjsr/TextAlign.jsh flag values so label alignment works.
+if ( typeof TextAlign == "undefined" )
+   TextAlign = { Left: 0x01, Right: 0x02, HorzCenter: 0x04, Justify: 0x08,
+                 Top: 0x20, Bottom: 0x40, VertCenter: 0x80,
+                 Center: 0x84, Default: 0x21, Unknown: 0x00 };
+
+// ---------------------------------------------------------------------------
 // Version gate — fail with a clear message instead of a cryptic v8 error.
 function ensureMinimumVersion( maj, min, rel )
 {
@@ -1459,15 +1468,9 @@ function main()
 // Enabled only when SI_CONSTRUCT_TEST=1 is set in the environment.
 function siConstructTest()
 {
-   // Some UI enum globals exist in the GUI but are not injected under
-   // --automation-mode. The production path only runs in the GUI, so shim
-   // the ones used at construction time to exercise the real layout code.
-   if ( typeof TextAlign == "undefined" )
-      TextAlign = { Left: 1, Right: 2, HorzCenter: 4, Top: 32, Bottom: 64,
-                    VertCenter: 128, Center: 132 };
-   if ( typeof FrameStyle == "undefined" )
-      FrameStyle = { Flat: 0, Box: 1, Sunken: 2, Raised: 3, Styled: 4 };
-
+   // No shims here: the smoke test must fail exactly where production would.
+   // TextAlign is defined at the top of this file; FrameStyle/StdButton/StdIcon
+   // are real runtime globals in every context.
    var out = { ok: true, error: "" };
    try
    {
@@ -1487,10 +1490,13 @@ function siConstructTestRequested()
 {
    try
    {
-      return typeof getEnvironmentVariable == "function" &&
-             getEnvironmentVariable( "SI_CONSTRUCT_TEST" ) == "1";
+      if ( typeof System != "undefined" && typeof System.getEnvironmentVariable == "function" )
+         return System.getEnvironmentVariable( "SI_CONSTRUCT_TEST" ) == "1";
+      if ( typeof getEnvironmentVariable == "function" )
+         return getEnvironmentVariable( "SI_CONSTRUCT_TEST" ) == "1";
    }
-   catch ( e ) { return false; }
+   catch ( e ) {}
+   return false;
 }
 
 if ( siConstructTestRequested() )
