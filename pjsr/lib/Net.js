@@ -16,6 +16,15 @@ var SITleNet = ( function()
 {
    var DEFAULT_BASE = "https://celestrak.org/NORAD/elements/gp.php";
 
+   // Ordered TLE sources tried in turn ({group} placeholder). CelesTrak is the
+   // canonical, freshest source; the caelo-works mirror (a scheduled GitHub
+   // Action snapshot, served from raw.githubusercontent.com) is the fallback
+   // for networks that cannot reach celestrak.org.
+   var DEFAULT_SOURCES = [
+      "https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT=tle",
+      "https://raw.githubusercontent.com/caelo-works/tle-mirror/main/tle/{group}.tle"
+   ];
+
    function countTlePairs( text )
    {
       var lines = text.split( "\n" );
@@ -71,37 +80,25 @@ var SITleNet = ( function()
       return null;
    }
 
-   /*
-    * fetchTle( group, cacheDir, maxAgeHours[, baseUrl] )
-    * -> { tlePath, count, fetchedUtc, fromCache, stale?, sourceUrl }
-    * Throws when the download fails and no cache (fresh or stale) exists.
-    */
-   function fetchTle( group, cacheDir, maxAgeHours, baseUrl )
+   function buildUrl( template, group )
    {
-      if ( !group || !group.match( /^[A-Za-z0-9_-]+$/ ) )
-         throw new Error( "fetch-tle: invalid group name: " + group );
-      var url = ( baseUrl || DEFAULT_BASE ) + "?GROUP=" + group + "&FORMAT=tle";
-      var tlePath = cacheDir + "/" + group + ".tle";
-      var metaPath = cacheDir + "/" + group + ".meta.json";
-      var meta = readMeta( metaPath );
+      // A "{group}" template is used as-is; a bare base (legacy) gets the
+      // CelesTrak query appended.
+      if ( template.indexOf( "{group}" ) >= 0 )
+         return template.replace( "{group}", group );
+      return template + "?GROUP=" + group + "&FORMAT=tle";
+   }
 
-      // Fresh cache wins.
-      if ( meta != null && File.exists( tlePath ) )
-      {
-         var ageHours = ( Date.now() - Date.parse( meta.fetchedUtc ) ) / 3600000;
-         if ( isFinite( ageHours ) && ageHours >= 0 && ageHours <= maxAgeHours )
-            return { tlePath: tlePath, count: meta.count, fetchedUtc: meta.fetchedUtc,
-                     fromCache: true, sourceUrl: meta.sourceUrl || url };
-      }
-
-      // Download: 3 attempts, 2 s / 4 s backoff. CelesTrak serves error pages
-      // with status 200, so the payload must actually parse as TLE.
+   // Try one source: up to 2 attempts with a short timeout so a blocked host
+   // (e.g. celestrak.org on some networks) falls through to the next quickly.
+   function tryFetch( url )
+   {
       var lastError = "";
-      for ( var attempt = 1; attempt <= 3; ++attempt )
+      for ( var attempt = 1; attempt <= 2; ++attempt )
       {
          if ( attempt > 1 )
-            pause( 1000 * ( 1 << ( attempt - 1 ) ) );
-         var r = httpGet( url, 30 );
+            pause( 1500 );
+         var r = httpGet( url, 12 );
          if ( !r.ok || ( r.code != 0 && r.code != 200 ) )
          {
             lastError = r.error || ( "HTTP " + r.code );
@@ -113,28 +110,70 @@ var SITleNet = ( function()
             lastError = "payload is not TLE data (0 valid records)";
             continue;
          }
+         return { text: r.text, count: count };
+      }
+      return { error: lastError };
+   }
+
+   /*
+    * fetchTle( group, cacheDir, maxAgeHours[, baseUrl] )
+    * -> { tlePath, count, fetchedUtc, fromCache, stale?, sourceUrl }
+    * Tries each source in order (an optional baseUrl is tried first), caches
+    * the first valid TLE payload, and falls back to a stale cache if every
+    * source fails. Throws only when nothing (fresh, downloaded or stale) works.
+    */
+   function fetchTle( group, cacheDir, maxAgeHours, baseUrl )
+   {
+      if ( !group || !group.match( /^[A-Za-z0-9_-]+$/ ) )
+         throw new Error( "fetch-tle: invalid group name: " + group );
+
+      var tlePath = cacheDir + "/" + group + ".tle";
+      var metaPath = cacheDir + "/" + group + ".meta.json";
+      var meta = readMeta( metaPath );
+
+      // Fresh cache wins.
+      if ( meta != null && File.exists( tlePath ) )
+      {
+         var ageHours = ( Date.now() - Date.parse( meta.fetchedUtc ) ) / 3600000;
+         if ( isFinite( ageHours ) && ageHours >= 0 && ageHours <= maxAgeHours )
+            return { tlePath: tlePath, count: meta.count, fetchedUtc: meta.fetchedUtc,
+                     fromCache: true, sourceUrl: meta.sourceUrl };
+      }
+
+      var sources = baseUrl ? [ baseUrl ].concat( DEFAULT_SOURCES ) : DEFAULT_SOURCES;
+      var lastError = "";
+      for ( var i = 0; i < sources.length; ++i )
+      {
+         var url = buildUrl( sources[ i ], group );
+         var got = tryFetch( url );
+         if ( got.error )
+         {
+            lastError = got.error;
+            continue;
+         }
          if ( !File.directoryExists( cacheDir ) )
             File.createDirectory( cacheDir, true );
          var fetchedUtc = ( new Date ).toISOString();
-         File.writeTextFile( tlePath, r.text );
+         File.writeTextFile( tlePath, got.text );
          File.writeTextFile( metaPath, JSON.stringify(
-            { fetchedUtc: fetchedUtc, sourceUrl: url, count: count }, null, 2 ) );
-         return { tlePath: tlePath, count: count, fetchedUtc: fetchedUtc,
+            { fetchedUtc: fetchedUtc, sourceUrl: url, count: got.count }, null, 2 ) );
+         return { tlePath: tlePath, count: got.count, fetchedUtc: fetchedUtc,
                   fromCache: false, sourceUrl: url };
       }
 
-      // Network dead: an expired cache is better than nothing.
+      // Every source failed: an expired cache is better than nothing.
       if ( meta != null && File.exists( tlePath ) )
          return { tlePath: tlePath, count: meta.count, fetchedUtc: meta.fetchedUtc,
-                  fromCache: true, stale: true, sourceUrl: meta.sourceUrl || url };
+                  fromCache: true, stale: true, sourceUrl: meta.sourceUrl };
 
-      throw new Error( "fetch-tle: download failed and no cache available: " + lastError );
+      throw new Error( "fetch-tle: no source reachable and no cache available: " + lastError );
    }
 
    return {
       fetchTle: fetchTle,
       countTlePairs: countTlePairs,
-      DEFAULT_BASE: DEFAULT_BASE
+      DEFAULT_BASE: DEFAULT_BASE,
+      DEFAULT_SOURCES: DEFAULT_SOURCES
    };
 } )();
 
