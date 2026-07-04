@@ -1,0 +1,44 @@
+{
+  "observer": {
+    "latDeg": 0.007643804469164072,
+    "lonDeg": -156.44341535617795,
+    "altM": 0
+  },
+  "frames": [
+    {
+      "id": "L_0001.fits",
+      "startUtc": "2006-06-25T19:46:13.980096Z",
+      "exposureSec": 60,
+      "fov": {
+        "raDeg": 54.04723909906539,
+        "decDeg": 0.006857160957782937,
+        "widthDeg": 4,
+        "heightDeg": 3,
+        "rotationDeg": 0,
+        "hasWcs": true
+      },
+      "trails": [
+        {
+          "index": 0,
+          "p1": {
+            "raDeg": 53.55255803262239,
+            "decDeg": -0.8901610842323382
+          },
+          "p2": {
+            "raDeg": 54.54197529564517,
+            "decDeg": 0.9039714574002472
+          },
+          "pixLength": 0,
+          "meanFluxAdu": 0,
+          "widthPx": 0,
+          "brightnessVariation": 0
+        }
+      ]
+    }
+  ],
+  "options": {
+    "stepSec": 0,
+    "matchMaxSepDeg": 0,
+    "matchMaxAngleDiffDeg": 0
+  }
+}

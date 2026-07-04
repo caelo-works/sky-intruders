@@ -1,0 +1,39 @@
+{
+ "tle": {
+  "count": 1,
+  "source": "delta"
+ },
+ "frames": [
+  {
+   "id": "L_0001.fits",
+   "crossings": [
+    {
+     "noradId": 6251,
+     "name": "DELTA 1 DEB",
+     "intlDes": "1962-025E",
+     "entryUtc": "2006-06-25T19:46:42Z",
+     "exitUtc": "2006-06-25T19:46:44Z",
+     "path": {
+      "p1": {
+       "raDeg": 53.55255803262239,
+       "decDeg": -0.8901610842323382
+      },
+      "p2": {
+       "raDeg": 54.54197529564517,
+       "decDeg": 0.9039714574002472
+      }
+     },
+     "angularRateDegPerSec": 1.024423995511225,
+     "rangeKm": 414.8927100848303,
+     "elevationDeg": 89.99921335657257,
+     "sunlit": true,
+     "matchedTrailIndex": 0,
+     "matchScore": 1,
+     "sepDeg": 0,
+     "angleDiffDeg": 0
+    }
+   ]
+  }
+ ],
+ "error": null
+}
