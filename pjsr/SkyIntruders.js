@@ -28,6 +28,12 @@
 #include "lib/SatMatch.js"
 #include "lib/Meteors.js"
 #include "lib/Report.js"
+#include "lib/Cosmology.js"
+#include "lib/Catalogs.js"
+#include "lib/Treasure.js"
+#include "lib/TreasureReport.js"
+#include "lib/TrashArt.js"
+#include "lib/Render.js"
 
 #define SKYINTRUDERS_TITLE "Sky Intruders"
 
@@ -65,7 +71,16 @@ var DEFAULT_PARAMS = {
    lang: "en",
    observerLatDeg: null,   // fallbacks when FITS headers lack the site
    observerLonDeg: null,
-   observerAltM: 0
+   observerAltM: 0,
+   // Mode selector: "night" (trails), "treasure" (hunt), "trash" (to art).
+   mode: "night",
+   // Treasure Hunt: cap catalog rows fetched per cone search.
+   treasureMaxRows: 400,
+   // Trash to Art options.
+   trashScheme: "type",       // "type" | "operator" | "time"
+   trashChoreography: true,
+   trashStarTrails: true,
+   trashPoster: true
 };
 
 function configDir()
@@ -143,7 +158,8 @@ function analyzeFrame( filePath, params )
       if ( meta.wcs.imageToCelestial && params.detectAsteroids )
          blobs = extractPointSources( window.mainView.image, meta.wcs, params );
 
-      return { meta: meta, trails: det.trails, stats: det.stats, blobs: blobs };
+      return { meta: meta, trails: det.trails, stats: det.stats, blobs: blobs,
+               srcW: w, srcH: h };
    }
    finally
    {
@@ -366,7 +382,327 @@ function runAnalysis( files, params )
    var report = SIReport.build( night, history, params.lang );
    SIReport.saveHistory( SIReport.appendNight( history, report.summary ) );
 
-   return { night: night, report: report, tleInfo: tleInfo };
+   return { night: night, report: report, tleInfo: tleInfo, frames: frames };
+}
+
+// ---------------------------------------------------------------------------
+// Treasure Hunt mode — what you photographed without knowing.
+
+// Per-type overlay marker style (color + glyph) for the annotated map.
+var TREASURE_STYLE = {
+   galaxy:   { color: "#7fd1ff", glyph: "circle" },
+   quasar:   { color: "#e39bff", glyph: "diamond" },
+   pne:      { color: "#8ff0cf", glyph: "square" },
+   asteroid: { color: "#ffd38f", glyph: "circle" }
+};
+
+function runTreasureHunt( window, filePath, params, onProgress )
+{
+   function progress( msg )
+   {
+      console.writeln( msg );
+      if ( typeof onProgress == "function" ) onProgress( msg );
+      processEvents();
+   }
+
+   var image = window.mainView.image;
+   var width = image.width, height = image.height;
+
+   var meta = SIFrameMeta.read( window, filePath );
+   if ( !( meta.wcs.kind === "solution" || meta.wcs.kind === "tan" ) )
+      return { needsSolve: true, meta: meta };
+
+   var fov = meta.wcs.fov();
+   if ( fov == null || !( fov.widthDeg > 0 ) || !( fov.heightDeg > 0 ) )
+      return { needsSolve: true, meta: meta };
+
+   var raDeg = fov.raDeg, decDeg = fov.decDeg;
+   var radiusDeg = 0.5*Math.sqrt( fov.widthDeg*fov.widthDeg + fov.heightDeg*fov.heightDeg );
+   var epochIso = meta.dateObs ? meta.dateObs.toISOString() : ( new Date ).toISOString();
+   progress( format( "Field center RA %.4f Dec %.4f, search radius %.3f deg",
+                     raDeg, decDeg, radiusDeg ) );
+
+   var maxRows = ( params.treasureMaxRows > 0 ) ? params.treasureMaxRows : 400;
+   var qopts = { max: maxRows };
+
+   function safeQuery( label, fn )
+   {
+      try
+      {
+         var rows = fn();
+         progress( "   " + label + ": " + rows.length + " row(s)" );
+         return rows || [];
+      }
+      catch ( e )
+      {
+         console.warningln( "   " + label + " unavailable: " + e.message );
+         return [];
+      }
+   }
+
+   progress( "Querying deep catalogs…" );
+   var galaxies  = safeQuery( "galaxies",  function() { return SICatalogs.queryGalaxies( raDeg, decDeg, radiusDeg, qopts ); } );
+   var quasars   = safeQuery( "quasars",   function() { return SICatalogs.queryQuasars( raDeg, decDeg, radiusDeg, qopts ); } );
+   var pne       = safeQuery( "nebulae",   function() { return SICatalogs.queryPne( raDeg, decDeg, radiusDeg, qopts ); } );
+   var asteroids = safeQuery( "asteroids", function() { return SICatalogs.queryAsteroids( raDeg, decDeg, radiusDeg, epochIso, qopts ); } );
+
+   var flat = galaxies.concat( quasars ).concat( pne ).concat( asteroids );
+   var treasures = SITreasure.crossMatch( flat, meta.wcs.celestialToImage, width, height );
+   progress( treasures.length + " object(s) landed inside the frame." );
+
+   // Attach a pixel size so the narrative can say "this N-pixel smudge".
+   if ( meta.pixScaleArcsec > 0 )
+      for ( var i = 0; i < treasures.length; ++i )
+      {
+         var t = treasures[ i ];
+         if ( typeof t.diamArcmin === "number" && isFinite( t.diamArcmin ) && t.diamArcmin > 0 )
+            t.pxDiam = t.diamArcmin*60/meta.pixScaleArcsec;
+      }
+
+   var summary = SITreasure.summarize( treasures, params.lang );
+
+   // Render: stretched base, annotated overlay window + embedded PNG.
+   progress( "Rendering annotated field…" );
+   var base = SIRender.stretchedBitmap( image );
+   var marks = [];
+   var labelCap = Math.min( treasures.length, 40 );
+   for ( var m = 0; m < treasures.length; ++m )
+   {
+      var o = treasures[ m ];
+      var style = TREASURE_STYLE[ o.type ] || TREASURE_STYLE.galaxy;
+      marks.push( { x: o.x, y: o.y, color: style.color, glyph: style.glyph,
+                    label: ( m < labelCap ) ? o.name : null, labelColor: style.color } );
+   }
+   var mapBmp = SIRender.annotateField( base, marks, { radius: 9, penWidth: 2, fontSize: 11 } );
+   var mapWindow = SIRender.showBitmap( mapBmp, "Sky Intruders Treasure Map" );
+   var mapPng = SIRender.bitmapToBase64Png( mapBmp );
+
+   // Thumbnails for the most notable treasures.
+   var topN = treasures.slice( 0, Math.min( treasures.length, 8 ) );
+   var thumbs = [];
+   var boxPx = Math.max( 48, Math.round( 0.08*Math.max( width, height ) ) );
+   for ( var k = 0; k < topN.length; ++k )
+   {
+      var tt = topN[ k ];
+      tt.id = "T" + k;
+      try
+      {
+         var crop = SIRender.cropThumbnail( base, tt.x, tt.y, boxPx, 96 );
+         thumbs.push( { id: tt.id, pngBase64: SIRender.bitmapToBase64Png( crop ) } );
+      }
+      catch ( e )
+      {
+         console.warningln( "   thumbnail failed for " + tt.name + ": " + e.message );
+      }
+   }
+
+   // Cap the illustrated list so the HTML stays a sane size.
+   var displayCount = Math.min( treasures.length, 60 );
+   var displayTreasures = treasures.slice( 0, displayCount );
+   var narratives = [];
+   for ( var n = 0; n < displayTreasures.length; ++n )
+      narratives.push( SITreasure.narrate( displayTreasures[ n ], params.lang ) );
+
+   var html = SITreasureReport.buildHtml( {
+      treasures: displayTreasures, narratives: narratives, summary: summary,
+      mapPng: mapPng, thumbs: thumbs,
+      fieldInfo: { raDeg: raDeg, decDeg: decDeg, radiusDeg: radiusDeg,
+                   target: meta.keywords[ "OBJECT" ] || null },
+      lang: params.lang } );
+
+   return { meta: meta, treasures: treasures, summary: summary,
+            html: html, mapWindow: mapWindow };
+}
+
+// ---------------------------------------------------------------------------
+// Trash to Art mode — your rejects have talent.
+
+// Detect trails on one reject frame and pull a couple of intruder thumbnails
+// while the frame is still open. Returns the shape the art pipeline consumes.
+function analyzeTrashFrame( filePath, params )
+{
+   var windows = ImageWindow.open( filePath );
+   if ( windows.length == 0 )
+      throw new Error( "cannot open " + filePath );
+   var window = windows[ 0 ];
+   try
+   {
+      for ( var i = 1; i < windows.length; ++i )
+         windows[ i ].forceClose();
+
+      var meta = SIFrameMeta.read( window, filePath );
+      var image = window.mainView.image;
+      var det = SITrailDetect.detect( image, params );
+
+      var w = image.width, h = image.height;
+      var margin = Math.max( 8, Math.round( 0.03*Math.max( w, h ) ) );
+      function nearEdge( x, y )
+      {
+         return x <= margin || y <= margin || x >= w - margin || y >= h - margin;
+      }
+
+      var base = null, thumbs = [];
+      for ( var t = 0; t < det.trails.length; ++t )
+      {
+         var tr = det.trails[ t ];
+         tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
+         tr.p1 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x1, tr.y1 ) : null;
+         tr.p2 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x2, tr.y2 ) : null;
+         var cls = SIMeteors.classifyTrail( tr, meta.dateObs );
+         tr.klass = cls.klass;
+         // One thumbnail per frame, centered on its first trail's midpoint.
+         if ( t === 0 )
+            try
+            {
+               if ( base === null )
+                  base = SIRender.stretchedBitmap( image );
+               var cx = 0.5*( tr.x1 + tr.x2 ), cy = 0.5*( tr.y1 + tr.y2 );
+               var boxPx = Math.max( 48, Math.round( 0.10*Math.max( w, h ) ) );
+               var crop = SIRender.cropThumbnail( base, cx, cy, boxPx, 120 );
+               thumbs.push( { pngBase64: SIRender.bitmapToBase64Png( crop ),
+                              caption: meta.id } );
+            }
+            catch ( e ) {}
+      }
+
+      return { meta: meta, trails: det.trails, srcW: w, srcH: h, thumbs: thumbs };
+   }
+   finally
+   {
+      window.forceClose();
+   }
+}
+
+// Turn a set of analyzed frames (session rejects or freshly detected folder
+// frames) into the trail list the art pipeline draws.
+function collectTrashTrails( frames )
+{
+   var trails = [];
+   for ( var i = 0; i < frames.length; ++i )
+   {
+      var f = frames[ i ];
+      var timeUtc = f.meta && f.meta.dateObs ? f.meta.dateObs : null;
+      for ( var t = 0; t < f.trails.length; ++t )
+      {
+         var tr = f.trails[ t ];
+         var klass = tr.klass;
+         if ( klass == null )
+         {
+            // Session-reuse frames carry raw trails: classify them now.
+            try { klass = SIMeteors.classifyTrail( tr, timeUtc ).klass; }
+            catch ( e ) { klass = "unknown"; }
+         }
+         var operator = tr.operator || ( tr.name ? SIReport.classifyOperator( tr.name ) : null );
+         trails.push( { x1: tr.x1, y1: tr.y1, x2: tr.x2, y2: tr.y2,
+                        klass: klass, operator: operator, timeUtc: timeUtc } );
+      }
+   }
+   return trails;
+}
+
+function trashSummaryFromTrails( trails, dateLabel )
+{
+   var s = { date: dateLabel, satellites: 0, starlink: 0, meteors: 0,
+             satCandidates: 0, unknowns: 0, movers: 0 };
+   for ( var i = 0; i < trails.length; ++i )
+   {
+      var k = trails[ i ].klass;
+      if ( k === "satellite" )
+      {
+         s.satellites++;
+         if ( trails[ i ].operator === "Starlink" )
+            s.starlink++;
+      }
+      else if ( k === "satellite-candidate" ) s.satCandidates++;
+      else if ( k === "meteor" ) s.meteors++;
+      else if ( k === "asteroid" ) s.movers++;
+      else s.unknowns++;
+   }
+   return s;
+}
+
+function runTrashToArt( frames, framePaths, params, onProgress )
+{
+   function progress( msg )
+   {
+      console.writeln( msg );
+      if ( typeof onProgress == "function" ) onProgress( msg );
+      processEvents();
+   }
+
+   var trails = collectTrashTrails( frames );
+   progress( trails.length + " trail(s) across " + frames.length + " frame(s)." );
+
+   // Canvas: first frame dimensions, capped to a 1600px long side.
+   var srcW = frames[ 0 ].srcW || 1600, srcH = frames[ 0 ].srcH || 1600;
+   var longSide = Math.max( srcW, srcH );
+   var scale = ( longSide > 1600 ) ? 1600/longSide : 1;
+   var dstW = Math.max( 1, Math.round( srcW*scale ) );
+   var dstH = Math.max( 1, Math.round( srcH*scale ) );
+
+   var dateLabel = nightLabel( frames );
+   var summary = trashSummaryFromTrails( trails, dateLabel );
+
+   var result = { choreographyWindow: null, starTrailsWindow: null,
+                  posterHtml: null, choreographyPng: null, summary: summary };
+
+   var colored = SITrashArt.assignColors( trails, params.trashScheme );
+   var choreographyPng = null;
+   var posterThumbs = [];
+
+   // (a) Intruder choreography.
+   if ( params.trashChoreography || params.trashPoster )
+   {
+      progress( "Composing the intruder choreography…" );
+      var normalized = SITrashArt.normalizeEndpoints( colored, srcW, srcH, dstW, dstH );
+      var black = new Bitmap( dstW, dstH );
+      black.fill( 0xff05070d );
+      var choreoBmp = SIRender.drawTrails( black, normalized, { glow: true, lineWidth: 2 } );
+      choreographyPng = SIRender.bitmapToBase64Png( choreoBmp );
+      result.choreographyPng = choreographyPng;
+      if ( params.trashChoreography )
+         result.choreographyWindow = SIRender.showBitmap( choreoBmp, "Sky Intruders Choreography" );
+   }
+
+   // (b) Star-trail composite (max-combine).
+   if ( params.trashStarTrails )
+   {
+      if ( framePaths && framePaths.length > 0 )
+      {
+         if ( framePaths.length < 8 )
+            console.warningln( "Only " + framePaths.length +
+               " frame(s): the star-trail composite will be sparse." );
+         progress( "Max-combining " + framePaths.length + " frame(s) into star trails…" );
+         var composite = SIRender.maxCombine( framePaths );
+         if ( composite !== null )
+         {
+            var compBmp = SIRender.stretchedBitmap( composite );
+            result.starTrailsWindow = SIRender.showBitmap( compBmp, "Sky Intruders Star Trails" );
+         }
+         else
+            console.warningln( "Star-trail composite produced no image." );
+      }
+      else
+         console.warningln( "Star-trail composite needs the frame files (session " +
+            "rejects are already closed) — skipped." );
+   }
+
+   // (c) Designed poster.
+   if ( params.trashPoster )
+   {
+      progress( "Laying out the poster…" );
+      for ( var i = 0; i < frames.length && posterThumbs.length < 6; ++i )
+         if ( frames[ i ].thumbs )
+            for ( var j = 0; j < frames[ i ].thumbs.length && posterThumbs.length < 6; ++j )
+               posterThumbs.push( frames[ i ].thumbs[ j ] );
+
+      var model = SITrashArt.posterModel( summary, {
+         scheme: params.trashScheme, frameCount: frames.length,
+         dateLabel: dateLabel, lang: params.lang, legend: colored.legend } );
+      result.posterHtml = SITrashArt.buildPosterHtml( model, choreographyPng, posterThumbs, params.lang );
+   }
+
+   return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -427,6 +763,63 @@ class ReportDialog extends Dialog
    }
 }
 
+// A savable text/HTML result dialog (Treasure Hunt and Trash-to-Art), mirrors
+// ReportDialog but writes a standalone .html the browser opens directly.
+class HtmlResultDialog extends Dialog
+{
+   constructor( title, headline, html, suggestedName, suggestedDir )
+   {
+      super();
+      this.windowTitle = title;
+      this.html = html;
+
+      this.titleLabel = new Label( this );
+      this.titleLabel.useRichText = true;
+      this.titleLabel.text = "<b>" + headline + "</b>";
+      this.titleLabel.wordWrapping = true;
+      this.titleLabel.margin = 6;
+      this.titleLabel.frameStyle = FrameStyle.Box;
+
+      this.textBox = new TextBox( this );
+      this.textBox.readOnly = true;
+      this.textBox.text = html;
+      this.textBox.setMinSize( 680, 480 );
+
+      this.saveButton = new PushButton( this );
+      this.saveButton.text = "Save HTML…";
+      this.saveButton.onClick = () =>
+      {
+         var d = new SaveFileDialog;
+         d.caption = "Save illustrated report";
+         d.filters = [ [ "HTML", "*.html" ], [ "Any file", "*" ] ];
+         d.initialPath = ( suggestedDir || File.homeDirectory ) + "/" + suggestedName;
+         if ( d.execute() )
+         {
+            File.writeTextFile( d.fileName, this.html + "\n" );
+            console.writeln( SKYINTRUDERS_TITLE + ": saved to " + d.fileName );
+         }
+      };
+
+      this.closeButton = new PushButton( this );
+      this.closeButton.text = "Close";
+      this.closeButton.onClick = () => this.ok();
+
+      this.buttons = new HorizontalSizer;
+      this.buttons.addStretch();
+      this.buttons.add( this.saveButton );
+      this.buttons.addSpacing( 6 );
+      this.buttons.add( this.closeButton );
+
+      this.sizer = new VerticalSizer;
+      this.sizer.margin = 8;
+      this.sizer.spacing = 8;
+      this.sizer.add( this.titleLabel );
+      this.sizer.add( this.textBox, 100 );
+      this.sizer.add( this.buttons );
+      this.adjustToContents();
+   }
+}
+
 class SkyIntrudersDialog extends Dialog
 {
    constructor( params )
@@ -435,6 +828,7 @@ class SkyIntrudersDialog extends Dialog
       this.params = params;
       this.files = [];
       this.result = null;
+      this.sessionFrames = null;   // raw frames of the last Night-trails run
       this.windowTitle = SKYINTRUDERS_TITLE;
 
       this.infoLabel = new Label( this );
@@ -444,6 +838,27 @@ class SkyIntrudersDialog extends Dialog
       this.infoLabel.wordWrapping = true;
       this.infoLabel.frameStyle = FrameStyle.Box;
       this.infoLabel.margin = 6;
+
+      // --- mode selector
+      var MODES = [ "night", "treasure", "trash" ];
+      this.modeLabel = new Label( this );
+      this.modeLabel.text = "Mode:";
+      this.modeLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
+      this.modeCombo = new ComboBox( this );
+      this.modeCombo.addItem( "Night trails — who crossed your photo" );
+      this.modeCombo.addItem( "Treasure Hunt — what's already in it" );
+      this.modeCombo.addItem( "Trash to Art — recycle your rejects" );
+      var mi = MODES.indexOf( params.mode );
+      this.modeCombo.currentItem = ( mi >= 0 ) ? mi : 0;
+      this.modeCombo.onItemSelected = ( i ) =>
+      {
+         this.params.mode = MODES[ i ] || "night";
+         this.updateMode();
+      };
+      this.modeSizer = new HorizontalSizer;
+      this.modeSizer.spacing = 6;
+      this.modeSizer.add( this.modeLabel );
+      this.modeSizer.add( this.modeCombo, 100 );
 
       // --- file list
       this.fileTree = new TreeBox( this );
@@ -553,6 +968,54 @@ class SkyIntrudersDialog extends Dialog
       this.observerGroup.sizer.add( this.altEdit.sizer );
       this.observerGroup.sizer.addStretch();
 
+      // --- Trash to Art options
+      var SCHEMES = [ "type", "operator", "time" ];
+      this.schemeLabel = new Label( this );
+      this.schemeLabel.text = "Color scheme:";
+      this.schemeLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
+      this.schemeCombo = new ComboBox( this );
+      this.schemeCombo.addItem( "by type (satellite / meteor / …)" );
+      this.schemeCombo.addItem( "by operator (Starlink / OneWeb / …)" );
+      this.schemeCombo.addItem( "by time (dusk → dawn gradient)" );
+      var si = SCHEMES.indexOf( params.trashScheme );
+      this.schemeCombo.currentItem = ( si >= 0 ) ? si : 0;
+      this.schemeCombo.onItemSelected = ( i ) => { this.params.trashScheme = SCHEMES[ i ] || "type"; };
+
+      this.choreoCheck = new CheckBox( this );
+      this.choreoCheck.text = "Intruder choreography";
+      this.choreoCheck.checked = params.trashChoreography;
+      this.choreoCheck.onCheck = ( c ) => { this.params.trashChoreography = c; };
+
+      this.starTrailsCheck = new CheckBox( this );
+      this.starTrailsCheck.text = "Star-trail composite";
+      this.starTrailsCheck.checked = params.trashStarTrails;
+      this.starTrailsCheck.onCheck = ( c ) => { this.params.trashStarTrails = c; };
+
+      this.posterCheck = new CheckBox( this );
+      this.posterCheck.text = "Designed poster (HTML)";
+      this.posterCheck.checked = params.trashPoster;
+      this.posterCheck.onCheck = ( c ) => { this.params.trashPoster = c; };
+
+      this.schemeSizer = new HorizontalSizer;
+      this.schemeSizer.spacing = 6;
+      this.schemeSizer.add( this.schemeLabel );
+      this.schemeSizer.add( this.schemeCombo, 100 );
+
+      this.outputsSizer = new HorizontalSizer;
+      this.outputsSizer.spacing = 14;
+      this.outputsSizer.add( this.choreoCheck );
+      this.outputsSizer.add( this.starTrailsCheck );
+      this.outputsSizer.add( this.posterCheck );
+      this.outputsSizer.addStretch();
+
+      this.trashGroup = new GroupBox( this );
+      this.trashGroup.title = "Trash to Art — outputs";
+      this.trashGroup.sizer = new VerticalSizer;
+      this.trashGroup.sizer.margin = 8;
+      this.trashGroup.sizer.spacing = 6;
+      this.trashGroup.sizer.add( this.schemeSizer );
+      this.trashGroup.sizer.add( this.outputsSizer );
+
       // --- actions
       this.analyzeButton = new PushButton( this );
       this.analyzeButton.text = "Analyze night";
@@ -573,12 +1036,38 @@ class SkyIntrudersDialog extends Dialog
       this.sizer.margin = 8;
       this.sizer.spacing = 8;
       this.sizer.add( this.infoLabel );
+      this.sizer.add( this.modeSizer );
       this.sizer.add( this.fileTree, 100 );
       this.sizer.add( this.fileButtons );
       this.sizer.add( this.paramsGroup );
       this.sizer.add( this.observerGroup );
+      this.sizer.add( this.trashGroup );
       this.sizer.add( this.actions );
+      this.updateMode();
       this.adjustToContents();
+   }
+
+   // Show only the controls relevant to the active mode and relabel Run.
+   updateMode()
+   {
+      var mode = this.params.mode;
+      this.observerGroup.visible = ( mode === "night" );
+      this.trashGroup.visible = ( mode === "trash" );
+      if ( mode === "treasure" )
+      {
+         this.analyzeButton.text = "Hunt treasures";
+         this.fileTree.setHeaderText( 0, "Plate-solved image (active window if empty)" );
+      }
+      else if ( mode === "trash" )
+      {
+         this.analyzeButton.text = "Make art";
+         this.fileTree.setHeaderText( 0, "Reject frames (or a folder of rejects)" );
+      }
+      else
+      {
+         this.analyzeButton.text = "Analyze night";
+         this.fileTree.setHeaderText( 0, "Light frames" );
+      }
    }
 
    makeCoordEdit( label, value, apply )
@@ -621,7 +1110,18 @@ class SkyIntrudersDialog extends Dialog
       this.clearButton.enabled = !busy;
    }
 
+   // Dispatch Run to the active mode.
    runNow()
+   {
+      if ( this.params.mode === "treasure" )
+         this.runTreasure();
+      else if ( this.params.mode === "trash" )
+         this.runTrash();
+      else
+         this.runNight();
+   }
+
+   runNight()
    {
       if ( this.files.length == 0 )
       {
@@ -636,10 +1136,164 @@ class SkyIntrudersDialog extends Dialog
       try
       {
          this.result = runAnalysis( this.files, this.params );
+         this.sessionFrames = this.result.frames;
          console.writeln( "" );
          console.writeln( this.result.report.markdown );
          var dir = File.extractDrive( this.files[ 0 ] ) + File.extractDirectory( this.files[ 0 ] );
          ( new ReportDialog( this.result, this.params, dir ) ).execute();
+      }
+      catch ( e )
+      {
+         console.criticalln( SKYINTRUDERS_TITLE + ": " + e.message );
+         ( new MessageBox( e.message, SKYINTRUDERS_TITLE, StdIcon.Error, StdButton.Ok ) ).execute();
+      }
+      finally
+      {
+         this.setBusy( false );
+      }
+   }
+
+   runTreasure()
+   {
+      // Input: the first listed image, else the active window.
+      var window = null, filePath = null, opened = false;
+      if ( this.files.length > 0 )
+      {
+         var wins = ImageWindow.open( this.files[ 0 ] );
+         if ( wins.length == 0 )
+         {
+            ( new MessageBox( "Cannot open " + this.files[ 0 ], SKYINTRUDERS_TITLE,
+                              StdIcon.Error, StdButton.Ok ) ).execute();
+            return;
+         }
+         for ( var i = 1; i < wins.length; ++i )
+            wins[ i ].forceClose();
+         window = wins[ 0 ];
+         filePath = this.files[ 0 ];
+         opened = true;
+      }
+      else
+      {
+         window = ImageWindow.activeWindow;
+         if ( window == null || window.isNull )
+         {
+            ( new MessageBox( "Add one plate-solved image, or open one in PixInsight first.",
+                              SKYINTRUDERS_TITLE, StdIcon.Information, StdButton.Ok ) ).execute();
+            return;
+         }
+         filePath = window.filePath || window.mainView.id;
+      }
+
+      saveParams( this.params );
+      this.setBusy( true );
+      console.show();
+      console.writeln( "<b>" + SKYINTRUDERS_TITLE + "</b> — Treasure Hunt on " +
+                       ( filePath || "active window" ) + "…" );
+      try
+      {
+         var res = runTreasureHunt( window, filePath, this.params, null );
+         if ( res.needsSolve )
+         {
+            ( new MessageBox( "This image has no astrometric solution (WCS). " +
+                              "Plate-solve it first (ImageSolver), then run Treasure Hunt.",
+                              SKYINTRUDERS_TITLE, StdIcon.Warning, StdButton.Ok ) ).execute();
+            return;
+         }
+         var dir = filePath ? ( File.extractDrive( filePath ) + File.extractDirectory( filePath ) )
+                            : File.homeDirectory;
+         var name = "SkyIntruders-Treasure-" +
+                    ( res.meta.keywords[ "OBJECT" ] || res.meta.id || "field" ).replace( /[^A-Za-z0-9_.-]+/g, "_" ) + ".html";
+         var headline = res.summary.total + " treasure(s) captured — " +
+                        ( res.summary.headlines.length ? res.summary.headlines[ 0 ] : "explore your field" );
+         ( new HtmlResultDialog( SKYINTRUDERS_TITLE + " — Treasure Hunt", headline,
+                                 res.html, name, dir ) ).execute();
+      }
+      catch ( e )
+      {
+         console.criticalln( SKYINTRUDERS_TITLE + ": " + e.message );
+         ( new MessageBox( e.message, SKYINTRUDERS_TITLE, StdIcon.Error, StdButton.Ok ) ).execute();
+      }
+      finally
+      {
+         if ( opened && window != null )
+            try { window.forceClose(); } catch ( e2 ) {}
+         this.setBusy( false );
+      }
+   }
+
+   runTrash()
+   {
+      var reuse = false;
+      if ( this.sessionFrames != null && this.sessionFrames.length > 0 )
+      {
+         var mb = new MessageBox(
+            "Reuse the " + this.sessionFrames.length + " frame(s) from this session's " +
+            "Night-trails run?\n\nYes — recycle the frames just analyzed.\n" +
+            "No — use the frames in the list instead.",
+            SKYINTRUDERS_TITLE, StdIcon.Question, StdButton.Yes, StdButton.No );
+         reuse = ( mb.execute() == StdButton.Yes );
+      }
+
+      if ( !reuse && this.files.length == 0 )
+      {
+         ( new MessageBox( "Add reject frames (or a folder of rejects) first.",
+                           SKYINTRUDERS_TITLE, StdIcon.Information, StdButton.Ok ) ).execute();
+         return;
+      }
+
+      saveParams( this.params );
+      this.setBusy( true );
+      console.show();
+      console.writeln( "<b>" + SKYINTRUDERS_TITLE + "</b> — Trash to Art…" );
+      try
+      {
+         var frames = [], framePaths = null;
+         if ( reuse )
+         {
+            // Session frames carry meta + raw trails + srcW/srcH; they were
+            // already closed, so re-collect their paths for the star-trail
+            // composite (thumbnails are regenerated from those files there).
+            frames = this.sessionFrames;
+            framePaths = [];
+            for ( var p = 0; p < frames.length; ++p )
+               if ( frames[ p ].meta && frames[ p ].meta.path )
+                  framePaths.push( frames[ p ].meta.path );
+         }
+         else
+         {
+            for ( var f = 0; f < this.files.length; ++f )
+            {
+               console.writeln( format( "<b>[%d/%d]</b> ", f + 1, this.files.length ) + this.files[ f ] );
+               try
+               {
+                  frames.push( analyzeTrashFrame( this.files[ f ], this.params ) );
+               }
+               catch ( e )
+               {
+                  console.warningln( "   skipped: " + e.message );
+               }
+               processEvents();
+            }
+            framePaths = this.files.slice();
+         }
+         if ( frames.length == 0 )
+            throw new Error( "no frame could be analyzed" );
+
+         var res = runTrashToArt( frames, framePaths, this.params, null );
+         if ( res.posterHtml != null )
+         {
+            var dir = ( framePaths && framePaths.length > 0 )
+               ? ( File.extractDrive( framePaths[ 0 ] ) + File.extractDirectory( framePaths[ 0 ] ) )
+               : File.homeDirectory;
+            var headline = res.summary.date + " — " + res.summary.satellites +
+                           " satellite(s), " + res.summary.meteors + " meteor(s), " +
+                           res.summary.unknowns + " unidentified";
+            ( new HtmlResultDialog( SKYINTRUDERS_TITLE + " — Trash to Art",
+                                    headline,
+                                    res.posterHtml, "SkyIntruders-Poster.html", dir ) ).execute();
+         }
+         else
+            console.writeln( SKYINTRUDERS_TITLE + ": image windows produced (no poster requested)." );
       }
       catch ( e )
       {

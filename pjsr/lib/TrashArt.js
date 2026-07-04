@@ -250,6 +250,117 @@ var SITrashArt = ( function()
       };
    }
 
+   // ------------------------------------------------------------------------
+   // Poster HTML assembly (pure). Self-contained, CSP-safe: the choreography
+   // and thumbnails are embedded as data:image/png;base64 URIs, all CSS is
+   // inlined. Astrophoto-native dark aesthetic (NOT the homelab design
+   // system). model is posterModel()'s output; choreographyPngBase64 has NO
+   // "data:" prefix; thumbs = [ { pngBase64, caption? } ].
+   //
+   // NEVER write slash-star inside a comment (preprocessor trap).
+
+   function escHtml( s )
+   {
+      return String( ( s === null || s === undefined ) ? "" : s )
+         .replace( /&/g, "&amp;" ).replace( /</g, "&lt;" )
+         .replace( />/g, "&gt;" ).replace( /"/g, "&quot;" );
+   }
+
+   var POSTER_CSS =
+      "body{margin:0;background:#05070d;color:#e6ebf2;" +
+      "font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5}" +
+      ".wrap{max-width:1000px;margin:0 auto;padding:32px 24px}" +
+      "header{text-align:center;margin-bottom:24px}" +
+      "h1{font-size:34px;margin:0 0 6px;letter-spacing:.01em;" +
+      "background:linear-gradient(90deg,#22d3ee,#a78bfa,#f472b6);" +
+      "-webkit-background-clip:text;background-clip:text;color:transparent}" +
+      ".sub{color:#9fb0c6;margin:0;font-size:15px}" +
+      ".stage{border:1px solid #1b2331;border-radius:12px;overflow:hidden;background:#000;" +
+      "box-shadow:0 0 60px rgba(34,211,238,.08)}" +
+      ".stage img{display:block;width:100%;height:auto}" +
+      ".stats{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:20px 0 8px;padding:0;list-style:none}" +
+      ".stats li{background:#0d1420;border:1px solid #22304a;border-radius:20px;padding:7px 16px;font-size:14px;color:#c9d4e2}" +
+      ".legend{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin:6px 0 0;padding:0;list-style:none}" +
+      ".legend li{display:flex;align-items:center;gap:7px;font-size:13px;color:#9fb0c6}" +
+      ".sw{width:14px;height:14px;border-radius:3px;display:inline-block;box-shadow:0 0 6px currentColor}" +
+      ".ltitle{text-align:center;color:#7f8ea6;font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin:22px 0 4px}" +
+      ".thumbs{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:18px 0 0;padding:0;list-style:none}" +
+      ".thumbs li{width:120px}" +
+      ".thumbs img{width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #22304a;background:#000;display:block}" +
+      ".thumbs .cap{font-size:11px;color:#7f8ea6;text-align:center;margin-top:4px}" +
+      "footer{color:#5c6b82;font-size:12px;margin-top:30px;text-align:center;border-top:1px solid #141b28;padding-top:14px}";
+
+   function buildPosterHtml( model, choreographyPngBase64, thumbs, lang )
+   {
+      model = model || {};
+      lang = ( lang === "fr" ) ? "fr" : "en";
+      thumbs = thumbs || [];
+      var stats = model.stats || [];
+      var legend = model.legend || [];
+
+      var H = [];
+      H.push( "<!doctype html>" );
+      H.push( "<html lang=\"" + lang + "\"><head><meta charset=\"utf-8\">" );
+      H.push( "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" );
+      H.push( "<title>" + escHtml( model.title || "Sky Intruders" ) + "</title>" );
+      H.push( "<style>" + POSTER_CSS + "</style></head><body><div class=\"wrap\">" );
+
+      H.push( "<header>" );
+      H.push( "<h1>" + escHtml( model.title ) + "</h1>" );
+      if ( model.subtitle )
+         H.push( "<p class=\"sub\">" + escHtml( model.subtitle ) + "</p>" );
+      H.push( "</header>" );
+
+      if ( choreographyPngBase64 )
+         H.push( "<div class=\"stage\"><img alt=\"intruder choreography\" " +
+                 "src=\"data:image/png;base64," + choreographyPngBase64 + "\"></div>" );
+
+      if ( stats.length > 0 )
+      {
+         H.push( "<ul class=\"stats\">" );
+         for ( var i = 0; i < stats.length; ++i )
+            H.push( "<li>" + escHtml( stats[ i ] ) + "</li>" );
+         H.push( "</ul>" );
+      }
+
+      if ( legend.length > 0 )
+      {
+         if ( model.legendTitle )
+            H.push( "<p class=\"ltitle\">" + escHtml( model.legendTitle ) + "</p>" );
+         H.push( "<ul class=\"legend\">" );
+         for ( var j = 0; j < legend.length; ++j )
+         {
+            var e = legend[ j ] || {};
+            var col = escHtml( e.color || "#94a3b8" );
+            H.push( "<li><span class=\"sw\" style=\"background:" + col +
+                    ";color:" + col + "\"></span>" + escHtml( e.label ) + "</li>" );
+         }
+         H.push( "</ul>" );
+      }
+
+      if ( thumbs.length > 0 )
+      {
+         H.push( "<ul class=\"thumbs\">" );
+         for ( var k = 0; k < thumbs.length; ++k )
+         {
+            var th = thumbs[ k ] || {};
+            if ( !th.pngBase64 )
+               continue;
+            H.push( "<li><img alt=\"intruder\" src=\"data:image/png;base64," + th.pngBase64 + "\">" +
+                    ( th.caption ? "<div class=\"cap\">" + escHtml( th.caption ) + "</div>" : "" ) +
+                    "</li>" );
+         }
+         H.push( "</ul>" );
+      }
+
+      var by = ( lang === "fr" )
+         ? "Genere par Sky Intruders pour PixInsight — pixinsight-scripts.caelo.works"
+         : "Generated by Sky Intruders for PixInsight — pixinsight-scripts.caelo.works";
+      H.push( "<footer>" + escHtml( by ) + "</footer>" );
+      H.push( "</div></body></html>" );
+      return H.join( "\n" );
+   }
+
    return {
       TYPE_COLORS: TYPE_COLORS,
       OPERATOR_PALETTE: OPERATOR_PALETTE,
@@ -257,6 +368,7 @@ var SITrashArt = ( function()
       assignColors: assignColors,
       normalizeEndpoints: normalizeEndpoints,
       posterModel: posterModel,
+      buildPosterHtml: buildPosterHtml,
       STRINGS: STRINGS
    };
 } )();

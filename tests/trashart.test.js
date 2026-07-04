@@ -72,4 +72,35 @@ var A = require( "./build/module.js" ).SITrashArt;
    assert( none.title.indexOf( "clean night" ) >= 0, "empty-night title: " + none.title );
 } )();
 
+// --- poster HTML assembly -------------------------------------------------
+
+( function testBuildPosterHtml()
+{
+   var summary = { satellites: 11, starlink: 8, meteors: 2, satCandidates: 1,
+                   unknowns: 0, movers: 1, date: "2026-07-03" };
+   var model = A.posterModel( summary, { scheme: "type", frameCount: 47,
+                                         dateLabel: "2026-07-03", lang: "en",
+                                         legend: [ { label: "satellite", color: "#22d3ee" },
+                                                   { label: "meteor", color: "#f59e0b" } ] } );
+   var png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+   var thumbs = [ { pngBase64: png, caption: "STARLINK-4512" } ];
+   var html = A.buildPosterHtml( model, png, thumbs, "en" );
+
+   assert( html.indexOf( "<!doctype html>" ) === 0, "starts with a doctype" );
+   assert( html.indexOf( "data:image/png;base64," + png ) >= 0, "embeds the choreography PNG inline" );
+   assert( html.indexOf( "15 intruders" ) >= 0, "title carried into the poster: " + model.title );
+   assert( html.indexOf( "STARLINK-4512" ) >= 0, "thumbnail caption present" );
+   assert( html.indexOf( "<style>" ) >= 0, "CSS inlined (self-contained)" );
+   assert( html.indexOf( "http://" ) < 0 && html.indexOf( "https://" ) < 0 ||
+           html.indexOf( "src=\"http" ) < 0, "no external asset src (CSP-safe)" );
+   assert( html.indexOf( "satellite" ) >= 0 && html.indexOf( "#22d3ee" ) >= 0, "legend swatch rendered" );
+
+   // Degrades cleanly with nothing to show.
+   var empty = A.buildPosterHtml( A.posterModel(
+      { satellites: 0, meteors: 0, movers: 0, unknowns: 0, satCandidates: 0 },
+      { lang: "en", frameCount: 0 } ), null, [], "en" );
+   assert( empty.indexOf( "clean night" ) >= 0, "empty poster still titles the night" );
+   assert( empty.indexOf( "<img" ) < 0, "no image tags when there is nothing to embed" );
+} )();
+
 console.log( "trashart.test.js: all assertions passed" );
