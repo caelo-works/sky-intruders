@@ -89,16 +89,15 @@ var SITleNet = ( function()
       return template + "?GROUP=" + group + "&FORMAT=tle";
    }
 
-   // Try one source: up to 2 attempts with a short timeout so a blocked host
-   // (e.g. celestrak.org on some networks) falls through to the next quickly.
-   function tryFetch( url )
+   // One pass over all sources with a given timeout: the first that yields a
+   // valid TLE payload wins. Returns { url, text, count } or { error }.
+   function fetchPass( sources, group, timeoutSec )
    {
       var lastError = "";
-      for ( var attempt = 1; attempt <= 2; ++attempt )
+      for ( var i = 0; i < sources.length; ++i )
       {
-         if ( attempt > 1 )
-            pause( 1500 );
-         var r = httpGet( url, 12 );
+         var url = buildUrl( sources[ i ], group );
+         var r = httpGet( url, timeoutSec );
          if ( !r.ok || ( r.code != 0 && r.code != 200 ) )
          {
             lastError = r.error || ( "HTTP " + r.code );
@@ -110,7 +109,7 @@ var SITleNet = ( function()
             lastError = "payload is not TLE data (0 valid records)";
             continue;
          }
-         return { text: r.text, count: count };
+         return { url: url, text: r.text, count: count };
       }
       return { error: lastError };
    }
@@ -141,25 +140,27 @@ var SITleNet = ( function()
       }
 
       var sources = baseUrl ? [ baseUrl ].concat( DEFAULT_SOURCES ) : DEFAULT_SOURCES;
-      var lastError = "";
-      for ( var i = 0; i < sources.length; ++i )
+
+      // Pass 1 is quick (10 s/source) so a blocked host falls through fast to
+      // the mirror; pass 2 retries with a longer timeout only if all failed.
+      var got = fetchPass( sources, group, 10 );
+      if ( got.error )
       {
-         var url = buildUrl( sources[ i ], group );
-         var got = tryFetch( url );
-         if ( got.error )
-         {
-            lastError = got.error;
-            continue;
-         }
+         pause( 1500 );
+         got = fetchPass( sources, group, 25 );
+      }
+      if ( !got.error )
+      {
          if ( !File.directoryExists( cacheDir ) )
             File.createDirectory( cacheDir, true );
          var fetchedUtc = ( new Date ).toISOString();
          File.writeTextFile( tlePath, got.text );
          File.writeTextFile( metaPath, JSON.stringify(
-            { fetchedUtc: fetchedUtc, sourceUrl: url, count: got.count }, null, 2 ) );
+            { fetchedUtc: fetchedUtc, sourceUrl: got.url, count: got.count }, null, 2 ) );
          return { tlePath: tlePath, count: got.count, fetchedUtc: fetchedUtc,
-                  fromCache: false, sourceUrl: url };
+                  fromCache: false, sourceUrl: got.url };
       }
+      var lastError = got.error;
 
       // Every source failed: an expired cache is better than nothing.
       if ( meta != null && File.exists( tlePath ) )
