@@ -827,47 +827,170 @@ class SkyIntrudersDialog extends Dialog
       super();
       this.params = params;
       this.files = [];
-      this.result = null;
+      this.lastResult = null;
       this.sessionFrames = null;   // raw frames of the last Night-trails run
       this.windowTitle = SKYINTRUDERS_TITLE;
 
-      this.infoLabel = new Label( this );
-      this.infoLabel.useRichText = true;
-      this.infoLabel.text = "<b>" + SKYINTRUDERS_TITLE + "</b> — who crossed your photo last night? " +
-                            "Add your raw light frames, then Analyze. (build " + SKYINTRUDERS_BUILD + ")";
-      this.infoLabel.wordWrapping = true;
-      this.infoLabel.frameStyle = FrameStyle.Box;
-      this.infoLabel.margin = 6;
+      var self = this;
+      var ACCENT = 0xff22d3ee;
 
-      // --- mode selector
+      // --- header: emblem + title + a mode-specific tagline ------------------
+      this.emblem = this.makeEmblem();
+
+      this.titleLabel = new Label( this );
+      this.titleLabel.text = SKYINTRUDERS_TITLE;
+      var tf = this.titleLabel.font;
+      tf.bold = true;
+      tf.pointSize = Math.round( this.font.pointSize * 1.7 );
+      this.titleLabel.font = tf;
+
+      this.buildLabel = new Label( this );
+      this.buildLabel.text = "build " + SKYINTRUDERS_BUILD;
+      this.buildLabel.textAlignment = TextAlign.Left | TextAlign.VertCenter;
+
+      this.taglineLabel = new Label( this );
+      this.taglineLabel.useRichText = true;
+      this.taglineLabel.wordWrapping = true;
+
+      this.titleColumn = new VerticalSizer;
+      this.titleColumn.add( this.titleLabel );
+      this.titleColumn.add( this.buildLabel );
+
+      this.headerSizer = new HorizontalSizer;
+      this.headerSizer.spacing = 10;
+      if ( this.emblem != null )
+         this.headerSizer.add( this.emblem );
+      this.headerSizer.add( this.titleColumn );
+      this.headerSizer.addStretch();
+
+      // --- mode tabs ---------------------------------------------------------
       var MODES = [ "night", "treasure", "trash" ];
-      this.modeLabel = new Label( this );
-      this.modeLabel.text = "Mode:";
-      this.modeLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
-      this.modeCombo = new ComboBox( this );
-      this.modeCombo.addItem( "Night trails — who crossed your photo" );
-      this.modeCombo.addItem( "Treasure Hunt — what's already in it" );
-      this.modeCombo.addItem( "Trash to Art — recycle your rejects" );
-      var mi = MODES.indexOf( params.mode );
-      this.modeCombo.currentItem = ( mi >= 0 ) ? mi : 0;
-      this.modeCombo.onItemSelected = ( i ) =>
-      {
-         this.params.mode = MODES[ i ] || "night";
-         this.updateMode();
-      };
-      this.modeSizer = new HorizontalSizer;
-      this.modeSizer.spacing = 6;
-      this.modeSizer.add( this.modeLabel );
-      this.modeSizer.add( this.modeCombo, 100 );
 
-      // --- file list
+      // Night page: detection threshold + observer site.
+      this.kSigmaControl = new NumericControl( this );
+      this.kSigmaControl.label.text = "Detection threshold (σ):";
+      this.kSigmaControl.setRange( 3, 12 );
+      this.kSigmaControl.setPrecision( 1 );
+      this.kSigmaControl.setValue( params.kSigma );
+      this.kSigmaControl.toolTip = "Trail pixels must exceed the frame background by this many " +
+                                   "robust sigmas. Lower catches fainter trails but risks noise.";
+      this.kSigmaControl.onValueUpdated = ( v ) => { self.params.kSigma = v; };
+
+      this.latEdit = this.makeCoordEdit( "Lat (°):", params.observerLatDeg,
+                                         ( v ) => { self.params.observerLatDeg = v; } );
+      this.lonEdit = this.makeCoordEdit( "Lon (°):", params.observerLonDeg,
+                                         ( v ) => { self.params.observerLonDeg = v; } );
+      this.altEdit = this.makeCoordEdit( "Alt (m):", params.observerAltM,
+                                         ( v ) => { self.params.observerAltM = v; } );
+      this.observerRow = new HorizontalSizer;
+      this.observerRow.spacing = 10;
+      this.observerRow.add( this.latEdit.sizer );
+      this.observerRow.add( this.lonEdit.sizer );
+      this.observerRow.add( this.altEdit.sizer );
+      this.observerRow.addStretch();
+      this.observerGroup = new GroupBox( this );
+      this.observerGroup.title = "Observer site — only if FITS headers lack SITELAT / SITELONG";
+      this.observerGroup.sizer = new VerticalSizer;
+      this.observerGroup.sizer.margin = 8;
+      this.observerGroup.sizer.add( this.observerRow );
+
+      this.nightPage = this.makePage( [
+         this.pageHint( "Identify satellite, meteor and asteroid trails across a night of " +
+                        "light frames, then get a night log and a ready-to-post report." ),
+         this.kSigmaControl,
+         this.observerGroup
+      ] );
+
+      // Treasure page: catalog depth + a plate-solve reminder.
+      this.treasureRows = new NumericControl( this );
+      this.treasureRows.label.text = "Max catalog rows / type:";
+      this.treasureRows.setRange( 50, 2000 );
+      this.treasureRows.setPrecision( 0 );
+      this.treasureRows.setValue( params.treasureMaxRows || 400 );
+      this.treasureRows.toolTip = "Upper bound on objects fetched per catalog (galaxies, quasars, " +
+                                  "nebulae, asteroids) around your field.";
+      this.treasureRows.onValueUpdated = ( v ) => { self.params.treasureMaxRows = Math.round( v ); };
+
+      this.treasurePage = this.makePage( [
+         this.pageHint( "Point at a <b>plate-solved</b> image (uses the active window if the list " +
+                        "is empty) and discover the galaxies, quasars, nebulae and passing " +
+                        "asteroids hiding in your field." ),
+         this.treasureRows
+      ] );
+
+      // Trash page: color scheme + output toggles.
+      var SCHEMES = [ "type", "operator", "time" ];
+      this.schemeLabel = new Label( this );
+      this.schemeLabel.text = "Color by:";
+      this.schemeLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
+      this.schemeCombo = new ComboBox( this );
+      this.schemeCombo.addItem( "type (satellite / meteor / …)" );
+      this.schemeCombo.addItem( "operator (Starlink / OneWeb / …)" );
+      this.schemeCombo.addItem( "time (dusk → dawn gradient)" );
+      var si = SCHEMES.indexOf( params.trashScheme );
+      this.schemeCombo.currentItem = ( si >= 0 ) ? si : 0;
+      this.schemeCombo.onItemSelected = ( i ) => { self.params.trashScheme = SCHEMES[ i ] || "type"; };
+      this.schemeSizer = new HorizontalSizer;
+      this.schemeSizer.spacing = 6;
+      this.schemeSizer.add( this.schemeLabel );
+      this.schemeSizer.add( this.schemeCombo, 100 );
+
+      this.choreoCheck = new CheckBox( this );
+      this.choreoCheck.text = "Intruder choreography";
+      this.choreoCheck.toolTip = "Every detected trail drawn on one canvas, color-coded.";
+      this.choreoCheck.checked = params.trashChoreography;
+      this.choreoCheck.onCheck = ( c ) => { self.params.trashChoreography = c; };
+
+      this.starTrailsCheck = new CheckBox( this );
+      this.starTrailsCheck.text = "Star-trail composite";
+      this.starTrailsCheck.toolTip = "Classic lighten/maximum combine of the frames.";
+      this.starTrailsCheck.checked = params.trashStarTrails;
+      this.starTrailsCheck.onCheck = ( c ) => { self.params.trashStarTrails = c; };
+
+      this.posterCheck = new CheckBox( this );
+      this.posterCheck.text = "Designed poster (HTML)";
+      this.posterCheck.toolTip = "A shareable poster: choreography + thumbnails + stats.";
+      this.posterCheck.checked = params.trashPoster;
+      this.posterCheck.onCheck = ( c ) => { self.params.trashPoster = c; };
+
+      this.outputsSizer = new VerticalSizer;
+      this.outputsSizer.spacing = 4;
+      this.outputsSizer.add( this.choreoCheck );
+      this.outputsSizer.add( this.starTrailsCheck );
+      this.outputsSizer.add( this.posterCheck );
+      this.outputsGroup = new GroupBox( this );
+      this.outputsGroup.title = "Outputs";
+      this.outputsGroup.sizer = new VerticalSizer;
+      this.outputsGroup.sizer.margin = 8;
+      this.outputsGroup.sizer.add( this.outputsSizer );
+
+      this.trashPage = this.makePage( [
+         this.pageHint( "Recycle rejected frames into art — from this session's rejects or any " +
+                        "folder of discards." ),
+         this.schemeSizer,
+         this.outputsGroup
+      ] );
+
+      this.tabBox = new TabBox( this );
+      this.tabBox.addPage( this.nightPage, "Night trails" );
+      this.tabBox.addPage( this.treasurePage, "Treasure Hunt" );
+      this.tabBox.addPage( this.trashPage, "Trash to Art" );
+      var mi = MODES.indexOf( params.mode );
+      this.tabBox.currentPageIndex = ( mi >= 0 ) ? mi : 0;
+      this.tabBox.onPageSelected = ( i ) =>
+      {
+         self.params.mode = MODES[ i ] || "night";
+         self.updateMode();
+      };
+
+      // --- shared input list -------------------------------------------------
       this.fileTree = new TreeBox( this );
       this.fileTree.alternateRowColor = true;
       this.fileTree.multipleSelection = true;
       this.fileTree.numberOfColumns = 1;
-      this.fileTree.setHeaderText( 0, "Light frames" );
+      this.fileTree.headerVisible = true;
       this.fileTree.rootDecoration = false;
-      this.fileTree.setMinSize( 560, 220 );
+      this.fileTree.setMinSize( 580, 200 );
 
       this.addFilesButton = new PushButton( this );
       this.addFilesButton.text = "Add files…";
@@ -875,18 +998,18 @@ class SkyIntrudersDialog extends Dialog
       {
          var d = new OpenFileDialog;
          d.multipleSelections = true;
-         d.caption = "Select light frames";
+         d.caption = "Select frames";
          d.filters = [ [ "FITS / XISF", "*.fits", "*.fit", "*.fts", "*.xisf" ], [ "Any file", "*" ] ];
          if ( d.execute() )
-            this.addFiles( d.fileNames );
+            self.addFiles( d.fileNames );
       };
 
       this.addDirButton = new PushButton( this );
-      this.addDirButton.text = "Add directory…";
+      this.addDirButton.text = "Add folder…";
       this.addDirButton.onClick = () =>
       {
          var d = new GetDirectoryDialog;
-         d.caption = "Select a directory of light frames";
+         d.caption = "Select a folder of frames";
          if ( d.execute() )
          {
             var found = [];
@@ -904,7 +1027,7 @@ class SkyIntrudersDialog extends Dialog
                         }
                } while ( ff.next() );
             found.sort();
-            this.addFiles( found );
+            self.addFiles( found );
          }
       };
 
@@ -912,162 +1035,172 @@ class SkyIntrudersDialog extends Dialog
       this.clearButton.text = "Clear";
       this.clearButton.onClick = () =>
       {
-         this.files = [];
-         this.fileTree.clear();
+         self.files = [];
+         self.fileTree.clear();
+         self.updateStatus();
       };
 
       this.fileButtons = new HorizontalSizer;
+      this.fileButtons.spacing = 6;
       this.fileButtons.add( this.addFilesButton );
-      this.fileButtons.addSpacing( 6 );
       this.fileButtons.add( this.addDirButton );
-      this.fileButtons.addSpacing( 6 );
       this.fileButtons.add( this.clearButton );
       this.fileButtons.addStretch();
 
-      // --- detection parameters
-      this.kSigmaControl = new NumericControl( this );
-      this.kSigmaControl.label.text = "Detection threshold (σ):";
-      this.kSigmaControl.setRange( 3, 12 );
-      this.kSigmaControl.setPrecision( 1 );
-      this.kSigmaControl.setValue( params.kSigma );
-      this.kSigmaControl.toolTip = "Trail pixels must exceed the frame background by this many robust sigmas.";
-      this.kSigmaControl.onValueUpdated = ( v ) => { this.params.kSigma = v; };
+      this.inputGroup = new GroupBox( this );
+      this.inputGroup.title = "Input";
+      this.inputGroup.sizer = new VerticalSizer;
+      this.inputGroup.sizer.margin = 8;
+      this.inputGroup.sizer.spacing = 6;
+      this.inputGroup.sizer.add( this.fileTree, 100 );
+      this.inputGroup.sizer.add( this.fileButtons );
 
+      // --- footer: language, status, actions ---------------------------------
       this.langCombo = new ComboBox( this );
-      this.langCombo.addItem( "English report" );
-      this.langCombo.addItem( "Rapport en français" );
+      this.langCombo.addItem( "English" );
+      this.langCombo.addItem( "Français" );
       this.langCombo.currentItem = ( params.lang == "fr" ) ? 1 : 0;
-      this.langCombo.onItemSelected = ( i ) => { this.params.lang = ( i == 1 ) ? "fr" : "en"; };
+      this.langCombo.toolTip = "Report language.";
+      this.langCombo.onItemSelected = ( i ) => { self.params.lang = ( i == 1 ) ? "fr" : "en"; };
+      this.langLabel = new Label( this );
+      this.langLabel.text = "Report:";
+      this.langLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
 
-      this.paramsSizer = new HorizontalSizer;
-      this.paramsSizer.add( this.kSigmaControl, 100 );
-      this.paramsSizer.addSpacing( 12 );
-      this.paramsSizer.add( this.langCombo );
+      this.statusLabel = new Label( this );
+      this.statusLabel.useRichText = true;
+      this.statusLabel.textAlignment = TextAlign.Left | TextAlign.VertCenter;
 
-      this.paramsGroup = new GroupBox( this );
-      this.paramsGroup.title = "Detection";
-      this.paramsGroup.sizer = new VerticalSizer;
-      this.paramsGroup.sizer.margin = 8;
-      this.paramsGroup.sizer.add( this.paramsSizer );
-
-      // --- observer fallback
-      this.latEdit = this.makeCoordEdit( "Latitude (°):", params.observerLatDeg,
-                                         ( v ) => { this.params.observerLatDeg = v; } );
-      this.lonEdit = this.makeCoordEdit( "Longitude (°):", params.observerLonDeg,
-                                         ( v ) => { this.params.observerLonDeg = v; } );
-      this.altEdit = this.makeCoordEdit( "Altitude (m):", params.observerAltM,
-                                         ( v ) => { this.params.observerAltM = v; } );
-
-      this.observerGroup = new GroupBox( this );
-      this.observerGroup.title = "Observer site (used when FITS headers have none)";
-      this.observerGroup.sizer = new HorizontalSizer;
-      this.observerGroup.sizer.margin = 8;
-      this.observerGroup.sizer.spacing = 12;
-      this.observerGroup.sizer.add( this.latEdit.sizer );
-      this.observerGroup.sizer.add( this.lonEdit.sizer );
-      this.observerGroup.sizer.add( this.altEdit.sizer );
-      this.observerGroup.sizer.addStretch();
-
-      // --- Trash to Art options
-      var SCHEMES = [ "type", "operator", "time" ];
-      this.schemeLabel = new Label( this );
-      this.schemeLabel.text = "Color scheme:";
-      this.schemeLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
-      this.schemeCombo = new ComboBox( this );
-      this.schemeCombo.addItem( "by type (satellite / meteor / …)" );
-      this.schemeCombo.addItem( "by operator (Starlink / OneWeb / …)" );
-      this.schemeCombo.addItem( "by time (dusk → dawn gradient)" );
-      var si = SCHEMES.indexOf( params.trashScheme );
-      this.schemeCombo.currentItem = ( si >= 0 ) ? si : 0;
-      this.schemeCombo.onItemSelected = ( i ) => { this.params.trashScheme = SCHEMES[ i ] || "type"; };
-
-      this.choreoCheck = new CheckBox( this );
-      this.choreoCheck.text = "Intruder choreography";
-      this.choreoCheck.checked = params.trashChoreography;
-      this.choreoCheck.onCheck = ( c ) => { this.params.trashChoreography = c; };
-
-      this.starTrailsCheck = new CheckBox( this );
-      this.starTrailsCheck.text = "Star-trail composite";
-      this.starTrailsCheck.checked = params.trashStarTrails;
-      this.starTrailsCheck.onCheck = ( c ) => { this.params.trashStarTrails = c; };
-
-      this.posterCheck = new CheckBox( this );
-      this.posterCheck.text = "Designed poster (HTML)";
-      this.posterCheck.checked = params.trashPoster;
-      this.posterCheck.onCheck = ( c ) => { this.params.trashPoster = c; };
-
-      this.schemeSizer = new HorizontalSizer;
-      this.schemeSizer.spacing = 6;
-      this.schemeSizer.add( this.schemeLabel );
-      this.schemeSizer.add( this.schemeCombo, 100 );
-
-      this.outputsSizer = new HorizontalSizer;
-      this.outputsSizer.spacing = 14;
-      this.outputsSizer.add( this.choreoCheck );
-      this.outputsSizer.add( this.starTrailsCheck );
-      this.outputsSizer.add( this.posterCheck );
-      this.outputsSizer.addStretch();
-
-      this.trashGroup = new GroupBox( this );
-      this.trashGroup.title = "Trash to Art — outputs";
-      this.trashGroup.sizer = new VerticalSizer;
-      this.trashGroup.sizer.margin = 8;
-      this.trashGroup.sizer.spacing = 6;
-      this.trashGroup.sizer.add( this.schemeSizer );
-      this.trashGroup.sizer.add( this.outputsSizer );
-
-      // --- actions
       this.analyzeButton = new PushButton( this );
-      this.analyzeButton.text = "Analyze night";
       this.analyzeButton.defaultButton = true;
-      this.analyzeButton.onClick = () => this.runNow();
+      this.analyzeButton.onClick = () => self.runNow();
 
       this.closeButton = new PushButton( this );
       this.closeButton.text = "Close";
-      this.closeButton.onClick = () => this.cancel();
+      this.closeButton.onClick = () => self.cancel();
 
       this.actions = new HorizontalSizer;
-      this.actions.addStretch();
+      this.actions.spacing = 6;
+      this.actions.add( this.langLabel );
+      this.actions.add( this.langCombo );
+      this.actions.addSpacing( 12 );
+      this.actions.add( this.statusLabel, 100 );
       this.actions.add( this.analyzeButton );
-      this.actions.addSpacing( 6 );
       this.actions.add( this.closeButton );
 
+      // --- assemble ----------------------------------------------------------
       this.sizer = new VerticalSizer;
-      this.sizer.margin = 8;
+      this.sizer.margin = 10;
       this.sizer.spacing = 8;
-      this.sizer.add( this.infoLabel );
-      this.sizer.add( this.modeSizer );
-      this.sizer.add( this.fileTree, 100 );
-      this.sizer.add( this.fileButtons );
-      this.sizer.add( this.paramsGroup );
-      this.sizer.add( this.observerGroup );
-      this.sizer.add( this.trashGroup );
+      this.sizer.add( this.headerSizer );
+      this.sizer.add( this.taglineLabel );
+      this.sizer.addSpacing( 2 );
+      this.sizer.add( this.tabBox );
+      this.sizer.add( this.inputGroup, 100 );
       this.sizer.add( this.actions );
+
       this.updateMode();
+      this.setMinWidth( 620 );
       this.adjustToContents();
    }
 
-   // Show only the controls relevant to the active mode and relabel Run.
+   // A small emblem control that paints the script icon, or null if the SVG
+   // cannot be found/loaded (dev vs installed layouts differ).
+   makeEmblem()
+   {
+      var here = File.extractDrive( #__FILE__ ) + File.extractDirectory( #__FILE__ );
+      var candidates = [ here + "/assets/" + "SkyIntruders.svg",
+                         here + "/" + "SkyIntruders.svg",
+                         here + "/../../../rsc/icons/script/SkyIntruders/SkyIntruders.svg" ];
+      var bmp = null;
+      for ( var i = 0; i < candidates.length && bmp == null; ++i )
+      {
+         try
+         {
+            if ( File.exists( candidates[ i ] ) )
+            {
+               var b = new Bitmap( candidates[ i ] );
+               bmp = ( typeof b.scaledTo == "function" ) ? b.scaledTo( 44, 44 ) : b;
+            }
+         }
+         catch ( e ) { bmp = null; }
+      }
+      if ( bmp == null )
+         return null;
+      var ctrl = new Control( this );
+      ctrl.setFixedSize( 44, 44 );
+      ctrl.__bmp = bmp;
+      ctrl.onPaint = function()
+      {
+         var g = new Graphics( this );
+         try { g.drawBitmap( 0, 0, this.__bmp ); } catch ( e ) {}
+         g.end();
+      };
+      return ctrl;
+   }
+
+   pageHint( richText )
+   {
+      var l = new Label( this );
+      l.useRichText = true;
+      l.wordWrapping = true;
+      l.text = richText;
+      return l;
+   }
+
+   // Build a tab page Control from a list of widgets/sizers (Sizer.add
+   // accepts both, so no per-item branching is needed).
+   makePage( items )
+   {
+      var page = new Control( this );
+      page.sizer = new VerticalSizer;
+      page.sizer.margin = 10;
+      page.sizer.spacing = 8;
+      for ( var i = 0; i < items.length; ++i )
+         page.sizer.add( items[ i ] );
+      page.sizer.addStretch();
+      return page;
+   }
+
+   // Reflect the active mode: tagline, Run label, input header, status.
    updateMode()
    {
       var mode = this.params.mode;
-      this.observerGroup.visible = ( mode === "night" );
-      this.trashGroup.visible = ( mode === "trash" );
+      var taglines = {
+         night:    "🛰  <i>Who crossed your photo last night?</i>",
+         treasure: "💎  <i>What you photographed without knowing.</i>",
+         trash:    "🎨  <i>Your rejects have talent.</i>"
+      };
+      this.taglineLabel.text = taglines[ mode ] || taglines.night;
+
       if ( mode === "treasure" )
       {
          this.analyzeButton.text = "Hunt treasures";
-         this.fileTree.setHeaderText( 0, "Plate-solved image (active window if empty)" );
+         this.fileTree.setHeaderText( 0, "Plate-solved image — active window used if empty" );
       }
       else if ( mode === "trash" )
       {
          this.analyzeButton.text = "Make art";
-         this.fileTree.setHeaderText( 0, "Reject frames (or a folder of rejects)" );
+         this.fileTree.setHeaderText( 0, "Reject frames — or add a folder of rejects" );
       }
       else
       {
          this.analyzeButton.text = "Analyze night";
          this.fileTree.setHeaderText( 0, "Light frames" );
       }
+      this.updateStatus();
+   }
+
+   updateStatus( msg )
+   {
+      if ( msg !== undefined )
+      {
+         this.statusLabel.text = msg;
+         return;
+      }
+      var n = this.files.length;
+      this.statusLabel.text = ( n == 0 )
+         ? "<i>No frames added yet.</i>"
+         : ( n + ( n == 1 ? " frame ready." : " frames ready." ) );
    }
 
    makeCoordEdit( label, value, apply )
@@ -1100,6 +1233,7 @@ class SkyIntrudersDialog extends Dialog
             var node = new TreeBoxNode( this.fileTree );
             node.setText( 0, paths[ i ] );
          }
+      this.updateStatus();
    }
 
    setBusy( busy )
@@ -1108,6 +1242,9 @@ class SkyIntrudersDialog extends Dialog
       this.addFilesButton.enabled = !busy;
       this.addDirButton.enabled = !busy;
       this.clearButton.enabled = !busy;
+      this.tabBox.enabled = !busy;
+      this.updateStatus( busy ? "<i>Working…</i>" : undefined );
+      processEvents();
    }
 
    // Dispatch Run to the active mode.
@@ -1135,12 +1272,12 @@ class SkyIntrudersDialog extends Dialog
       console.writeln( "<b>" + SKYINTRUDERS_TITLE + "</b> — analyzing " + this.files.length + " frame(s)…" );
       try
       {
-         this.result = runAnalysis( this.files, this.params );
-         this.sessionFrames = this.result.frames;
+         this.lastResult = runAnalysis( this.files, this.params );
+         this.sessionFrames = this.lastResult.frames;
          console.writeln( "" );
-         console.writeln( this.result.report.markdown );
+         console.writeln( this.lastResult.report.markdown );
          var dir = File.extractDrive( this.files[ 0 ] ) + File.extractDirectory( this.files[ 0 ] );
-         ( new ReportDialog( this.result, this.params, dir ) ).execute();
+         ( new ReportDialog( this.lastResult, this.params, dir ) ).execute();
       }
       catch ( e )
       {
@@ -1317,4 +1454,46 @@ function main()
    saveParams( params );
 }
 
-main();
+// Headless construction smoke test: build the dialog (exercising all layout
+// code) without showing it, so the UI can be validated in --automation-mode.
+// Enabled only when SI_CONSTRUCT_TEST=1 is set in the environment.
+function siConstructTest()
+{
+   // Some UI enum globals exist in the GUI but are not injected under
+   // --automation-mode. The production path only runs in the GUI, so shim
+   // the ones used at construction time to exercise the real layout code.
+   if ( typeof TextAlign == "undefined" )
+      TextAlign = { Left: 1, Right: 2, HorzCenter: 4, Top: 32, Bottom: 64,
+                    VertCenter: 128, Center: 132 };
+   if ( typeof FrameStyle == "undefined" )
+      FrameStyle = { Flat: 0, Box: 1, Sunken: 2, Raised: 3, Styled: 4 };
+
+   var out = { ok: true, error: "" };
+   try
+   {
+      var d = new SkyIntrudersDialog( loadParams() );
+      out.modes = [ d.tabBox.numberOfPages, d.tabBox.currentPageIndex ];
+   }
+   catch ( e )
+   {
+      out.ok = false;
+      out.error = String( e.message || e );
+   }
+   File.writeTextFile( File.systemTempDirectory + "/skyintruders-construct.json",
+                       JSON.stringify( out, null, 2 ) );
+}
+
+function siConstructTestRequested()
+{
+   try
+   {
+      return typeof getEnvironmentVariable == "function" &&
+             getEnvironmentVariable( "SI_CONSTRUCT_TEST" ) == "1";
+   }
+   catch ( e ) { return false; }
+}
+
+if ( siConstructTestRequested() )
+   siConstructTest();
+else
+   main();
