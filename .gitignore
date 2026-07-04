@@ -1,0 +1,4 @@
+dist/
+*.xssk
+*.log
+.DS_Store

@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package builds + reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the update package
+        run: bash scripts/build-update-package.sh 0.0.0-ci
+      - name: Zip is reproducible (same content -> same SHA-1)
+        run: |
+          name="$(ls dist/*.zip)"
+          a="$(sha1sum "$name" | cut -d' ' -f1)"
+          bash scripts/build-update-package.sh 0.0.0-ci
+          b="$(sha1sum "$name" | cut -d' ' -f1)"
+          echo "build #1: $a"; echo "build #2: $b"
+          [ "$a" = "$b" ] || { echo "::error::the package zip is not reproducible"; exit 1; }
