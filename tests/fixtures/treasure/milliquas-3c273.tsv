@@ -1,0 +1,51 @@
+#
+#   VizieR Astronomical Server vizier.cds.unistra.fr
+#    Date: 2026-07-04T15:04:00 [V7.5.6]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-07-04T15:04:00	  Query execution date
+#INFO	request=https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/294&-c=187.2779+2.0524&-c.rd=0.2&-out.add=_RAJ,_DEJ&-out=Name,z,Rmag&-out.max=20	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.5.6	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+#INFO	-c=187.277900+02.052400,rd=0.2	
+#Constraint -out.max=20
+
+#RESOURCE=yCat_7294
+#Name: VII/294
+#Title: The Million Quasars (Milliquas) catalogue, version 8 (Flesch, 2023)
+#INFO	ivoid=ivo://cds.vizier/vii/294	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/vii/294	    IVOID of underlying data collection
+#INFO	creator=Flesch E.W	    First author or institution
+#INFO	cites=bibcode:2023OJAp....6E..49F	    Article or Data origin sources
+#INFO	journal=OJAp	    Journal name
+#INFO	original_date=2023	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/VII/294	    Dataset landing page
+#INFO	publication_date=2024-02-12	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Table	VII_294_catalog:
+#Name: VII/294/catalog
+#Title: The catalogue (v8), 30-Jul-2023
+#Column	_RAJ2000	(F13.9)	Right ascension (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.ra]
+#Column	_DEJ2000	(F13.9)	Declination (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.dec]
+#Column	Name	(A25)	ID from the literature, or J2000 (2)	[ucd=meta.id;meta.main]
+#Column	z	(F6.3)	? Redshift from the literature or estimated (7)	[ucd=src.redshift]
+#Column	Rmag	(F5.2)	? Red optical magnitude (4)	[ucd=phot.mag;em.opt.R]
+_RAJ2000	_DEJ2000	Name	z	Rmag
+deg	deg	 	 	mag
+-------------	-------------	-------------------------	------	-----
+187.154059000	+02.004714500	J122836.97+020016.9      	      	21.64
+187.192138000	+01.948936000	ChaMP J122846.1+015656   	 1.087	22.40
+187.207599900	+01.928220400	ChaMP J122849.8+015541   	 2.320	19.95
+187.222789500	+01.946883400	SDSS J122853.46+015648.9 	 2.320	20.80
+187.277915400	+02.052388600	3C 273                   	 0.158	14.11
+187.298753300	+02.053655100	ChaMP J122911.7+020313   	 0.158	18.65
+187.310959800	+02.022588500	J122914.63+020121.3      	      	21.85
+187.313109500	+01.879063300	2QZ J122915.1+015244     	 1.227	20.07
+187.394695100	+01.949481700	2QZ J122934.7+015657     	 1.919	18.76
+187.408337700	+02.097801400	SDSS J122938.00+020552.0 	 2.082	22.06
+187.425141800	+02.148660400	SDSS J122942.03+020855.1 	 2.000	21.18
+

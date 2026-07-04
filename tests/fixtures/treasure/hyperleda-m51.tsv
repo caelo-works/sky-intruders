@@ -1,0 +1,42 @@
+#
+#   VizieR Astronomical Server vizier.cds.unistra.fr
+#    Date: 2026-07-04T15:03:59 [V7.5.6]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-07-04T15:03:59	  Query execution date
+#INFO	request=https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/237&-c=202.4696+47.1952&-c.rd=0.15&-out.add=_RAJ,_DEJ&-out=PGC,logD25&-out.max=20	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.5.6	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+#INFO	-c=202.469600+47.195200,rd=0.15	
+#Constraint -out.max=20
+
+#RESOURCE=yCat_7237
+#Name: VII/237
+#Title: HYPERLEDA. I. Catalog of galaxies (Paturel+, 2003)
+#INFO	ivoid=ivo://cds.vizier/vii/237	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/vii/237	    IVOID of underlying data collection
+#INFO	creator=Paturel G.	    First author or institution
+#INFO	cites=bibcode:2003A&A...412...45P	    Article or Data origin sources
+#INFO	journal=A&A	    Journal name
+#INFO	original_date=2003	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/VII/237	    Dataset landing page
+#INFO	publication_date=2017-09-22	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Table	VII_237_pgc:
+#Name: VII/237/pgc
+#Title: Catalog of galaxies (table 5 in the paper)
+#Column	_RAJ2000	(F10.6)	Right ascension (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.ra]
+#Column	_DEJ2000	(F10.6)	Declination (FK5, Equinox=J2000.0) (computed by VizieR, not part of the original data. The format may include more digits than the original data because of internal accuracy requirements in VizieR and across other CDS services)	[ucd=pos.eq.dec]
+#Column	PGC	(I7)	PGC number	[ucd=meta.id;meta.main]
+#Column	logD25	(F5.2)	? Apparent diameter (2)	[ucd=phys.angSize;src]
+_RAJ2000	_DEJ2000	PGC	logD25
+deg	deg	 	[0.1arcmin]
+----------	----------	-------	-----
+202.467917	+47.194444	  47404	 2.00
+202.496667	+47.267778	  47413	 1.77
+202.614583	+47.246944	2294907	 0.64
+
