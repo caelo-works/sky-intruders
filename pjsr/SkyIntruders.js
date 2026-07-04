@@ -749,8 +749,17 @@ function runTrashToArt( frames, framePaths, params, onProgress )
          if ( framePaths.length < 8 )
             console.warningln( "Only " + framePaths.length +
                " frame(s): the star-trail composite will be sparse." );
-         progress( "Max-combining " + framePaths.length + " frame(s) into star trails…" );
-         var composite = SIRender.maxCombine( framePaths );
+         // Register first so dithering/rotation don't smear the max-combine.
+         progress( "Registering " + framePaths.length + " frame(s)…" );
+         var regDir = File.systemTempDirectory + "/si-trash-reg-" + ( new Date ).getTime();
+         var aligned = SIRender.registerFrames( framePaths, regDir );
+         if ( aligned == null || aligned.length < framePaths.length )
+            console.warningln( "Registration " + ( aligned == null ? "unavailable" :
+               "aligned " + aligned.length + "/" + framePaths.length ) +
+               " — combining what is available." );
+         var combineList = ( aligned != null && aligned.length > 0 ) ? aligned : framePaths;
+         progress( "Max-combining " + combineList.length + " frame(s) into a composite…" );
+         var composite = SIRender.maxCombine( combineList );
          if ( composite !== null )
          {
             var compBmp = SIRender.stretchedBitmap( composite );
@@ -758,6 +767,19 @@ function runTrashToArt( frames, framePaths, params, onProgress )
          }
          else
             console.warningln( "Star-trail composite produced no image." );
+
+         // Drop the registered temp frames.
+         try
+         {
+            if ( File.directoryExists( regDir ) )
+            {
+               var ff = new FileFind;
+               if ( ff.begin( regDir + "/*" ) )
+                  do { if ( !ff.isDirectory ) File.remove( regDir + "/" + ff.name ); } while ( ff.next() );
+               File.removeDirectory( regDir );
+            }
+         }
+         catch ( e ) {}
       }
       else
          console.warningln( "Star-trail composite needs the frame files (session " +

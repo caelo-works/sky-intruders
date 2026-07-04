@@ -432,6 +432,53 @@ var SIRender = ( function()
       return item; // assume it is already an Image
    }
 
+   // Register a set of frame files to the first one with StarAlignment so a
+   // dithered/rotated session can be pixel-combined. Returns a list of file
+   // paths on the reference grid ([reference] + successfully aligned targets),
+   // or null if StarAlignment is unavailable. Frames that fail to register
+   // (too few stars, clouds) are silently dropped.
+   function registerFrames( framePaths, outDir )
+   {
+      if ( typeof StarAlignment === "undefined" || !framePaths || framePaths.length < 2 )
+         return framePaths ? framePaths.slice() : null;
+      try
+      {
+         if ( !File.directoryExists( outDir ) )
+            File.createDirectory( outDir, true );
+         var ref = framePaths[ 0 ];
+         var postfix = "_r";
+         var SA = new StarAlignment;
+         SA.referenceImage = ref;
+         SA.referenceIsFile = true;
+         SA.outputDirectory = outDir;
+         SA.outputPostfix = postfix;
+         SA.outputPrefix = "";
+         SA.generateDrizzleData = false;
+         SA.generateMasks = false;
+         var targets = [];
+         for ( var i = 1; i < framePaths.length; ++i )
+            targets.push( [ true, true, framePaths[ i ] ] );
+         SA.targets = targets;
+         SA.executeGlobal();
+
+         // Collect the registered outputs that were actually produced.
+         var out = [ ref ];
+         for ( var j = 1; j < framePaths.length; ++j )
+         {
+            var base = File.extractName( framePaths[ j ] );
+            var cand = outDir + "/" + base + postfix + ".xisf";
+            if ( File.exists( cand ) )
+               out.push( cand );
+         }
+         return out;
+      }
+      catch ( e )
+      {
+         try { console.warningln( "SIRender.registerFrames: " + e.message ); } catch ( e2 ) {}
+         return null;
+      }
+   }
+
    function maxCombine( items )
    {
       var acc = null;
@@ -518,6 +565,7 @@ var SIRender = ( function()
       drawTrails: drawTrails,
       scaleBitmap: scaleBitmap,
       cropThumbnail: cropThumbnail,
+      registerFrames: registerFrames,
       maxCombine: maxCombine,
       showBitmap: showBitmap,
       showImage: showImage
