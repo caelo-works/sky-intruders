@@ -69,12 +69,23 @@ var SIRender = ( function()
    }
 
    // ------------------------------------------------------------------------
-   // Display autostretch. Astro frames are linear and render near-black; a
-   // robust shadows-clip + linear rescale (staying inside the C++ engine via
-   // Image.apply) makes the field visible. A display aid, not science.
+   // Display autostretch. Astro frames are linear and render near-black. This
+   // is the PixInsight STF/MTF auto-stretch: a robust shadows clip plus a
+   // midtones transfer that lands the background at a target level — adaptive
+   // and gentle (no blown highlights), unlike a hard linear rescale.
 
    function normalizedMAD( image )
    {
+      try
+      {
+         if ( typeof image.MAD === "function" )
+         {
+            var m = image.MAD()*1.4826;
+            if ( m > 0 )
+               return m;
+         }
+      }
+      catch ( e ) {}
       try
       {
          if ( typeof SIStats === "undefined" )
@@ -90,13 +101,36 @@ var SIRender = ( function()
       }
    }
 
-   function stretchedBitmap( image )
+   function beginNoSwap( view )
    {
-      // Work on a writable copy (view images are read-only) and rescale the
-      // interesting tonal range [med - 2 sigma, med + 8 sigma] into [0,1].
-      var w;
-      try { w = new Image( image ); }
-      catch ( e ) { return image.render(); }
+      if ( typeof UndoFlag_NoSwapFile !== "undefined" )
+         view.beginProcess( UndoFlag_NoSwapFile );
+      else
+         view.beginProcess();
+   }
+
+   // Midtones balance that maps a clipped-median x to a target background,
+   // derived from the MTF: for target 0.25 the closed form is 3x/(2x+1).
+   function midtonesForTarget( x, targetBg )
+   {
+      if ( !( x > 0 ) )
+         return 0;
+      if ( x >= 1 )
+         return 1;
+      var t = ( targetBg > 0 && targetBg < 1 ) ? targetBg : 0.25;
+      // Solve MTF(m,x)=t  ->  m = ((t-1)x) / ((2t-1)x - t).
+      var denom = ( 2*t - 1 )*x - t;
+      if ( denom === 0 )
+         return 0.5;
+      var m = ( ( t - 1 )*x )/denom;
+      return clamp01( m );
+   }
+
+   function stretchedBitmap( image, options )
+   {
+      options = options || {};
+      var targetBg = ( options.targetBg > 0 ) ? options.targetBg : 0.25;
+      var shadowsClip = ( typeof options.shadowsClip === "number" ) ? options.shadowsClip : -2.8;
 
       var medN;
       try { medN = image.median(); }
@@ -105,27 +139,70 @@ var SIRender = ( function()
       if ( !( madN > 0 ) )
          madN = 0.02;
 
-      var lo = clamp01( medN - 2.0*madN );
-      var hi = clamp01( medN + 8.0*madN );
-      if ( hi <= lo )
-         hi = clamp01( lo + 0.05 );
+      // STF auto-stretch parameters: shadows clip at median + C*MADn, midtones
+      // that carry the clipped median to the target background.
+      var c0 = clamp01( medN + shadowsClip*madN );
+      var span = 1 - c0;
+      var xMed = ( span > 0 ) ? ( medN - c0 )/span : medN;
+      xMed = clamp01( xMed );
+      var mid = midtonesForTarget( xMed, targetBg );
 
+      // Apply through HistogramTransformation (C++), which is a real MTF, on a
+      // throwaway window holding a copy of the image.
+      if ( typeof HistogramTransformation !== "undefined" && typeof ImageWindow !== "undefined" )
+      {
+         var win = null;
+         try
+         {
+            var ch = image.numberOfChannels;
+            var isColor = ch >= 3;
+            win = new ImageWindow( image.width, image.height, ch, 32, true, isColor, safeId( "SI_stretch" ) );
+            var v = win.mainView;
+            beginNoSwap( v );
+            v.image.assign( image );
+            v.endProcess();
+
+            var Ht = new HistogramTransformation;
+            var Hm = Ht.H;
+            for ( var r = 0; r < Hm.length; ++r )
+               Hm[ r ] = [ 0, 0.5, 1, 0, 1 ];
+            // Rows: R, G, B, RGB/K, Alpha. Stretch the color rows and the K row
+            // so both color and grayscale images get the same linked stretch.
+            var stretchRow = [ c0, mid, 1, 0, 1 ];
+            Hm[ 0 ] = stretchRow; Hm[ 1 ] = stretchRow; Hm[ 2 ] = stretchRow; Hm[ 3 ] = stretchRow;
+            Ht.H = Hm;
+            Ht.executeOn( v, false );
+
+            var bmp = v.image.render();
+            win.forceClose();
+            win = null;
+            return bmp;
+         }
+         catch ( e )
+         {
+            try { if ( win != null ) win.forceClose(); } catch ( e2 ) {}
+            try { console.warningln( "SIRender.stretchedBitmap (STF): " + e.message ); } catch ( e3 ) {}
+         }
+      }
+
+      // Fallback: a plain shadows-clip + linear rescale in the engine.
       try
       {
+         var w = new Image( image );
+         var lo = c0, hi = clamp01( medN + 8.0*madN );
+         if ( hi <= lo ) hi = clamp01( lo + 0.05 );
          if ( typeof ImageOp !== "undefined" && lo > 0 )
             w.apply( lo, ImageOp.Sub );
          if ( typeof ImageOp !== "undefined" && ( hi - lo ) > 0 )
             w.apply( 1.0/( hi - lo ), ImageOp.Mul );
          if ( typeof w.truncate === "function" )
             w.truncate( 0, 1 );
-         else if ( typeof w.rescale === "function" )
-            w.rescale();
+         return w.render();
       }
-      catch ( e )
+      catch ( e4 )
       {
-         try { console.warningln( "SIRender.stretchedBitmap: " + e.message ); } catch ( e2 ) {}
+         return image.render();
       }
-      return w.render();
    }
 
    // ------------------------------------------------------------------------
@@ -181,15 +258,23 @@ var SIRender = ( function()
    {
       opts = opts || {};
       var bmp = new Bitmap( baseBitmap );
+
+      // Default marker/label sizes scale with the image so they stay legible
+      // once the map is viewed or downscaled (a 9 px circle vanishes on a
+      // 6000 px frame). Caller can override any of these.
+      var longSide = Math.max( bmp.width, bmp.height );
+      var r = ( opts.radius > 0 ) ? opts.radius : Math.max( 10, Math.round( longSide/110 ) );
+      var pw = ( opts.penWidth > 0 ) ? opts.penWidth : Math.max( 2, Math.round( longSide/900 ) );
+      var fontSize = ( opts.fontSize > 0 ) ? opts.fontSize : Math.max( 12, Math.round( longSide/90 ) );
+      var ldx = ( typeof opts.labelDx === "number" ) ? opts.labelDx : ( r + Math.round( r*0.4 ) );
+      var ldy = ( typeof opts.labelDy === "number" ) ? opts.labelDy : -Math.round( r*0.4 );
+      var halo = hexToArgb( "#000000", 0xb8 ); // ~72% opaque dark outline
+      var haloW = Math.max( 3, pw + Math.round( fontSize/5 ) );
+
       var g = new Graphics( bmp );
       try
       {
          g.antialiasing = true;
-         var r = ( opts.radius > 0 ) ? opts.radius : 10;
-         var pw = ( opts.penWidth > 0 ) ? opts.penWidth : 2;
-         var fontSize = ( opts.fontSize > 0 ) ? opts.fontSize : 11;
-         var ldx = ( typeof opts.labelDx === "number" ) ? opts.labelDx : ( r + 3 );
-         var ldy = ( typeof opts.labelDy === "number" ) ? opts.labelDy : -( r + 1 );
          try { g.font = new Font( "SansSerif", fontSize ); } catch ( e ) {}
 
          marks = marks || [];
@@ -199,12 +284,26 @@ var SIRender = ( function()
             if ( m === null || m === undefined )
                continue;
             var col = hexToArgb( m.color || "#ffffff" );
+
+            // Dark outline behind the glyph, then the bright glyph on top —
+            // readable over both empty sky and bright nebulosity.
+            g.pen = new Pen( halo, haloW );
+            drawGlyph( g, m.glyph, m.x, m.y, r );
             g.pen = new Pen( col, pw );
             drawGlyph( g, m.glyph, m.x, m.y, r );
+
             if ( m.label )
             {
+               var lx = m.x + ldx, ly = m.y + ldy;
+               var s = String( m.label );
+               // Halo: the label drawn in dark at 8 offsets, then bright.
+               g.pen = new Pen( halo, 1 );
+               var o = Math.max( 1, Math.round( fontSize/12 ) );
+               var offs = [ [-o,-o],[o,-o],[-o,o],[o,o],[0,-o],[0,o],[-o,0],[o,0] ];
+               for ( var k = 0; k < offs.length; ++k )
+                  g.drawText( lx + offs[ k ][ 0 ], ly + offs[ k ][ 1 ], s );
                g.pen = new Pen( hexToArgb( m.labelColor || m.color || "#e6ebf2" ), 1 );
-               g.drawText( m.x + ldx, m.y + ldy, String( m.label ) );
+               g.drawText( lx, ly, s );
             }
          }
       }

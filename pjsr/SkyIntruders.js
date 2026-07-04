@@ -482,9 +482,21 @@ function runTreasureHunt( window, filePath, params, onProgress )
       marks.push( { x: o.x, y: o.y, color: style.color, glyph: style.glyph,
                     label: ( m < labelCap ) ? o.name : null, labelColor: style.color } );
    }
-   var mapBmp = SIRender.annotateField( base, marks, { radius: 9, penWidth: 2, fontSize: 11 } );
+   var mapBmp = SIRender.annotateField( base, marks ); // sizes scale with the image
    var mapWindow = SIRender.showBitmap( mapBmp, "Sky Intruders Treasure Map" );
-   var mapPng = SIRender.bitmapToBase64Png( mapBmp );
+
+   // Embed a downscaled copy in the HTML when the frame is large, so the file
+   // stays reasonable; annotations were drawn proportionally so they remain
+   // legible after the downscale.
+   var mapForHtml = mapBmp;
+   var mapLong = Math.max( mapBmp.width, mapBmp.height );
+   if ( mapLong > 2400 && typeof mapBmp.scaledTo === "function" )
+   {
+      var sc = 2400/mapLong;
+      try { mapForHtml = mapBmp.scaledTo( Math.round( mapBmp.width*sc ), Math.round( mapBmp.height*sc ) ); }
+      catch ( e ) { mapForHtml = mapBmp; }
+   }
+   var mapPng = SIRender.bitmapToBase64Png( mapForHtml );
 
    // Thumbnails for the most notable treasures.
    var topN = treasures.slice( 0, Math.min( treasures.length, 8 ) );

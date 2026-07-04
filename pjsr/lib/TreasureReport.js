@@ -54,7 +54,7 @@ var SITreasureReport = ( function()
    var CSS =
       "body{margin:0;background:#0c1018;color:#e6ebf2;" +
       "font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5}" +
-      ".wrap{max-width:900px;margin:0 auto;padding:24px}" +
+      ".wrap{max-width:none;margin:0;padding:24px clamp(16px,4vw,56px)}" +
       "h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:28px 0 10px;border-bottom:1px solid #263042;padding-bottom:6px}" +
       ".sub{color:#9fb0c6;margin:0 0 16px}" +
       ".field{color:#9fb0c6;font-size:14px;margin:0 0 12px}" +
