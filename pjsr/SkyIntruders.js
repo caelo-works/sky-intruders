@@ -60,6 +60,8 @@ var DEFAULT_PARAMS = {
    matchMaxSepDeg: 0.2,
    matchMaxAngleDiffDeg: 12,
    stepSec: 1.0,
+   detectAsteroids: true,
+   maxSources: 600,
    lang: "en",
    observerLatDeg: null,   // fallbacks when FITS headers lack the site
    observerLonDeg: null,
@@ -134,12 +136,46 @@ function analyzeFrame( filePath, params )
          tr.p1 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x1, tr.y1 ) : null;
          tr.p2 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x2, tr.y2 ) : null;
       }
-      return { meta: meta, trails: det.trails, stats: det.stats };
+
+      // Point sources for asteroid tracking — only useful when we can turn
+      // pixels into sky coordinates, so gate on a working WCS.
+      var blobs = [];
+      if ( meta.wcs.imageToCelestial && params.detectAsteroids )
+         blobs = extractPointSources( window.mainView.image, meta.wcs, params );
+
+      return { meta: meta, trails: det.trails, stats: det.stats, blobs: blobs };
    }
    finally
    {
       window.forceClose();
    }
+}
+
+// Extract the brightest compact sources and map them to sky coordinates.
+// Capped so the O(n^2) mover search downstream stays cheap; movers are found
+// among what does NOT recur frame to frame, so a generous cap is fine.
+function extractPointSources( image, wcs, params )
+{
+   var sd = new StarDetector;
+   sd.structureLayers = 5;
+   sd.applyHotPixelFilter = true;
+   sd.upperLimit = 1.0; // keep bright stars too (we filter by motion, not flux)
+   var stars = sd.stars( image );
+
+   var list = [];
+   for ( var i = 0; i < stars.length; ++i )
+   {
+      var s = stars[ i ];
+      var px = ( s.pos != null ) ? s.pos.x : s.x;
+      var py = ( s.pos != null ) ? s.pos.y : s.y;
+      var sky = wcs.imageToCelestial( px, py );
+      if ( sky != null )
+         list.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
+                      fluxAdu: ( s.flux || 0 ) * 65535, x: px, y: py } );
+   }
+   list.sort( function( a, b ) { return b.fluxAdu - a.fluxAdu; } );
+   var cap = params.maxSources || 600;
+   return ( list.length > cap ) ? list.slice( 0, cap ) : list;
 }
 
 function buildMatchRequest( frames, observer, params )
@@ -294,13 +330,37 @@ function runAnalysis( files, params )
          }
    }
 
+   // Asteroid candidates: slow, coherent movers among the point sources of
+   // frames that have sky coordinates.
+   var movers = [];
+   if ( params.detectAsteroids )
+   {
+      var blobsByFrame = [];
+      for ( var i = 0; i < frames.length; ++i )
+         if ( frames[ i ].blobs && frames[ i ].blobs.length > 0 )
+            blobsByFrame.push( { id: frames[ i ].meta.id, dateObs: frames[ i ].meta.dateObs,
+                                 blobs: frames[ i ].blobs } );
+      if ( blobsByFrame.length >= 3 )
+      {
+         console.writeln( "Searching for slow movers across " + blobsByFrame.length + " solved frame(s)…" );
+         movers = SIMeteors.findAsteroidCandidates( blobsByFrame, 3, null );
+         for ( var m = 0; m < movers.length; ++m )
+            events.push( { timeUtc: movers[ m ].points[ 0 ].t,
+                           klass: "asteroid",
+                           name: null,
+                           rateArcsecPerMin: movers[ m ].rateArcsecPerMin,
+                           nFrames: movers[ m ].points.length,
+                           frameId: movers[ m ].points[ 0 ].frame } );
+      }
+   }
+
    var night = { dateLabel: nightLabel( frames ),
                  frames: frames.length,
                  cleanFrames: cleanFrames,
                  totalExposureSec: totalExposureSec,
                  target: frames[ 0 ].meta.keywords[ "OBJECT" ] || null,
                  events: events,
-                 movers: [] }; // asteroid candidates land here (needs WCS + blobs)
+                 movers: movers };
 
    var history = SIReport.loadHistory();
    var report = SIReport.build( night, history, params.lang );

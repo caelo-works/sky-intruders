@@ -136,6 +136,7 @@ var SIReport = ( function()
          }
          else if ( e.klass == "meteor" ) meteors++;
          else if ( e.klass == "satellite-candidate" ) satCand++;
+         else if ( e.klass == "asteroid" ) ; // counted via night.movers
          else unknowns++;
       }
       return { date: night.dateLabel, frames: night.frames,
@@ -192,6 +193,9 @@ var SIReport = ( function()
       else if ( e.klass == "satellite-candidate" )
          what = ( lang == "fr" ? "satellite hors catalogue ?" : "uncataloged satellite?" ) +
                 " [" + ( T.confidence[ e.confidence ] || e.confidence ) + "]";
+      else if ( e.klass == "asteroid" )
+         what = ( lang == "fr" ? "candidat astéroïde" : "asteroid candidate" ) +
+                ( e.rateArcsecPerMin != null ? " (" + e.rateArcsecPerMin.toFixed( 1 ) + " arcsec/min)" : "" );
       else
          what = ( lang == "fr" ? "traînée non identifiée" : "unidentified trail" );
       return t + " — " + what + "  ·  " + e.frameId;

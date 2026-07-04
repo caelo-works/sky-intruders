@@ -245,11 +245,69 @@ var SIMeteors = ( function()
       return out;
    }
 
+   /*
+    * Remove stationary sources (stars) before mover search. A blob is
+    * stationary if a blob within tolArcsec sits at the same sky position in
+    * at least minRecurrence of the frames. What survives is the pool of
+    * candidate movers (asteroids, plus noise the rate test then rejects).
+    * Pure: blobsByFrame as in findMovers; returns the same shape, filtered.
+    */
+   function filterStationary( blobsByFrame, tolArcsec, minRecurrence )
+   {
+      var frames = blobsByFrame.filter( function( f ) { return f.dateObs != null; } );
+      if ( minRecurrence == null )
+         minRecurrence = Math.max( 2, Math.ceil( frames.length / 2 ) );
+      if ( tolArcsec == null )
+         tolArcsec = 5;
+      var tolDeg = tolArcsec / 3600;
+
+      // Count, for each blob, how many frames host a near-coincident blob.
+      function recurrence( blob, selfFrameIdx )
+      {
+         var n = 0;
+         for ( var i = 0; i < frames.length; ++i )
+         {
+            if ( i == selfFrameIdx )
+            {
+               ++n;
+               continue;
+            }
+            for ( var j = 0; j < frames[ i ].blobs.length; ++j )
+               if ( sepDeg( blob.raDeg, blob.decDeg,
+                            frames[ i ].blobs[ j ].raDeg, frames[ i ].blobs[ j ].decDeg ) <= tolDeg )
+               {
+                  ++n;
+                  break;
+               }
+         }
+         return n;
+      }
+
+      var out = [];
+      for ( var f = 0; f < frames.length; ++f )
+      {
+         var kept = [];
+         for ( var b = 0; b < frames[ f ].blobs.length; ++b )
+            if ( recurrence( frames[ f ].blobs[ b ], f ) < minRecurrence )
+               kept.push( frames[ f ].blobs[ b ] );
+         out.push( { id: frames[ f ].id, dateObs: frames[ f ].dateObs, blobs: kept } );
+      }
+      return out;
+   }
+
+   // Convenience: strip stars, then track the movers. minFrames default 3.
+   function findAsteroidCandidates( blobsByFrame, minFrames, tolArcsec )
+   {
+      return findMovers( filterStationary( blobsByFrame, tolArcsec, null ), minFrames );
+   }
+
    return {
       SHOWERS: SHOWERS,
       activeShowers: activeShowers,
       classifyTrail: classifyTrail,
       findMovers: findMovers,
+      filterStationary: filterStationary,
+      findAsteroidCandidates: findAsteroidCandidates,
       sepDeg: sepDeg,
       distanceToGreatCircleDeg: distanceToGreatCircleDeg
    };

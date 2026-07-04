@@ -115,6 +115,39 @@ function main()
       return "downloaded " + n + " chars, HTTP " + T.responseCode;
    } );
 
+   // 5b) StarDetector returns the {pos, flux} shape extractPointSources uses.
+   check( "StarDetector shape", function()
+   {
+      if ( typeof StarDetector != "function" )
+         throw new Error( "StarDetector missing" );
+      var img = new Image( 256, 256, 1 );
+      img.fill( 0.02 );
+      // a few smooth Gaussian blobs (StarDetector uses a wavelet structure
+      // test — flat 1-px dots read as hot pixels and get filtered out).
+      var dots = [ [ 60, 60 ], [ 180, 90 ], [ 120, 200 ] ];
+      var sigma = 1.8;
+      for ( var d = 0; d < dots.length; ++d )
+         for ( var dy = -5; dy <= 5; ++dy )
+            for ( var dx = -5; dx <= 5; ++dx )
+            {
+               var v = 0.7 * Math.exp( -( dx * dx + dy * dy ) / ( 2 * sigma * sigma ) );
+               var x = dots[ d ][ 0 ] + dx, y = dots[ d ][ 1 ] + dy;
+               if ( v > 0.001 )
+                  img.setSample( Math.min( 0.95, 0.02 + v ), x, y );
+            }
+      var sd = new StarDetector;
+      sd.structureLayers = 5;
+      sd.sensitivity = 0.1;
+      var stars = sd.stars( img );
+      if ( stars.length < 1 )
+         throw new Error( "no stars detected on synthetic field" );
+      var s = stars[ 0 ];
+      var hasPos = ( s.pos != null && typeof s.pos.x == "number" ) || typeof s.x == "number";
+      if ( !hasPos )
+         throw new Error( "star has no readable position" );
+      return stars.length + " stars, flux field: " + ( typeof s.flux );
+   } );
+
    // 6) Report builder produces markdown + a Reddit title.
    check( "SIReport.build", function()
    {

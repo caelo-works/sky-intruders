@@ -29,6 +29,8 @@ LIBS=(
    "$ROOT/pjsr/lib/FrameMeta.js"
    "$ROOT/pjsr/lib/TrailDetect.js"
    "$ROOT/pjsr/lib/SatMatch.js"
+   "$ROOT/pjsr/lib/Meteors.js"
+   "$ROOT/pjsr/lib/Report.js"
 )
 
 mkdir -p "$BUILD"
@@ -68,7 +70,9 @@ module.exports = {
    SIStats: SIStats,
    SIFrameMetaCore: SIFrameMetaCore,
    SITrailCore: SITrailCore,
-   SISatMatch: SISatMatch
+   SISatMatch: SISatMatch,
+   SIMeteors: SIMeteors,
+   SIReport: SIReport
 };
 EOF
 } > "$MODULE"
