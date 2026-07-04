@@ -727,6 +727,101 @@ function runTrashToArt( frames, framePaths, params, onProgress )
 }
 
 // ---------------------------------------------------------------------------
+// UI helpers.
+
+// Icon for a button, via the dialog's DPI-aware resource loader. Returns null
+// on any failure so callers can assign unconditionally.
+function siIcon( dlg, resourcePath )
+{
+   try { return dlg.scaledResource( resourcePath ); }
+   catch ( e )
+   {
+      try { return new Bitmap( resourcePath ); } catch ( e2 ) { return null; }
+   }
+}
+
+// Open a file with the OS default handler (the illustrated report in a browser).
+function openInBrowser( path )
+{
+   var plat = String( CoreApplication.platform );
+   var P = new ExternalProcess;
+   if ( /win|mswindows/i.test( plat ) )
+      P.start( "cmd", [ "/c", "start", "", path ] );
+   else if ( /mac|osx/i.test( plat ) )
+      P.start( "/usr/bin/open", [ path ] );
+   else
+      P.start( "xdg-open", [ path ] );
+   if ( P.waitForStarted )
+      P.waitForStarted();
+}
+
+function siEscapeHtml( s )
+{
+   return String( s ).replace( /&/g, "&amp;" ).replace( /</g, "&lt;" ).replace( />/g, "&gt;" );
+}
+
+// Rich-text (Qt subset) summary of a Treasure Hunt result, shown in the result
+// dialog instead of the raw HTML source.
+function buildTreasureRich( res, lang )
+{
+   var fr = ( lang === "fr" );
+   var TYPE = {
+      galaxy:   { c: "#9fc3ff", bg: "#25324a", n: fr ? "galaxies" : "galaxies" },
+      quasar:   { c: "#e39bff", bg: "#3a2540", n: fr ? "quasars" : "quasars" },
+      pne:      { c: "#8ff0cf", bg: "#24403a", n: fr ? "nébuleuses" : "nebulae" },
+      asteroid: { c: "#ffd38f", bg: "#403524", n: fr ? "astéroïdes" : "asteroids" }
+   };
+   var s = res.summary || { counts: {}, total: 0, headlines: [] };
+   var head = ( s.headlines && s.headlines.length ) ? s.headlines[ 0 ]
+              : ( fr ? "Exploration du champ" : "Field explored" );
+
+   var h = "";
+   h += "<p><font size=\"5\"><b>" + siEscapeHtml( head ) + "</b></font></p>";
+
+   // Count chips.
+   h += "<table cellpadding=\"5\" cellspacing=\"6\"><tr>";
+   var order = [ "galaxy", "quasar", "pne", "asteroid" ];
+   for ( var i = 0; i < order.length; ++i )
+   {
+      var k = order[ i ], n = ( s.counts && s.counts[ k ] ) || 0;
+      if ( n > 0 )
+         h += "<td bgcolor=\"" + TYPE[ k ].bg + "\"><font color=\"" + TYPE[ k ].c +
+              "\">&nbsp;<b>" + n + "</b> " + TYPE[ k ].n + "&nbsp;</font></td>";
+   }
+   h += "</tr></table>";
+
+   var field = res.fieldInfo || ( res.meta ? { target: res.meta.keywords ? res.meta.keywords[ "OBJECT" ] : null } : {} );
+   if ( field && field.target )
+      h += "<p><font color=\"#9fb0c6\">" + siEscapeHtml( field.target ) + "</font></p>";
+
+   // Notable finds with their one-line story.
+   var treasures = res.treasures || [];
+   var cap = Math.min( treasures.length, 8 );
+   if ( cap > 0 )
+   {
+      h += "<p><b>" + ( fr ? "À la loupe" : "Notable finds" ) + "</b></p><ul>";
+      for ( var t = 0; t < cap; ++t )
+      {
+         var o = treasures[ t ];
+         var col = ( TYPE[ o.type ] ? TYPE[ o.type ].c : "#e6ebf2" );
+         var story = "";
+         try { story = SITreasure.narrate( o, lang ); } catch ( e ) { story = ""; }
+         h += "<li><font color=\"" + col + "\"><b>" + siEscapeHtml( o.name || o.type ) +
+              "</b></font> — " + siEscapeHtml( story ) + "</li>";
+      }
+      h += "</ul>";
+      if ( treasures.length > cap )
+         h += "<p><i>" + ( fr ? "…et " : "…and " ) + ( treasures.length - cap ) +
+              ( fr ? " autres dans le rapport complet." : " more in the full report." ) + "</i></p>";
+   }
+   else
+      h += "<p><i>" + ( fr ? "Aucun objet catalogue n'est tombé dans le champ."
+                            : "No catalog object landed inside the frame." ) + "</i></p>";
+
+   return h;
+}
+
+// ---------------------------------------------------------------------------
 // UI.
 
 class ReportDialog extends Dialog
@@ -750,6 +845,7 @@ class ReportDialog extends Dialog
 
       this.saveButton = new PushButton( this );
       this.saveButton.text = "Save report…";
+      this.saveButton.icon = siIcon( this, ":/icons/save.png" );
       this.saveButton.onClick = () =>
       {
          var d = new SaveFileDialog;
@@ -766,6 +862,7 @@ class ReportDialog extends Dialog
 
       this.closeButton = new PushButton( this );
       this.closeButton.text = "Close";
+      this.closeButton.icon = siIcon( this, ":/icons/close.png" );
       this.closeButton.onClick = () => this.ok();
 
       this.buttons = new HorizontalSizer;
@@ -784,36 +881,55 @@ class ReportDialog extends Dialog
    }
 }
 
-// A savable text/HTML result dialog (Treasure Hunt and Trash-to-Art), mirrors
-// ReportDialog but writes a standalone .html the browser opens directly.
+// The illustrated-result dialog (Treasure Hunt and Trash-to-Art): shows a fancy
+// rich-text summary of the find (not the raw HTML source), and lets you open the
+// standalone .html in a browser or save it.
 class HtmlResultDialog extends Dialog
 {
-   constructor( title, headline, html, suggestedName, suggestedDir )
+   constructor( title, bodyRich, html, suggestedName, suggestedDir )
    {
       super();
       this.windowTitle = title;
       this.html = html;
+      this.suggestedName = suggestedName || "SkyIntruders.html";
 
-      this.titleLabel = new Label( this );
-      this.titleLabel.useRichText = true;
-      this.titleLabel.text = "<b>" + headline + "</b>";
-      this.titleLabel.wordWrapping = true;
-      this.titleLabel.margin = 6;
-      this.titleLabel.frameStyle = FrameStyle.Box;
+      this.body = new Label( this );
+      this.body.useRichText = true;
+      this.body.wordWrapping = true;
+      this.body.text = bodyRich || "";
+      this.body.margin = 12;
+      this.body.frameStyle = FrameStyle.Box;
+      this.body.setMinWidth( 560 );
 
-      this.textBox = new TextBox( this );
-      this.textBox.readOnly = true;
-      this.textBox.text = html;
-      this.textBox.setMinSize( 680, 480 );
+      this.openButton = new PushButton( this );
+      this.openButton.text = "Open HTML";
+      this.openButton.icon = siIcon( this, ":/icons/internet.png" );
+      this.openButton.toolTip = "Open the illustrated report in your web browser.";
+      this.openButton.onClick = () =>
+      {
+         try
+         {
+            var p = File.systemTempDirectory + "/" + this.suggestedName;
+            File.writeTextFile( p, this.html + "\n" );
+            openInBrowser( p );
+            console.writeln( SKYINTRUDERS_TITLE + ": opened " + p );
+         }
+         catch ( e )
+         {
+            ( new MessageBox( "Could not open the report: " + e.message,
+                              SKYINTRUDERS_TITLE, StdIcon.Error, StdButton.Ok ) ).execute();
+         }
+      };
 
       this.saveButton = new PushButton( this );
       this.saveButton.text = "Save HTML…";
+      this.saveButton.icon = siIcon( this, ":/icons/save.png" );
       this.saveButton.onClick = () =>
       {
          var d = new SaveFileDialog;
          d.caption = "Save illustrated report";
          d.filters = [ [ "HTML", "*.html" ], [ "Any file", "*" ] ];
-         d.initialPath = ( suggestedDir || File.homeDirectory ) + "/" + suggestedName;
+         d.initialPath = ( suggestedDir || File.homeDirectory ) + "/" + this.suggestedName;
          if ( d.execute() )
          {
             File.writeTextFile( d.fileName, this.html + "\n" );
@@ -823,21 +939,23 @@ class HtmlResultDialog extends Dialog
 
       this.closeButton = new PushButton( this );
       this.closeButton.text = "Close";
+      this.closeButton.icon = siIcon( this, ":/icons/close.png" );
       this.closeButton.onClick = () => this.ok();
 
       this.buttons = new HorizontalSizer;
+      this.buttons.spacing = 6;
+      this.buttons.add( this.openButton );
       this.buttons.addStretch();
       this.buttons.add( this.saveButton );
-      this.buttons.addSpacing( 6 );
       this.buttons.add( this.closeButton );
 
       this.sizer = new VerticalSizer;
-      this.sizer.margin = 8;
-      this.sizer.spacing = 8;
-      this.sizer.add( this.titleLabel );
-      this.sizer.add( this.textBox, 100 );
+      this.sizer.margin = 10;
+      this.sizer.spacing = 10;
+      this.sizer.add( this.body, 100 );
       this.sizer.add( this.buttons );
       this.adjustToContents();
+      this.setMinWidth( 600 );
    }
 }
 
@@ -1015,6 +1133,7 @@ class SkyIntrudersDialog extends Dialog
 
       this.addFilesButton = new PushButton( this );
       this.addFilesButton.text = "Add files…";
+      this.addFilesButton.icon = siIcon( this, ":/icons/add.png" );
       this.addFilesButton.onClick = () =>
       {
          var d = new OpenFileDialog;
@@ -1027,6 +1146,7 @@ class SkyIntrudersDialog extends Dialog
 
       this.addDirButton = new PushButton( this );
       this.addDirButton.text = "Add folder…";
+      this.addDirButton.icon = siIcon( this, ":/icons/folder.png" );
       this.addDirButton.onClick = () =>
       {
          var d = new GetDirectoryDialog;
@@ -1054,6 +1174,7 @@ class SkyIntrudersDialog extends Dialog
 
       this.clearButton = new PushButton( this );
       this.clearButton.text = "Clear";
+      this.clearButton.icon = siIcon( this, ":/icons/clear.png" );
       this.clearButton.onClick = () =>
       {
          self.files = [];
@@ -1093,10 +1214,12 @@ class SkyIntrudersDialog extends Dialog
 
       this.analyzeButton = new PushButton( this );
       this.analyzeButton.defaultButton = true;
+      this.analyzeButton.icon = siIcon( this, ":/icons/play.png" );
       this.analyzeButton.onClick = () => self.runNow();
 
       this.closeButton = new PushButton( this );
       this.closeButton.text = "Close";
+      this.closeButton.icon = siIcon( this, ":/icons/close.png" );
       this.closeButton.onClick = () => self.cancel();
 
       this.actions = new HorizontalSizer;
@@ -1361,9 +1484,8 @@ class SkyIntrudersDialog extends Dialog
                             : File.homeDirectory;
          var name = "SkyIntruders-Treasure-" +
                     ( res.meta.keywords[ "OBJECT" ] || res.meta.id || "field" ).replace( /[^A-Za-z0-9_.-]+/g, "_" ) + ".html";
-         var headline = res.summary.total + " treasure(s) captured — " +
-                        ( res.summary.headlines.length ? res.summary.headlines[ 0 ] : "explore your field" );
-         ( new HtmlResultDialog( SKYINTRUDERS_TITLE + " — Treasure Hunt", headline,
+         var bodyRich = buildTreasureRich( res, this.params.lang );
+         ( new HtmlResultDialog( SKYINTRUDERS_TITLE + " — Treasure Hunt", bodyRich,
                                  res.html, name, dir ) ).execute();
       }
       catch ( e )
@@ -1443,11 +1565,24 @@ class SkyIntrudersDialog extends Dialog
             var dir = ( framePaths && framePaths.length > 0 )
                ? ( File.extractDrive( framePaths[ 0 ] ) + File.extractDirectory( framePaths[ 0 ] ) )
                : File.homeDirectory;
-            var headline = res.summary.date + " — " + res.summary.satellites +
-                           " satellite(s), " + res.summary.meteors + " meteor(s), " +
-                           res.summary.unknowns + " unidentified";
+            var fr = ( this.params.lang === "fr" );
+            var bodyRich =
+               "<p><font size=\"5\"><b>" + siEscapeHtml( res.summary.date ) + "</b></font></p>" +
+               "<table cellpadding=\"5\" cellspacing=\"6\"><tr>" +
+               "<td bgcolor=\"#25324a\"><font color=\"#9fc3ff\">&nbsp;<b>" + res.summary.satellites +
+                  "</b> " + ( fr ? "satellites" : "satellites" ) + "&nbsp;</font></td>" +
+               ( res.summary.starlink ? "<td bgcolor=\"#1f2b3d\"><font color=\"#7fd1ff\">&nbsp;<b>" +
+                  res.summary.starlink + "</b> Starlink&nbsp;</font></td>" : "" ) +
+               "<td bgcolor=\"#3a2a18\"><font color=\"#ffd38f\">&nbsp;<b>" + res.summary.meteors +
+                  "</b> " + ( fr ? "météores" : "meteors" ) + "&nbsp;</font></td>" +
+               "<td bgcolor=\"#2a2233\"><font color=\"#c9b8ff\">&nbsp;<b>" + res.summary.unknowns +
+                  "</b> " + ( fr ? "non identifiés" : "unidentified" ) + "&nbsp;</font></td>" +
+               "</tr></table>" +
+               "<p><font color=\"#9fb0c6\">" +
+               ( fr ? "Œuvres générées — ouvre le poster pour la version complète."
+                    : "Artwork generated — open the poster for the full version." ) + "</font></p>";
             ( new HtmlResultDialog( SKYINTRUDERS_TITLE + " — Trash to Art",
-                                    headline,
+                                    bodyRich,
                                     res.posterHtml, "SkyIntruders-Poster.html", dir ) ).execute();
          }
          else
@@ -1488,6 +1623,17 @@ function siConstructTest()
    {
       var d = new SkyIntrudersDialog( loadParams() );
       out.modes = [ d.tabBox.numberOfPages, d.tabBox.currentPageIndex ];
+
+      // Exercise the result dialogs too (they are built on demand at runtime).
+      var res = { summary: { counts: { galaxy: 2, quasar: 1, pne: 0, asteroid: 1 },
+                             total: 4, headlines: [ "4 treasures captured" ] },
+                  treasures: [ { type: "quasar", name: "QSO J1229", z: 2.3 },
+                               { type: "galaxy", name: "PGC 47404", diamArcmin: 10 } ],
+                  meta: { keywords: { OBJECT: "M51" } } };
+      var rich = buildTreasureRich( res, "en" );
+      out.richLen = rich.length;
+      var hd = new HtmlResultDialog( "t", rich, "<html></html>", "x.html", File.systemTempDirectory );
+      out.htmlDialogOk = ( typeof hd.openButton !== "undefined" );
    }
    catch ( e )
    {
