@@ -37,12 +37,12 @@ then *Check for Updates*. The script appears under
 
 ## How it works
 
-Trail detection runs entirely in PixInsight (robust background statistics, Hough
-transform, contiguity validation to reject chance star alignments). Orbital
-mechanics and networking run in a small bundled native helper (`sky-sidecar`,
-static binaries for Windows/macOS/Linux) that downloads and caches TLE catalogs
-and propagates them with SGP4 to find which satellites crossed each frame's
-field of view during its exposure.
+Everything runs inside PixInsight — no native helper to install or trust. Trail
+detection uses robust background statistics, a Hough transform, and contiguity
+validation to reject chance star alignments. TLE catalogs are downloaded and
+cached through PixInsight's own network layer, then propagated with SGP4 (via
+the bundled MIT-licensed [satellite.js](https://github.com/shashwatak/satellite-js))
+to find which satellites crossed each frame's field of view during its exposure.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design.
 

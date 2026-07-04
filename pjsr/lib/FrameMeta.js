@@ -255,7 +255,7 @@ var SIFrameMetaCore = ( function()
    function approxFov( raDeg, decDeg, pixScaleArcsec, width, height )
    {
       // Approximate FOV: known center, size from the plate scale, unknown
-      // rotation. hasWcs false tells the sidecar this is time-window only.
+      // rotation. hasWcs false marks this as time-window only for matching.
       if ( raDeg === null || decDeg === null || !( pixScaleArcsec > 0 ) || !( width > 0 ) || !( height > 0 ) )
          return null;
       return { raDeg: raDeg, decDeg: decDeg,

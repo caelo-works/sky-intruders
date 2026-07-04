@@ -2,9 +2,9 @@
  * SkyIntruders.js — entry point.
  *
  * Who crossed your photo last night? Scans a night's light frames for trails,
- * identifies them (TLE cross-match through the sky-sidecar helper, meteor
- * shower heuristics, slow movers) and renders a night-log report with fun
- * stats and a Reddit-ready markdown post.
+ * identifies them (TLE cross-match with SGP4, meteor shower heuristics, slow
+ * movers) and renders a night-log report with fun stats and a Reddit-ready
+ * markdown post. Runs entirely in PixInsight — no external helper.
  */
 
 /* beautify ignore:start */
@@ -20,10 +20,12 @@
 
 // NEVER write slash-star inside a comment (preprocessor trap:
 // it swallows everything to the next star-slash).
+#include "lib/vendor/satellite.js"
 #include "lib/Stats.js"
 #include "lib/FrameMeta.js"
 #include "lib/TrailDetect.js"
-#include "lib/SidecarBridge.js"
+#include "lib/Net.js"
+#include "lib/SatMatch.js"
 #include "lib/Meteors.js"
 #include "lib/Report.js"
 
@@ -54,6 +56,7 @@ var DEFAULT_PARAMS = {
    maxTrails: 10,
    tleGroup: "active",
    tleMaxAgeHours: 12,
+   tleBaseUrl: null,   // override to use a CelesTrak mirror
    matchMaxSepDeg: 0.2,
    matchMaxAngleDiffDeg: 12,
    stepSec: 1.0,
@@ -231,9 +234,9 @@ function runAnalysis( files, params )
    else
       try
       {
-         var bridge = new SISidecarBridge( #__FILE__ );
          console.writeln( "Fetching TLE catalog (group: " + params.tleGroup + ")…" );
-         tleInfo = bridge.fetchTle( params.tleGroup, configDir() + "/tle", params.tleMaxAgeHours );
+         tleInfo = SITleNet.fetchTle( params.tleGroup, configDir() + "/tle",
+                                      params.tleMaxAgeHours, params.tleBaseUrl );
          console.writeln( format( "   %d satellites, %s%s", tleInfo.count,
                                   tleInfo.fromCache ? "from cache" : "fresh download",
                                   tleInfo.stale ? " (STALE — network unreachable)" : "" ) );
@@ -241,7 +244,7 @@ function runAnalysis( files, params )
          if ( req.frames.length > 0 )
          {
             console.writeln( "Cross-matching " + req.frames.length + " frame window(s)…" );
-            matchResponse = bridge.match( tleInfo.tlePath, req );
+            matchResponse = SISatMatch.match( req, File.readTextFile( tleInfo.tlePath ) );
          }
       }
       catch ( e )
