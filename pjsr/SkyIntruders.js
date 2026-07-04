@@ -765,11 +765,14 @@ function siEscapeHtml( s )
 function buildTreasureRich( res, lang )
 {
    var fr = ( lang === "fr" );
+   // c   = chip text (light, sits on a dark chip background)
+   // name = treasure name (darker, sits on PixInsight's light-gray dialog bg;
+   //        the light blue/gold read fine over the image but wash out here).
    var TYPE = {
-      galaxy:   { c: "#9fc3ff", bg: "#25324a", n: fr ? "galaxies" : "galaxies" },
-      quasar:   { c: "#e39bff", bg: "#3a2540", n: fr ? "quasars" : "quasars" },
-      pne:      { c: "#8ff0cf", bg: "#24403a", n: fr ? "nébuleuses" : "nebulae" },
-      asteroid: { c: "#ffd38f", bg: "#403524", n: fr ? "astéroïdes" : "asteroids" }
+      galaxy:   { c: "#9fc3ff", bg: "#25324a", name: "#1e5fb0", n: fr ? "galaxies" : "galaxies" },
+      quasar:   { c: "#e39bff", bg: "#3a2540", name: "#e39bff", n: fr ? "quasars" : "quasars" },
+      pne:      { c: "#8ff0cf", bg: "#24403a", name: "#8ff0cf", n: fr ? "nébuleuses" : "nebulae" },
+      asteroid: { c: "#ffd38f", bg: "#403524", name: "#9a6a00", n: fr ? "astéroïdes" : "asteroids" }
    };
    var s = res.summary || { counts: {}, total: 0, headlines: [] };
    var head = ( s.headlines && s.headlines.length ) ? s.headlines[ 0 ]
@@ -803,7 +806,7 @@ function buildTreasureRich( res, lang )
       for ( var t = 0; t < cap; ++t )
       {
          var o = treasures[ t ];
-         var col = ( TYPE[ o.type ] ? TYPE[ o.type ].c : "#e6ebf2" );
+         var col = ( TYPE[ o.type ] ? TYPE[ o.type ].name : "#334155" );
          var story = "";
          try { story = SITreasure.narrate( o, lang ); } catch ( e ) { story = ""; }
          h += "<li><font color=\"" + col + "\"><b>" + siEscapeHtml( o.name || o.type ) +
