@@ -38,29 +38,62 @@ pjsr/lib/Report.js           night log, fun stats, personal records, Reddit mark
 
 ## Pipeline
 
-1. User picks light frames (or a directory). Per frame: read metadata, detect
-   trails, convert trail endpoints to RA/Dec (when WCS available).
+1. User picks light frames (or a directory). With 3+ frames of one field the
+   set goes through **registered-difference analysis** (below); otherwise each
+   frame is analyzed independently.
 2. `SITleNet.fetchTle` — CelesTrak GP catalog through NetworkTransfer, disk cache
    (default max-age 12 h), base URL overridable (mirrors).
 3. `SISatMatch.match` — for each frame's exposure window, propagate the catalog,
    find satellites crossing the FOV, match them to detected trails by angular
-   separation + orientation + rate; flags sunlit vs eclipsed.
-4. Classification of leftovers (JS): unmatched satellite-like trail →
+   separation + orientation + rate; flags sunlit vs eclipsed. A FOV without a
+   known rotation (frame not plate-solved) is tested as its bounding circle.
+4. Frames without WCS: `SISatMatch.fitOrientation` recovers the field rotation
+   and mirror parity by brute force against the sunlit crossings (center and
+   plate scale come from the pointing headers; the fit also corrects the
+   center by the median offset of its matched pairs). The winning synthetic
+   TAN gives every trail sky coordinates; `assignTrails` then names them.
+5. Airplane heuristic: 3+ near-parallel segments in one frame (wing lights +
+   strobes) collapse into a single "plane" event, excluded from matching.
+6. Classification of leftovers (JS): unmatched satellite-like trail →
    "unidentified satellite"; brightness-variable / interior trail aligned with an
    active shower radiant → "probable <shower> meteor"; compact sources drifting
-   coherently across ≥3 frames (WCS required) → asteroid candidate.
-5. Report: chronological night log, stats (counts by operator, Starlink share),
+   coherently across ≥3 frames (real WCS required — fitted astrometry is too
+   coarse and dither shifts sensor artifacts coherently) → asteroid candidate.
+7. Report: chronological night log, stats (counts by operator, Starlink share),
    personal records (persistent history), Markdown export ready for Reddit.
+8. Night result image: the registered set max-combined, auto-stretched, every
+   trail highlighted and labeled (name + entry time when identified), shown as
+   an image window and saved as PNG.
 
 ## Trail detection (PJSR)
 
-Per frame, all heavy passes in the C++ engine or one linear JS pass:
+**Registered-difference path (3+ frames).** Nebulosity defeats any single-frame
+line detector — the Veil's filaments are longer, brighter and just as straight
+as a faint streak — so the static sky is removed first:
+
+1. `SIRender.registerFramesMapped` — StarAlignment of every frame onto the
+   first (keeps the input↔output mapping; falls back per-frame if <3 register).
+2. Each registered frame is average-binned (long side ≤ ~1500 px).
+3. Static-sky model: per-pixel **median of the non-empty binned values**
+   (zero-filled registration borders never vote), valid where ≥3 frames
+   overlap, eroded by 3 binned px (binning smear + resampling ring) —
+   `SITrailCore.medianStackMasked` / `erodeMask`.
+4. Per frame, detection runs on the clamped positive residual
+   (`subtractModel`): only transients survive, so the threshold can drop to
+   `diffKSigma` (default 3.5) and catch the faint streaks narrowband filters
+   leave. Trails land directly in the reference frame's pixel grid.
+5. Width veto: residual trails wider than 12 px FWHM are dropped (cloud bands).
+
+**Single-frame path (fallback).** As before:
 
 1. Pull pixels in horizontal strips (`getSamples`), average-bin so the long side
    is ≤ ~1500 px.
 2. Background/noise on the binned array: median + MAD (robust, hot-pixel immune).
 3. Binary map: `sample > median + k·MAD` (k default 5; raised adaptively when
    >8% of pixels exceed it — clouds/gradients).
+
+**Shared line stage (both paths).**
+
 4. Hough transform (θ×ρ accumulator) over above-threshold pixels.
 5. **Contiguity validation** (kills star-alignment false positives): a candidate
    line must have a contiguous above-threshold run ≥ minLength with ≥60% fill;
