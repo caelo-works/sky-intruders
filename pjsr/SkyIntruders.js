@@ -66,6 +66,10 @@ function ensureMinimumVersion( maj, min, rel )
 
 var DEFAULT_PARAMS = {
    kSigma: 5.0,
+   // Detection threshold on the registered DIFFERENCE image: the static sky
+   // is subtracted there, so a lower k is safe and catches the faint streaks
+   // narrowband filters leave (a Starlink loses several magnitudes in Ha).
+   diffKSigma: 4.5,
    minLengthFrac: 0.15,
    fillRatioMin: 0.6,
    maxTrails: 10,
@@ -160,6 +164,21 @@ function analyzeFrame( filePath, params )
          tr.p1 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x1, tr.y1 ) : null;
          tr.p2 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x2, tr.y2 ) : null;
       }
+      var planeGroups = SIMeteors.groupPlanes( det.trails );
+      for ( var g = 0; g < planeGroups.length; ++g )
+      {
+         var gvars = [];
+         for ( var gi = 0; gi < planeGroups[ g ].indices.length; ++gi )
+         {
+            det.trails[ planeGroups[ g ].indices[ gi ] ].planeGroup = g;
+            var gbv = det.trails[ planeGroups[ g ].indices[ gi ] ].brightnessVariation;
+            if ( gbv != null )
+               gvars.push( gbv );
+         }
+         gvars.sort( function( a, b ) { return a - b; } );
+         planeGroups[ g ].kind = ( gvars.length > 0 && gvars[ gvars.length >> 1 ] > 0.3 )
+                                    ? "plane" : "train";
+      }
 
       // Point sources for asteroid tracking — only useful when we can turn
       // pixels into sky coordinates, so gate on a working WCS.
@@ -168,7 +187,7 @@ function analyzeFrame( filePath, params )
          blobs = extractPointSources( window.mainView.image, meta.wcs, params );
 
       return { meta: meta, trails: det.trails, stats: det.stats, blobs: blobs,
-               srcW: w, srcH: h };
+               planeGroups: planeGroups, srcW: w, srcH: h };
    }
    finally
    {
@@ -176,10 +195,10 @@ function analyzeFrame( filePath, params )
    }
 }
 
-// Extract the brightest compact sources and map them to sky coordinates.
-// Capped so the O(n^2) mover search downstream stays cheap; movers are found
-// among what does NOT recur frame to frame, so a generous cap is fine.
-function extractPointSources( image, wcs, params )
+// Extract the brightest compact sources in pixel coordinates. Capped so the
+// O(n^2) mover search downstream stays cheap; movers are found among what
+// does NOT recur frame to frame, so a generous cap is fine.
+function extractPixelSources( image, cap )
 {
    var sd = new StarDetector;
    sd.structureLayers = 5;
@@ -193,17 +212,264 @@ function extractPointSources( image, wcs, params )
       var s = stars[ i ];
       var px = ( s.pos != null ) ? s.pos.x : s.x;
       var py = ( s.pos != null ) ? s.pos.y : s.y;
-      var sky = wcs.imageToCelestial( px, py );
-      if ( sky != null )
-         list.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
-                      fluxAdu: ( s.flux || 0 ) * 65535, x: px, y: py } );
+      list.push( { fluxAdu: ( s.flux || 0 ) * 65535, x: px, y: py } );
    }
    list.sort( function( a, b ) { return b.fluxAdu - a.fluxAdu; } );
-   var cap = params.maxSources || 600;
-   return ( list.length > cap ) ? list.slice( 0, cap ) : list;
+   return ( list.length > ( cap || 600 ) ) ? list.slice( 0, cap || 600 ) : list;
 }
 
-function buildMatchRequest( frames, observer, params )
+function extractPointSources( image, wcs, params )
+{
+   var px = extractPixelSources( image, params.maxSources );
+   var list = [];
+   for ( var i = 0; i < px.length; ++i )
+   {
+      var sky = wcs.imageToCelestial( px[ i ].x, px[ i ].y );
+      if ( sky != null )
+         list.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
+                      fluxAdu: px[ i ].fluxAdu, x: px[ i ].x, y: px[ i ].y } );
+   }
+   return list;
+}
+
+// ---------------------------------------------------------------------------
+// Registered-difference night analysis.
+//
+// With 3+ frames of one field the static sky can be removed before any line
+// is looked for: every frame is star-registered onto the first, a per-pixel
+// median across the (binned) registered set becomes the static-sky model,
+// and trail detection runs on each frame's positive residual. Stars AND
+// nebulosity vanish from the detection map — the Veil's filaments can no
+// longer outvote a real streak in the Hough accumulator — and every trail
+// lands directly in the reference frame's pixel grid, which is exactly what
+// the annotated composite needs. Returns null when the set cannot be
+// registered (caller falls back to per-frame detection).
+
+function hasUsableWcs( kind )
+{
+   return kind === "solution" || kind === "tan";
+}
+
+function clearDirectory( dir )
+{
+   try
+   {
+      if ( !File.directoryExists( dir ) )
+         return;
+      var ff = new FileFind;
+      var victims = [];
+      if ( ff.begin( dir + "/*" ) )
+         do
+         {
+            if ( ff.isFile )
+               victims.push( dir + "/" + ff.name );
+         }
+         while ( ff.next() );
+      for ( var i = 0; i < victims.length; ++i )
+         File.remove( victims[ i ] );
+   }
+   catch ( e ) {}
+}
+
+function analyzeNightSet( files, params )
+{
+   if ( files.length < 3 )
+      return null;
+
+   var regDir = File.systemTempDirectory + "/si-night-reg";
+   clearDirectory( regDir );
+   console.writeln( format( "Registering %d frames on a common grid (StarAlignment)…",
+                            files.length ) );
+   var reg = SIRender.registerFramesMapped( files, regDir );
+   if ( reg == null )
+      return null;
+   var okCount = 0;
+   for ( var i = 0; i < reg.paths.length; ++i )
+      if ( reg.paths[ i ] != null )
+         okCount++;
+   if ( okCount < 3 )
+   {
+      console.warningln( format( "   only %d/%d frames registered — falling back to per-frame detection",
+                                 okCount, files.length ) );
+      return null;
+   }
+
+   // Pass A: metadata + binned copy of every registered frame.
+   var entries = [];
+   var binLen = -1;
+   for ( var i = 0; i < files.length; ++i )
+   {
+      if ( reg.paths[ i ] == null )
+      {
+         console.warningln( "   not registered, skipped: " + files[ i ] );
+         continue;
+      }
+      var wins = ImageWindow.open( reg.paths[ i ] );
+      if ( wins.length == 0 )
+         continue;
+      var win = wins[ 0 ];
+      for ( var k = 1; k < wins.length; ++k )
+         wins[ k ].forceClose();
+      var meta = SIFrameMeta.read( win, files[ i ] );
+      if ( meta.dateObs == null || meta.exposureSec == null )
+      {
+         // registration output lost the headers — read them from the source
+         var ow = ImageWindow.open( files[ i ] );
+         if ( ow.length > 0 )
+         {
+            meta = SIFrameMeta.read( ow[ 0 ], files[ i ] );
+            for ( var k2 = 0; k2 < ow.length; ++k2 )
+               ow[ k2 ].forceClose();
+         }
+      }
+      var b = SITrailDetect.binned( win.mainView.image );
+      win.forceClose();
+      if ( binLen < 0 )
+         binLen = b.data.length;
+      if ( b.data.length !== binLen )
+      {
+         console.warningln( "   geometry mismatch, skipped: " + files[ i ] );
+         continue;
+      }
+      entries.push( { meta: meta, regPath: reg.paths[ i ], binned: b } );
+      processEvents();
+   }
+   if ( entries.length < 3 )
+      return null;
+
+   // Static-sky model, two rounds: a first median gives a reference, then
+   // each frame is photometrically normalized onto it (linear fit — sky
+   // transparency varies with airmass and the nebula would otherwise leak
+   // structured residuals into every difference), and the model is rebuilt
+   // from the normalized frames.
+   var arrays = [];
+   for ( var i = 0; i < entries.length; ++i )
+      arrays.push( entries[ i ].binned.data );
+   var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6 );
+   var normalized = [];
+   for ( var i = 0; i < entries.length; ++i )
+   {
+      var lf = SITrailCore.linearFitToModel( arrays[ i ], stack0.model, stack0.valid );
+      normalized.push( SITrailCore.applyLinear( arrays[ i ], lf.a, lf.b ) );
+      entries[ i ].binned.data = normalized[ i ];
+      processEvents();
+   }
+   var stack = SITrailCore.medianStackMasked( normalized, 1e-6 );
+   var model = stack.model;
+   // Trust the model only where 3+ frames overlap, minus a safety ring for
+   // binning smear and resampling edges.
+   var mask = SITrailCore.erodeMask( stack.valid, entries[ 0 ].binned.width,
+                                     entries[ 0 ].binned.height, 3 );
+
+   // Pass B: transient detection per frame against the model.
+   var refMeta = entries[ 0 ].meta;
+   var refW = entries[ 0 ].binned.srcW, refH = entries[ 0 ].binned.srcH;
+   var margin = Math.max( 8, Math.round( 0.03 * Math.max( refW, refH ) ) );
+   function nearEdge( x, y )
+   {
+      return x <= margin || y <= margin || x >= refW - margin || y >= refH - margin;
+   }
+
+   var frames = [];
+   for ( var i = 0; i < entries.length; ++i )
+   {
+      var e = entries[ i ];
+      var wins2 = ImageWindow.open( e.regPath );
+      if ( wins2.length == 0 )
+         continue;
+      var win2 = wins2[ 0 ];
+      for ( var k3 = 1; k3 < wins2.length; ++k3 )
+         wins2[ k3 ].forceClose();
+      var diffParams = JSON.parse( JSON.stringify( params ) );
+      if ( params.diffKSigma > 0 )
+         diffParams.kSigma = params.diffKSigma;
+      // A satellite train alone can leave 10+ parallel streaks in one sub —
+      // never let a bundle exhaust the slots and mask a lone trail.
+      diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
+      var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, mask );
+
+      var trails = [];
+      for ( var t = 0; t < det.trails.length; ++t )
+      {
+         var tr = det.trails[ t ];
+         // Width veto: a real streak is a thin line; residual cloud bands
+         // and stacking artifacts that survive the median are broad.
+         if ( tr.widthPx > 12 )
+            continue;
+         tr.index = trails.length;
+         tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
+         if ( hasUsableWcs( refMeta.wcs.kind ) )
+         {
+            tr.p1 = refMeta.wcs.imageToCelestial( tr.x1, tr.y1 );
+            tr.p2 = refMeta.wcs.imageToCelestial( tr.x2, tr.y2 );
+         }
+         else
+         {
+            tr.p1 = null;
+            tr.p2 = null;
+         }
+         trails.push( tr );
+      }
+
+      // Movers need trustworthy astrometry — see runAnalysis: registered
+      // sets without a real WCS skip the asteroid search entirely.
+      var blobs = [];
+      if ( params.detectAsteroids && hasUsableWcs( refMeta.wcs.kind ) )
+      {
+         var pix = extractPixelSources( win2.mainView.image, params.maxSources );
+         for ( var s = 0; s < pix.length; ++s )
+         {
+            var sky = refMeta.wcs.imageToCelestial( pix[ s ].x, pix[ s ].y );
+            if ( sky != null )
+               blobs.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
+                             fluxAdu: pix[ s ].fluxAdu, x: pix[ s ].x, y: pix[ s ].y } );
+         }
+      }
+
+      win2.forceClose();
+      e.binned = null; // release
+
+      // Parallel bundles: several near-parallel segments in ONE frame are a
+      // single object — an airplane (strobing lights: strong brightness
+      // variation along the marks) or a satellite train (fresh launch, not
+      // yet cataloged: steady parallel streaks). Grouped before matching so
+      // they never get individual satellite names.
+      var planeGroups = SIMeteors.groupPlanes( trails );
+      for ( var g = 0; g < planeGroups.length; ++g )
+      {
+         var pg = planeGroups[ g ];
+         var vars = [];
+         for ( var gi = 0; gi < pg.indices.length; ++gi )
+         {
+            trails[ pg.indices[ gi ] ].planeGroup = g;
+            var bv = trails[ pg.indices[ gi ] ].brightnessVariation;
+            if ( bv != null )
+               vars.push( bv );
+         }
+         vars.sort( function( a, b ) { return a - b; } );
+         var medVar = ( vars.length > 0 ) ? vars[ vars.length >> 1 ] : 0;
+         pg.kind = ( medVar > 0.3 ) ? "plane" : "train";
+      }
+
+      frames.push( { meta: e.meta, trails: trails, stats: det.stats, blobs: blobs,
+                     planeGroups: planeGroups, srcW: refW, srcH: refH } );
+      if ( trails.length > 0 )
+         console.writeln( format( "   %s: %d transient trail(s)%s", e.meta.id, trails.length,
+                                  planeGroups.length > 0
+                                     ? format( " — %d bundle(s)", planeGroups.length )
+                                     : "" ) );
+      processEvents();
+      gc();
+   }
+
+   var regPaths = [];
+   for ( var i = 0; i < entries.length; ++i )
+      regPaths.push( entries[ i ].regPath );
+   return { frames: frames, refMeta: refMeta, refW: refW, refH: refH,
+            regPaths: regPaths, regDir: regDir };
+}
+
+function buildMatchRequest( frames, observer, params, fovOverride )
 {
    var req = { observer: observer, frames: [], options: {
       stepSec: params.stepSec,
@@ -214,17 +480,23 @@ function buildMatchRequest( frames, observer, params )
       var f = frames[ i ];
       if ( f.meta.dateObs == null || f.meta.exposureSec == null )
          continue;
-      var fov = f.meta.wcs.fov();
+      // Registered sets share the reference frame's grid, so every frame's
+      // trails live in the REFERENCE field of view.
+      var fov = ( fovOverride != null ) ? fovOverride : f.meta.wcs.fov();
       if ( fov == null )
          continue;
       var trails = [];
       for ( var t = 0; t < f.trails.length; ++t )
+      {
+         if ( f.trails[ t ].planeGroup != null )
+            continue; // airplane bundles never get satellite names
          trails.push( { index: f.trails[ t ].index,
                         p1: f.trails[ t ].p1, p2: f.trails[ t ].p2,
                         pixLength: f.trails[ t ].lengthPx,
                         meanFluxAdu: f.trails[ t ].meanFluxAdu,
                         widthPx: f.trails[ t ].widthPx,
                         brightnessVariation: f.trails[ t ].brightnessVariation } );
+      }
       req.frames.push( { id: f.meta.id,
                          startUtc: f.meta.dateObs.toISOString(),
                          exposureSec: f.meta.exposureSec,
@@ -254,24 +526,41 @@ function nightLabel( frames )
 
 function runAnalysis( files, params )
 {
-   var frames = [];
-   for ( var i = 0; i < files.length; ++i )
+   // Registered-difference analysis first (3+ frames of one field); fall
+   // back to independent per-frame detection when the set cannot register.
+   var set = null;
+   try
    {
-      console.writeln( format( "<b>[%d/%d]</b> ", i + 1, files.length ) + files[ i ] );
-      try
-      {
-         var r = analyzeFrame( files[ i ], params );
-         frames.push( r );
-         if ( r.trails.length > 0 )
-            console.writeln( format( "   %d trail(s), background %.1f ADU, noise %.1f ADU",
-                                     r.trails.length, r.stats.medianAdu, r.stats.madAdu ) );
-      }
-      catch ( e )
-      {
-         console.warningln( "   skipped: " + e.message );
-      }
-      processEvents();
+      set = analyzeNightSet( files, params );
    }
+   catch ( e )
+   {
+      console.warningln( SKYINTRUDERS_TITLE + ": registered analysis failed (" + e.message +
+                         ") — falling back to per-frame detection." );
+      set = null;
+   }
+
+   var frames = [];
+   if ( set != null )
+      frames = set.frames;
+   else
+      for ( var i = 0; i < files.length; ++i )
+      {
+         console.writeln( format( "<b>[%d/%d]</b> ", i + 1, files.length ) + files[ i ] );
+         try
+         {
+            var r = analyzeFrame( files[ i ], params );
+            frames.push( r );
+            if ( r.trails.length > 0 )
+               console.writeln( format( "   %d trail(s), background %.1f ADU, noise %.1f ADU",
+                                        r.trails.length, r.stats.medianAdu, r.stats.madAdu ) );
+         }
+         catch ( e )
+         {
+            console.warningln( "   skipped: " + e.message );
+         }
+         processEvents();
+      }
    if ( frames.length == 0 )
       throw new Error( "no frame could be analyzed" );
 
@@ -301,7 +590,8 @@ function runAnalysis( files, params )
          console.writeln( format( "   %d satellites, %s%s", tleInfo.count,
                                   tleInfo.fromCache ? "from cache" : "fresh download",
                                   tleInfo.stale ? " (STALE — network unreachable)" : "" ) );
-         var req = buildMatchRequest( frames, observer, params );
+         var fovOverride = ( set != null ) ? set.refMeta.wcs.fov() : null;
+         var req = buildMatchRequest( frames, observer, params, fovOverride );
          if ( req.frames.length > 0 )
          {
             console.writeln( "Cross-matching " + req.frames.length + " frame window(s)…" );
@@ -316,11 +606,91 @@ function runAnalysis( files, params )
    // Merge crossings + heuristics into events.
    var events = [];
    var crossingsByFrame = {};
-   if ( matchResponse != null )
+   if ( matchResponse != null && !matchResponse.error )
       for ( var i = 0; i < matchResponse.frames.length; ++i )
          crossingsByFrame[ matchResponse.frames[ i ].id ] = matchResponse.frames[ i ].crossings || [];
 
+   // Unsolved registered set: the trails all live in one pixel grid whose
+   // center and plate scale are known from the headers — only the rotation
+   // and the mirror parity are not. Fit them against the predicted sunlit
+   // crossings, then give every trail sky coordinates and run the standard
+   // trail <-> crossing assignment.
+   var fitInfo = null;
+   if ( set != null && !hasUsableWcs( set.refMeta.wcs.kind ) && matchResponse != null &&
+        !matchResponse.error )
+   {
+      var refFov = set.refMeta.wcs.fov();
+      if ( refFov != null )
+      {
+         var fitFrames = [];
+         for ( var i = 0; i < frames.length; ++i )
+         {
+            var fitTrails = [];
+            for ( var t2 = 0; t2 < frames[ i ].trails.length; ++t2 )
+               if ( frames[ i ].trails[ t2 ].planeGroup == null )
+                  fitTrails.push( frames[ i ].trails[ t2 ] );
+            fitFrames.push( { crossings: crossingsByFrame[ frames[ i ].meta.id ] || [],
+                              trails: fitTrails } );
+         }
+         var field = { raDeg: refFov.raDeg, decDeg: refFov.decDeg,
+                       pixScaleArcsec: set.refMeta.pixScaleArcsec,
+                       width: set.refW, height: set.refH };
+         var fit = SISatMatch.fitOrientation( fitFrames, field, {} );
+         if ( fit != null && fit.pairs.length > 0 )
+         {
+            fitInfo = { rotationDeg: fit.rotationDeg, parity: fit.parity,
+                        pairs: fit.pairs.length, score: fit.score };
+            console.writeln( format( "Field orientation fitted from %d trail(s): " +
+                                     "rotation %.1f°, %s", fit.pairs.length, fit.rotationDeg,
+                                     fit.parity < 0 ? "mirrored" : "direct" ) );
+            var opt = SISatMatch.core.normalizedOptions( {
+               matchMaxSepDeg: Math.max( 0.35, params.matchMaxSepDeg || 0 ),
+               matchMaxAngleDiffDeg: params.matchMaxAngleDiffDeg } );
+            for ( var i = 0; i < frames.length; ++i )
+            {
+               var fr = frames[ i ];
+               for ( var t = 0; t < fr.trails.length; ++t )
+               {
+                  fr.trails[ t ].p1 = SISatMatch.core.tanProject(
+                     fit.tan, fr.trails[ t ].x1, fr.trails[ t ].y1 );
+                  fr.trails[ t ].p2 = SISatMatch.core.tanProject(
+                     fit.tan, fr.trails[ t ].x2, fr.trails[ t ].y2 );
+               }
+               var assignable = [];
+               for ( var t3 = 0; t3 < fr.trails.length; ++t3 )
+                  if ( fr.trails[ t3 ].planeGroup == null )
+                     assignable.push( fr.trails[ t3 ] );
+               SISatMatch.core.assignTrails( crossingsByFrame[ fr.meta.id ] || [],
+                                             { trails: assignable }, opt );
+            }
+         }
+         else
+         {
+            console.writeln( "Field orientation could not be fitted — satellites are listed " +
+                             "as window crossers only." );
+         }
+      }
+   }
+
+   var TRAIL_STYLE = {
+      satellite: "#22d3ee",
+      "satellite-candidate": "#ffa05f",
+      meteor: "#ff5f8f",
+      plane: "#a7b34d",
+      train: "#8fd18f",
+      unknown: "#c9d2dd"
+   };
+   var FALLBACK_LABEL = {
+      en: { "satellite-candidate": "unidentified satellite", meteor: "meteor?",
+            plane: "airplane", train: "satellite train", unknown: "intruder?" },
+      fr: { "satellite-candidate": "satellite non identifié", meteor: "météore ?",
+            plane: "avion", train: "train de satellites", unknown: "intrus ?" }
+   };
+   var langLabels = FALLBACK_LABEL[ params.lang ] || FALLBACK_LABEL.en;
+   var labeledTrails = [];
+
    var cleanFrames = 0, totalExposureSec = 0;
+   var predicted = [];
    for ( var i = 0; i < frames.length; ++i )
    {
       var f = frames[ i ];
@@ -328,6 +698,15 @@ function runAnalysis( files, params )
       if ( f.trails.length == 0 )
          cleanFrames++;
       var crossings = crossingsByFrame[ f.meta.id ] || [];
+      // Sunlit crossers that did not get matched to any trail still belong
+      // in the report — the pass happened whether we caught the streak or not.
+      for ( var c0 = 0; c0 < crossings.length; ++c0 )
+         if ( crossings[ c0 ].matchedTrailIndex == null && crossings[ c0 ].sunlit )
+            predicted.push( { name: crossings[ c0 ].name,
+                              noradId: crossings[ c0 ].noradId,
+                              timeUtc: crossings[ c0 ].entryUtc ? new Date( crossings[ c0 ].entryUtc ) : null,
+                              elevationDeg: crossings[ c0 ].elevationDeg,
+                              frameId: f.meta.id } );
       var matchedIdx = {};
       for ( var c = 0; c < crossings.length; ++c )
          if ( crossings[ c ].matchedTrailIndex != null )
@@ -340,9 +719,34 @@ function runAnalysis( files, params )
                            elevationDeg: crossings[ c ].elevationDeg,
                            angularRateDegPerSec: crossings[ c ].angularRateDegPerSec,
                            frameId: f.meta.id } );
+            var tr0 = null;
+            for ( var tt = 0; tt < f.trails.length; ++tt )
+               if ( f.trails[ tt ].index === crossings[ c ].matchedTrailIndex )
+                  tr0 = f.trails[ tt ];
+            if ( tr0 != null )
+               labeledTrails.push( { x1: tr0.x1, y1: tr0.y1, x2: tr0.x2, y2: tr0.y2,
+                                     color: TRAIL_STYLE.satellite,
+                                     label: ( crossings[ c ].name || ( "NORAD " + crossings[ c ].noradId ) ) +
+                                            ( crossings[ c ].entryUtc
+                                               ? " · " + String( crossings[ c ].entryUtc ).substring( 11, 16 ) + " UT"
+                                               : "" ) } );
          }
+      // One event (and one drawn line) per bundle — airplane or train.
+      for ( var g = 0; g < ( f.planeGroups || [] ).length; ++g )
+      {
+         var pg = f.planeGroups[ g ];
+         var kind = pg.kind || "plane";
+         events.push( { timeUtc: f.meta.dateObs,
+                        klass: kind,
+                        name: null,
+                        segments: pg.segments,
+                        frameId: f.meta.id } );
+         labeledTrails.push( { x1: pg.x1, y1: pg.y1, x2: pg.x2, y2: pg.y2,
+                               color: TRAIL_STYLE[ kind ],
+                               label: langLabels[ kind ] + " (" + pg.segments + ")" } );
+      }
       for ( var t = 0; t < f.trails.length; ++t )
-         if ( !matchedIdx[ f.trails[ t ].index ] )
+         if ( !matchedIdx[ f.trails[ t ].index ] && f.trails[ t ].planeGroup == null )
          {
             var cls = SIMeteors.classifyTrail( f.trails[ t ], f.meta.dateObs );
             events.push( { timeUtc: f.meta.dateObs,
@@ -352,19 +756,36 @@ function runAnalysis( files, params )
                            confidence: cls.confidence,
                            reason: cls.reason,
                            frameId: f.meta.id } );
+            var lb = langLabels[ cls.klass ] || langLabels.unknown;
+            if ( cls.klass === "meteor" && cls.shower )
+               lb += " (" + cls.shower.name + ")";
+            labeledTrails.push( { x1: f.trails[ t ].x1, y1: f.trails[ t ].y1,
+                                  x2: f.trails[ t ].x2, y2: f.trails[ t ].y2,
+                                  color: TRAIL_STYLE[ cls.klass ] || TRAIL_STYLE.unknown,
+                                  label: lb } );
          }
    }
 
    // Asteroid candidates: slow, coherent movers among the point sources of
-   // frames that have sky coordinates.
+   // frames that have sky coordinates. Registered-but-unsolved sets are
+   // excluded: sensor-fixed artifacts (hot pixels, column defects) shift
+   // with the dither in the reference grid and mimic coherent movers, and
+   // the fitted astrometry is only arcminute-accurate — not enough to make
+   // an asteroid candidate actionable.
    var movers = [];
-   if ( params.detectAsteroids )
+   if ( params.detectAsteroids && ( set == null || hasUsableWcs( set.refMeta.wcs.kind ) ) )
    {
       var blobsByFrame = [];
       for ( var i = 0; i < frames.length; ++i )
-         if ( frames[ i ].blobs && frames[ i ].blobs.length > 0 )
+      {
+         var skyBlobs = [];
+         for ( var b2 = 0; b2 < ( frames[ i ].blobs || [] ).length; ++b2 )
+            if ( frames[ i ].blobs[ b2 ].raDeg != null )
+               skyBlobs.push( frames[ i ].blobs[ b2 ] );
+         if ( skyBlobs.length > 0 )
             blobsByFrame.push( { id: frames[ i ].meta.id, dateObs: frames[ i ].meta.dateObs,
-                                 blobs: frames[ i ].blobs } );
+                                 blobs: skyBlobs } );
+      }
       if ( blobsByFrame.length >= 3 )
       {
          console.writeln( "Searching for slow movers across " + blobsByFrame.length + " solved frame(s)…" );
@@ -385,13 +806,49 @@ function runAnalysis( files, params )
                  totalExposureSec: totalExposureSec,
                  target: frames[ 0 ].meta.keywords[ "OBJECT" ] || null,
                  events: events,
+                 predicted: predicted,
                  movers: movers };
 
    var history = SIReport.loadHistory();
    var report = SIReport.build( night, history, params.lang );
-   SIReport.saveHistory( SIReport.appendNight( history, report.summary ) );
+   if ( params.saveHistory !== false ) // headless test runs must not pollute the log
+      SIReport.saveHistory( SIReport.appendNight( history, report.summary ) );
 
-   return { night: night, report: report, tleInfo: tleInfo, frames: frames };
+   // Night result image: the registered set max-combined (every streak of
+   // the night on one star field), stretched, with each trail highlighted
+   // and named. Only meaningful when the frames share one pixel grid.
+   var resultImagePath = null;
+   if ( set != null && params.nightResultImage !== false )
+      try
+      {
+         console.writeln( "Building the night composite (max-combine of the registered set)…" );
+         var comp = SIRender.maxCombine( set.regPaths );
+         if ( comp != null )
+         {
+            var bmp = SIRender.stretchedBitmap( comp );
+            bmp = SIRender.annotateTrails( bmp, labeledTrails );
+            resultImagePath = File.systemTempDirectory + "/SkyIntruders-night-result.png";
+            bmp.save( resultImagePath );
+            try
+            {
+               SIRender.showBitmap( bmp, "SkyIntruders_night" );
+            }
+            catch ( e )
+            {
+               // headless runs have no workspace to show a window in
+            }
+         }
+      }
+      catch ( e )
+      {
+         console.warningln( SKYINTRUDERS_TITLE + ": night composite failed — " + e.message );
+      }
+   if ( set != null )
+      clearDirectory( set.regDir );
+
+   return { night: night, report: report, tleInfo: tleInfo, frames: frames,
+            resultImagePath: resultImagePath, fitInfo: fitInfo,
+            registered: ( set != null ) };
 }
 
 // ---------------------------------------------------------------------------
@@ -946,8 +1403,27 @@ class ReportDialog extends Dialog
       this.closeButton.icon = siIcon( this, ":/icons/close.png" );
       this.closeButton.onClick = () => this.ok();
 
+      // Annotated night composite (registered stack + named trails): it is
+      // already shown as an image window; this reopens the PNG externally.
+      this.imageButton = null;
+      if ( result.resultImagePath && File.exists( result.resultImagePath ) )
+      {
+         this.imageButton = new PushButton( this );
+         this.imageButton.text = "Open image";
+         this.imageButton.icon = siIcon( this, ":/icons/picture.png" );
+         this.imageButton.onClick = () =>
+         {
+            openInBrowser( result.resultImagePath );
+         };
+      }
+
       this.buttons = new HorizontalSizer;
       this.buttons.addStretch();
+      if ( this.imageButton != null )
+      {
+         this.buttons.add( this.imageButton );
+         this.buttons.addSpacing( 6 );
+      }
       this.buttons.add( this.saveButton );
       this.buttons.addSpacing( 6 );
       this.buttons.add( this.closeButton );
@@ -1725,20 +2201,25 @@ function siConstructTest()
                        JSON.stringify( out, null, 2 ) );
 }
 
-function siConstructTestRequested()
+function siEnvFlag( name )
 {
    try
    {
       if ( typeof System != "undefined" && typeof System.getEnvironmentVariable == "function" )
-         return System.getEnvironmentVariable( "SI_CONSTRUCT_TEST" ) == "1";
+         return System.getEnvironmentVariable( name ) == "1";
       if ( typeof getEnvironmentVariable == "function" )
-         return getEnvironmentVariable( "SI_CONSTRUCT_TEST" ) == "1";
+         return getEnvironmentVariable( name ) == "1";
    }
    catch ( e ) {}
    return false;
 }
 
+function siConstructTestRequested()
+{
+   return siEnvFlag( "SI_CONSTRUCT_TEST" );
+}
+
 if ( siConstructTestRequested() )
    siConstructTest();
-else
+else if ( !siEnvFlag( "SI_HEADLESS_LIB" ) )
    main();

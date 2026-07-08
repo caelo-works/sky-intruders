@@ -315,6 +315,72 @@ var SIRender = ( function()
    }
 
    /*
+    * annotateTrails( baseBitmap, items, opts ) -> a NEW Bitmap with each
+    * trail highlighted (glow line over the actual streak) and labeled near
+    * its midpoint. items: [ { x1, y1, x2, y2, color, label } ]. Sizes scale
+    * with the image like annotateField; labels get the same 8-offset dark
+    * halo so they stay readable over nebulosity.
+    */
+   function annotateTrails( baseBitmap, items, opts )
+   {
+      opts = opts || {};
+      var bmp = new Bitmap( baseBitmap );
+      var longSide = Math.max( bmp.width, bmp.height );
+      var lw = ( opts.lineWidth > 0 ) ? opts.lineWidth : Math.max( 2, Math.round( longSide/1300 ) );
+      var fontSize = ( opts.fontSize > 0 ) ? opts.fontSize : Math.max( 12, Math.round( longSide/80 ) );
+      var halo = hexToArgb( "#000000", 0xb8 );
+
+      var g = new Graphics( bmp );
+      try
+      {
+         g.antialiasing = true;
+         try { g.font = new Font( "SansSerif", fontSize ); } catch ( e ) {}
+
+         items = items || [];
+         for ( var i = 0; i < items.length; ++i )
+         {
+            var t = items[ i ];
+            if ( t === null || t === undefined )
+               continue;
+            var col = hexToArgb( t.color || "#22d3ee" );
+
+            // Wide translucent glow so the (often faint) streak underneath
+            // stays visible, then a thin bright line right on it.
+            g.pen = new Pen( withAlpha( col, 0x46 ), lw*5 + 2 );
+            g.drawLine( t.x1, t.y1, t.x2, t.y2 );
+            g.pen = new Pen( withAlpha( col, 0xcc ), lw );
+            g.drawLine( t.x1, t.y1, t.x2, t.y2 );
+
+            if ( t.label )
+            {
+               // Label at the midpoint, pushed off the line along the
+               // perpendicular, clamped inside the frame.
+               var mx = ( t.x1 + t.x2 )/2, my = ( t.y1 + t.y2 )/2;
+               var dx = t.x2 - t.x1, dy = t.y2 - t.y1;
+               var len = Math.max( 1e-6, Math.sqrt( dx*dx + dy*dy ) );
+               var off = fontSize*1.4;
+               var lx = mx + ( -dy/len )*off, ly = my + ( dx/len )*off;
+               lx = Math.max( fontSize, Math.min( bmp.width - fontSize*8, lx ) );
+               ly = Math.max( fontSize*1.5, Math.min( bmp.height - fontSize, ly ) );
+               var s = String( t.label );
+               g.pen = new Pen( halo, 1 );
+               var o = Math.max( 1, Math.round( fontSize/12 ) );
+               var offs = [ [-o,-o],[o,-o],[-o,o],[o,o],[0,-o],[0,o],[-o,0],[o,0] ];
+               for ( var k = 0; k < offs.length; ++k )
+                  g.drawText( lx + offs[ k ][ 0 ], ly + offs[ k ][ 1 ], s );
+               g.pen = new Pen( col, 1 );
+               g.drawText( lx, ly, s );
+            }
+         }
+      }
+      finally
+      {
+         g.end();
+      }
+      return bmp;
+   }
+
+   /*
     * drawTrails( baseBitmap, trails, opts ) -> a NEW Bitmap with each trail's
     * line segment drawn (trails carry x1,y1,x2,y2,color). opts.glow draws a
     * thick faint underlay then a thin bright line for a choreography look.
@@ -437,10 +503,14 @@ var SIRender = ( function()
    // paths on the reference grid ([reference] + successfully aligned targets),
    // or null if StarAlignment is unavailable. Frames that fail to register
    // (too few stars, clouds) are silently dropped.
-   function registerFrames( framePaths, outDir )
+   function registerFramesMapped( framePaths, outDir )
    {
+      // StarAlignment of every frame onto framePaths[0], keeping the
+      // input -> output correspondence: returns { ref, paths } where
+      // paths[i] is the registered file for input i (paths[0] === ref,
+      // failures are null), or null when registration is unavailable.
       if ( typeof StarAlignment === "undefined" || !framePaths || framePaths.length < 2 )
-         return framePaths ? framePaths.slice() : null;
+         return null;
       try
       {
          if ( !File.directoryExists( outDir ) )
@@ -461,22 +531,32 @@ var SIRender = ( function()
          SA.targets = targets;
          SA.executeGlobal();
 
-         // Collect the registered outputs that were actually produced.
-         var out = [ ref ];
+         var paths = [ ref ];
          for ( var j = 1; j < framePaths.length; ++j )
          {
             var base = File.extractName( framePaths[ j ] );
             var cand = outDir + "/" + base + postfix + ".xisf";
-            if ( File.exists( cand ) )
-               out.push( cand );
+            paths.push( File.exists( cand ) ? cand : null );
          }
-         return out;
+         return { ref: ref, paths: paths };
       }
       catch ( e )
       {
-         try { console.warningln( "SIRender.registerFrames: " + e.message ); } catch ( e2 ) {}
+         try { console.warningln( "SIRender.registerFramesMapped: " + e.message ); } catch ( e2 ) {}
          return null;
       }
+   }
+
+   function registerFrames( framePaths, outDir )
+   {
+      var m = registerFramesMapped( framePaths, outDir );
+      if ( m === null )
+         return framePaths ? framePaths.slice() : null;
+      var out = [];
+      for ( var i = 0; i < m.paths.length; ++i )
+         if ( m.paths[ i ] !== null )
+            out.push( m.paths[ i ] );
+      return out;
    }
 
    function maxCombine( items )
@@ -562,10 +642,12 @@ var SIRender = ( function()
       stretchedBitmap: stretchedBitmap,
       bitmapToBase64Png: bitmapToBase64Png,
       annotateField: annotateField,
+      annotateTrails: annotateTrails,
       drawTrails: drawTrails,
       scaleBitmap: scaleBitmap,
       cropThumbnail: cropThumbnail,
       registerFrames: registerFrames,
+      registerFramesMapped: registerFramesMapped,
       maxCombine: maxCombine,
       showBitmap: showBitmap,
       showImage: showImage
