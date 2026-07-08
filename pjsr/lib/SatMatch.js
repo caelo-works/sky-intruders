@@ -209,10 +209,20 @@ var SISatMatch = ( function()
    function fovContains( fov, p )
    {
       // rotationDeg is the position angle of the frame's +y (height) axis,
-      // east of north (WCS-like rotation).
+      // east of north (WCS-like rotation). When the rotation is unknown
+      // (frame not plate-solved: approximate FOV from the pointing header),
+      // fall back to the bounding circle — every satellite that could have
+      // crossed at ANY rotation is kept, and the ambiguity is resolved
+      // later by the field-orientation fit.
       var t = tangentOffsets( { raDeg: fov.raDeg, decDeg: fov.decDeg }, p );
       if ( !t.ok )
          return false;
+      if ( fov.rotationDeg === null || fov.rotationDeg === undefined ||
+           !isFinite( fov.rotationDeg ) )
+      {
+         var r2 = ( fov.widthDeg*fov.widthDeg + fov.heightDeg*fov.heightDeg )/4;
+         return t.x*t.x + t.y*t.y <= r2;
+      }
       var th = fov.rotationDeg*DEG2RAD;
       var fx = t.x*Math.cos( th ) - t.y*Math.sin( th );
       var fy = t.x*Math.sin( th ) + t.y*Math.cos( th );
@@ -630,6 +640,200 @@ var SISatMatch = ( function()
       }
    }
 
+   // ------------------------------------------------------------------------
+   // Field-orientation fit for frames WITHOUT a plate solution.
+   //
+   // Inputs: per-frame crossings (from a circular-FOV match pass) and trails
+   // in a COMMON pixel grid (registered frames), plus the approximate field
+   // center, plate scale and image size. The sky rotation and the parity
+   // (mirror flip) of the grid are unknown; everything else is known. Both
+   // are recovered by brute force: for each candidate (rotation, parity) a
+   // synthetic TAN projection is built, every trail is projected to the sky
+   // and scored against the sunlit crossings; the best-scoring orientation
+   // wins, then the field-center error is corrected from the median offset
+   // of the matched pairs and the fit is refined once around the winner.
+   //
+   // Returns { tan, rotationDeg, parity, score, pairs } or null when there
+   // is nothing to fit (no trails or no sunlit crossings).
+
+   function tanForOrientation( center, pixScaleArcsec, width, height, rotDeg, parity )
+   {
+      var s = pixScaleArcsec/3600;
+      var th = rotDeg*DEG2RAD;
+      return { crval1: center.raDeg, crval2: center.decDeg,
+               crpix1: ( width + 1 )/2, crpix2: ( height + 1 )/2,
+               cd11: parity*s*Math.cos( th ), cd12: -s*Math.sin( th ),
+               cd21: parity*s*Math.sin( th ), cd22: s*Math.cos( th ) };
+   }
+
+   function tanProject( tan, x, y )
+   {
+      // Gnomonic deprojection, 0-based pixels (mirror of FrameMeta's math,
+      // local so SatMatch stays self-contained under Node).
+      var dp1 = ( x + 1 ) - tan.crpix1;
+      var dp2 = ( y + 1 ) - tan.crpix2;
+      var xi = ( tan.cd11*dp1 + tan.cd12*dp2 )*DEG2RAD;
+      var eta = ( tan.cd21*dp1 + tan.cd22*dp2 )*DEG2RAD;
+      var ra0 = tan.crval1*DEG2RAD, dec0 = tan.crval2*DEG2RAD;
+      var sinD0 = Math.sin( dec0 ), cosD0 = Math.cos( dec0 );
+      var denom = Math.sqrt( 1 + xi*xi + eta*eta );
+      var dec = Math.asin( ( sinD0 + eta*cosD0 )/denom );
+      var ra = ra0 + Math.atan2( xi, cosD0 - eta*sinD0 );
+      var raDeg = ra*RAD2DEG;
+      raDeg -= 360*Math.floor( raDeg/360 );
+      return { raDeg: raDeg, decDeg: dec*RAD2DEG };
+   }
+
+   function scoreOrientation( tan, frames, sepTol, angTol )
+   {
+      // Sum of best-candidate scores, one per trail, plus the pair list.
+      // One-to-one assignment is NOT enforced here (assignTrails does that
+      // afterwards); for a global orientation search per-trail-best is a
+      // smooth enough objective and much cheaper.
+      var total = 0;
+      var pairs = [];
+      for ( var f = 0; f < frames.length; ++f )
+      {
+         var fr = frames[f];
+         var trails = fr.trails || [];
+         var cands = [];
+         for ( var c = 0; c < fr.crossings.length; ++c )
+         {
+            var cr = fr.crossings[c];
+            if ( !cr.sunlit )
+               continue;
+            var len = angularSepDeg( cr.path.p1, cr.path.p2 );
+            if ( len <= 0 )
+               continue;
+            cands.push( { c: cr,
+                          mid: midpointRaDec( cr.path.p1, cr.path.p2 ),
+                          pa: positionAngleDeg( cr.path.p1, cr.path.p2 ),
+                          len: len } );
+         }
+         if ( cands.length === 0 )
+            continue;
+         for ( var t = 0; t < trails.length; ++t )
+         {
+            var tr = trails[t];
+            var p1 = tanProject( tan, tr.x1, tr.y1 );
+            var p2 = tanProject( tan, tr.x2, tr.y2 );
+            var mid = midpointRaDec( p1, p2 );
+            var pa = positionAngleDeg( p1, p2 );
+            var tLen = angularSepDeg( p1, p2 );
+            var best = null;
+            for ( var k = 0; k < cands.length; ++k )
+            {
+               var sep = angularSepDeg( mid, cands[k].mid );
+               if ( sep > sepTol )
+                  continue;
+               var ad = orientationDiffDeg( pa, cands[k].pa );
+               if ( ad > angTol )
+                  continue;
+               var mx = Math.max( tLen, cands[k].len );
+               var lenScore = ( mx > 0 ) ? 1 - Math.min( 1, Math.abs( tLen - cands[k].len )/mx ) : 0;
+               var score = 0.5*( 1 - sep/sepTol ) + 0.3*( 1 - ad/angTol ) + 0.2*lenScore;
+               if ( best === null || score > best.score )
+                  best = { score: score, sep: sep, ad: ad, cand: cands[k],
+                           frame: f, trail: t, mid: mid };
+            }
+            if ( best !== null )
+            {
+               total += best.score;
+               pairs.push( best );
+            }
+         }
+      }
+      return { total: total, pairs: pairs };
+   }
+
+   function medianOfArray( a )
+   {
+      if ( a.length === 0 )
+         return 0;
+      var s = a.slice().sort( function( x, y ) { return x - y; } );
+      var m = Math.floor( s.length/2 );
+      return ( s.length % 2 !== 0 ) ? s[m] : ( s[m - 1] + s[m] )/2;
+   }
+
+   function fitOrientation( frames, field, options )
+   {
+      var o = options || {};
+      var sepTol = ( o.fitMaxSepDeg > 0 ) ? o.fitMaxSepDeg : 0.6;
+      var angTol = ( o.fitMaxAngleDiffDeg > 0 ) ? o.fitMaxAngleDiffDeg : 15;
+      var center = { raDeg: field.raDeg, decDeg: field.decDeg };
+
+      var hasWork = false;
+      for ( var f = 0; f < frames.length && !hasWork; ++f )
+         if ( ( frames[f].trails || [] ).length > 0 )
+            for ( var c = 0; c < frames[f].crossings.length; ++c )
+               if ( frames[f].crossings[c].sunlit )
+               {
+                  hasWork = true;
+                  break;
+               }
+      if ( !hasWork )
+         return null;
+
+      function evaluate( rotDeg, parity, ctr )
+      {
+         var tan = tanForOrientation( ctr, field.pixScaleArcsec, field.width, field.height,
+                                      rotDeg, parity );
+         var s = scoreOrientation( tan, frames, sepTol, angTol );
+         return { tan: tan, rotationDeg: rotDeg, parity: parity, center: ctr,
+                  score: s.total, pairs: s.pairs };
+      }
+
+      // Coarse scan: 1-degree steps, both parities.
+      var best = null;
+      for ( var p = -1; p <= 1; p += 2 )
+         for ( var r = 0; r < 360; ++r )
+         {
+            var e = evaluate( r, p, center );
+            if ( best === null || e.score > best.score )
+               best = e;
+         }
+      if ( best === null || best.score <= 0 || best.pairs.length === 0 )
+         return null;
+
+      // Field-center correction: median tangent-plane offset of the matched
+      // pairs (mount pointing is only good to arcminutes), then a fine
+      // rotation scan around the winner with the corrected center.
+      for ( var iter = 0; iter < 2; ++iter )
+      {
+         var base = best.center;
+         var dxs = [], dys = [];
+         for ( var i = 0; i < best.pairs.length; ++i )
+         {
+            var pr = best.pairs[i];
+            var tTr = tangentOffsets( base, pr.mid );
+            var tCr = tangentOffsets( base, pr.cand.mid );
+            if ( tTr.ok && tCr.ok )
+            {
+               dxs.push( tCr.x - tTr.x );
+               dys.push( tCr.y - tTr.y );
+            }
+         }
+         var ctr = base;
+         if ( dxs.length > 0 )
+         {
+            var cosD = Math.cos( base.decDeg*DEG2RAD );
+            ctr = { raDeg: base.raDeg + ( cosD !== 0 ? medianOfArray( dxs )/cosD : 0 ),
+                    decDeg: base.decDeg + medianOfArray( dys ) };
+         }
+         var refined = best;
+         for ( var r2 = -20; r2 <= 20; ++r2 )
+         {
+            var e2 = evaluate( best.rotationDeg + r2*0.1, best.parity, ctr );
+            if ( e2.score > refined.score )
+               refined = e2;
+         }
+         if ( refined === best )
+            break;
+         best = refined;
+      }
+      return best;
+   }
+
    function matchFrame( fr, obs, opt, sats )
    {
       var startMs = parseRfc3339Ms( fr.startUtc );
@@ -692,8 +896,13 @@ var SISatMatch = ( function()
    return {
       parseTles: parseTles,
       match: match,
+      fitOrientation: fitOrientation,
       useSgp4: function( lib ) { sgp4Lib = lib; },
       core: {
+         assignTrails: assignTrails,
+         normalizedOptions: normalizedOptions,
+         tanForOrientation: tanForOrientation,
+         tanProject: tanProject,
          parseRfc3339Ms: parseRfc3339Ms,
          formatRfc3339Ms: formatRfc3339Ms,
          jdayOfMs: jdayOfMs,

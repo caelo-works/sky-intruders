@@ -146,3 +146,83 @@ assert.strictEqual(resRot.frames[0].crossings[0].matchedTrailIndex, null,
 assert.ok(!("matchScore" in resRot.frames[0].crossings[0]), "no matchScore when unmatched");
 
 console.log("satmatch: 7 propagation steps within tolerance; match replay == Go reference; rotated trail rejected");
+
+// ---------------------------------------------------------------------------
+// Circular FOV (rotation unknown): a point inside the bounding circle must
+// pass, one beyond it must fail, and rotationDeg: null must never yield NaN.
+
+{
+   const fov = { raDeg: 100, decDeg: 20, widthDeg: 2, heightDeg: 1, rotationDeg: null };
+   assert.strictEqual(core.fovContains(fov, { raDeg: 100.4, decDeg: 20.4 }), true,
+      "inside the bounding circle");
+   assert.strictEqual(core.fovContains(fov, { raDeg: 101.5, decDeg: 21 }), false,
+      "outside the bounding circle");
+   const rot = { raDeg: 100, decDeg: 20, widthDeg: 2, heightDeg: 1, rotationDeg: 0 };
+   assert.strictEqual(core.fovContains(rot, { raDeg: 100.9, decDeg: 20.4 }), true,
+      "rotation 0 still uses the rectangle");
+}
+
+// ---------------------------------------------------------------------------
+// Field-orientation fit: trails generated in a grid of KNOWN rotation and
+// parity (with a small pointing error on the center) must be recovered by
+// fitOrientation, and assignTrails must then name every crossing.
+
+{
+   const field = { raDeg: 313.973, decDeg: 31.415, pixScaleArcsec: 1.78,
+                   width: 3856, height: 2180 };
+   const ROT = 287, PARITY = -1;
+   // ground truth: the REAL pointing is ~2.4 arcmin off the header value
+   const truthCenter = { raDeg: field.raDeg + 0.04, decDeg: field.decDeg - 0.03 };
+   const truthTan = core.tanForOrientation(truthCenter, field.pixScaleArcsec,
+                                           field.width, field.height, ROT, PARITY);
+
+   const segs = [
+      { x1: 150, y1: 260, x2: 3700, y2: 850 },
+      { x1: 400, y1: 2050, x2: 3500, y2: 300 },
+      { x1: 2000, y1: 60, x2: 2300, y2: 2120 }
+   ];
+   const frames = segs.map((s, i) => {
+      const p1 = core.tanProject(truthTan, s.x1, s.y1);
+      const p2 = core.tanProject(truthTan, s.x2, s.y2);
+      return {
+         crossings: [
+            { noradId: 1000 + i, name: "SYN-" + i, sunlit: true,
+              path: { p1, p2 }, matchedTrailIndex: null },
+            // decoy: sunlit crossing far from every trail (parallel offset)
+            { noradId: 2000 + i, name: "DECOY-" + i, sunlit: true,
+              path: { p1: { raDeg: p1.raDeg + 1.4, decDeg: p1.decDeg + 0.9 },
+                      p2: { raDeg: p2.raDeg + 1.4, decDeg: p2.decDeg + 0.9 } },
+              matchedTrailIndex: null }
+         ],
+         trails: [{ index: 0, x1: s.x1 + 1, y1: s.y1 - 1, x2: s.x2 - 1, y2: s.y2 + 1 }]
+      };
+   });
+
+   const fit = SISatMatch.fitOrientation(frames, field, {});
+   assert.ok(fit !== null, "fit must succeed");
+   assert.strictEqual(fit.parity, PARITY, "parity recovered");
+   const dRot = Math.abs(((fit.rotationDeg - ROT) % 360 + 360) % 360);
+   assert.ok(Math.min(dRot, 360 - dRot) < 0.5, `rotation recovered (${fit.rotationDeg})`);
+   assert.strictEqual(fit.pairs.length, 3, "all three trails paired");
+   const dRa = Math.abs(fit.center.raDeg - truthCenter.raDeg);
+   const dDec = Math.abs(fit.center.decDeg - truthCenter.decDeg);
+   assert.ok(dRa < 0.03 && dDec < 0.03, `center corrected (${dRa}, ${dDec})`);
+
+   // Assignment with the fitted TAN: every real crossing gets its trail,
+   // every decoy stays unmatched.
+   frames.forEach(fr => {
+      fr.trails.forEach(t => {
+         t.p1 = core.tanProject(fit.tan, t.x1, t.y1);
+         t.p2 = core.tanProject(fit.tan, t.x2, t.y2);
+      });
+      core.assignTrails(fr.crossings, fr,
+         core.normalizedOptions({ matchMaxSepDeg: 0.35 }));
+      assert.strictEqual(fr.crossings[0].matchedTrailIndex, 0,
+         fr.crossings[0].name + " must match trail 0");
+      assert.strictEqual(fr.crossings[1].matchedTrailIndex, null,
+         fr.crossings[1].name + " must stay unmatched");
+   });
+
+   console.log("satmatch: circular FOV + orientation fit (rot " +
+      fit.rotationDeg.toFixed(2) + ", parity " + fit.parity + ") OK");
+}
