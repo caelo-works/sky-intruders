@@ -299,6 +299,89 @@ var SITrailCore = ( function()
       }
    }
 
+   function segmentCorridorSum( data, width, height, seg, halfW )
+   {
+      // Integral of data in a corridor of half-width halfW around the
+      // SEGMENT (not the full line), plus the pixel count.
+      var dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
+      var len = Math.sqrt( dx*dx + dy*dy );
+      if ( len < 1 )
+         return { sum: 0, count: 0 };
+      var ux = dx/len, uy = dy/len;
+      var sum = 0, count = 0;
+      for ( var t = 0; t <= Math.round( len ); ++t )
+      {
+         var x = seg.x1 + ux*t, y = seg.y1 + uy*t;
+         for ( var o = -halfW; o <= halfW; ++o )
+         {
+            var xi = Math.round( x - uy*o );
+            var yi = Math.round( y + ux*o );
+            if ( xi >= 0 && xi < width && yi >= 0 && yi < height )
+            {
+               sum += data[yi*width + xi];
+               ++count;
+            }
+         }
+      }
+      return { sum: sum, count: count };
+   }
+
+   function lineEmptiness( data, width, height, seg )
+   {
+      // Along-segment occupancy statistics in the CLAMPED residual:
+      // zeroFrac — fraction of exactly-empty pixels (clamped Gaussian noise
+      // is zero half the time; a continuous trail is not), and meanNonZero —
+      // mean of the occupied pixels (noise occupies at ~0.8 sigma; the dashes
+      // of a flashing satellite are bright). A chance noise line is BOTH
+      // holey and faint; a real trail fails at least one of the two.
+      var dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
+      var len = Math.sqrt( dx*dx + dy*dy );
+      if ( len < 1 )
+         return { zeroFrac: 1, meanNonZero: 0 };
+      var zeros = 0, n = 0, sum = 0;
+      for ( var t = 0; t <= Math.round( len ); ++t )
+      {
+         var x = Math.round( seg.x1 + dx*t/len );
+         var y = Math.round( seg.y1 + dy*t/len );
+         if ( x < 0 || y < 0 || x >= width || y >= height )
+            continue;
+         ++n;
+         var v = data[y*width + x];
+         if ( v <= 0 )
+            ++zeros;
+         else
+            sum += v;
+      }
+      if ( n === 0 )
+         return { zeroFrac: 1, meanNonZero: 0 };
+      var occupied = n - zeros;
+      return { zeroFrac: zeros/n, meanNonZero: ( occupied > 0 ) ? sum/occupied : 0 };
+   }
+
+   function isNoiseLine( data, width, height, seg, sigma )
+   {
+      // The combined rule: reject only what is holey AND faint.
+      var e = lineEmptiness( data, width, height, seg );
+      return e.zeroFrac > 0.38 && e.meanNonZero < 1.8*sigma;
+   }
+
+   function corridorConcentration( data, width, height, seg, mu )
+   {
+      // How much of the excess flux around the segment concentrates in a
+      // thin (±1 px) corridor versus a wide (±7 px) one. A real streak is
+      // 1-3 px wide -> ratio near 1; diffuse residual structure (nebula
+      // mottle after imperfect subtraction) fills the wide corridor too ->
+      // ratio near the width ratio (~0.2). Chance lines through blob fields
+      // are killed here.
+      var thin = segmentCorridorSum( data, width, height, seg, 1 );
+      var wide = segmentCorridorSum( data, width, height, seg, 7 );
+      var excThin = thin.sum - mu*thin.count;
+      var excWide = wide.sum - mu*wide.count;
+      if ( excWide <= 0 )
+         return 1; // no diffuse background to hide in
+      return excThin/excWide;
+   }
+
    // ------------------------------------------------------------------------
    // Detection driver (binned coordinates)
 
@@ -310,7 +393,7 @@ var SITrailCore = ( function()
       return a;
    }
 
-   function detectCore( data, width, height, params )
+   function detectCore( data, width, height, params, acceptSeg )
    {
       var p = {};
       for ( var k in DEFAULTS )
@@ -335,7 +418,8 @@ var SITrailCore = ( function()
             if ( peak === null || peak.count < peakMin )
                break;
             var run = lineRun( map, width, height, peak.thetaDeg, peak.rho, p.perpTol, p.gapTol );
-            if ( run !== null && run.length >= minLen && run.fill >= p.fillRatioMin )
+            if ( run !== null && run.length >= minLen && run.fill >= p.fillRatioMin &&
+                 ( acceptSeg === undefined || acceptSeg( run ) ) )
             {
                accepted = { run: run, thetaDeg: peak.thetaDeg, rho: peak.rho };
                break;
@@ -365,6 +449,596 @@ var SITrailCore = ( function()
          stats: { median: mm.median, mad: mm.mad,
                   threshold: at.threshold, aboveFrac: at.aboveFrac, kUsed: at.kUsed }
       };
+   }
+
+   function medianStackMasked( arrays, eps )
+   {
+      // Per-pixel median across N same-length arrays IGNORING empty pixels
+      // (registration borders are zero-filled, and a zero must never vote:
+      // it would drag the model low and let the static sky leak back into
+      // the residual). Returns the model plus a validity mask: a pixel needs
+      // at least 3 covering frames for its median to be trustworthy.
+      var n = arrays.length;
+      if ( n === 0 )
+         return null;
+      if ( !( eps > 0 ) )
+         eps = 1e-6;
+      var len = arrays[0].length;
+      var model = new Float32Array( len );
+      var valid = new Uint8Array( len );
+      var v = new Float64Array( n );
+      for ( var i = 0; i < len; ++i )
+      {
+         var m = 0;
+         for ( var a = 0; a < n; ++a )
+         {
+            var x = arrays[a][i];
+            if ( x > eps )
+               v[m++] = x;
+         }
+         if ( m < 3 )
+            continue;
+         // insertion sort — m is at most the frame count (tiny)
+         for ( var a2 = 1; a2 < m; ++a2 )
+         {
+            var x2 = v[a2];
+            var b = a2 - 1;
+            while ( b >= 0 && v[b] > x2 )
+            {
+               v[b + 1] = v[b];
+               --b;
+            }
+            v[b + 1] = x2;
+         }
+         var mid = m >> 1;
+         model[i] = ( m % 2 !== 0 ) ? v[mid] : ( v[mid - 1] + v[mid] )/2;
+         valid[i] = 1;
+      }
+      return { model: model, valid: valid };
+   }
+
+   function medianStack( arrays )
+   {
+      var r = medianStackMasked( arrays, 0 );
+      return ( r === null ) ? null : r.model;
+   }
+
+   function linearFitToModel( data, model, valid, eps )
+   {
+      // Photometric normalization: least-squares a,b such that a*data + b
+      // best matches the model over the commonly-covered pixels, with one
+      // 3-sigma rejection pass (transients and bright residues must not
+      // steer the fit). Sky transparency varies frame to frame — the nebula
+      // is multiplicatively brighter through a clearer sky, and without this
+      // the static-sky median leaks structured residuals into the diff.
+      if ( !( eps > 0 ) )
+         eps = 1e-6;
+      var n = data.length;
+      var step = ( n > 400000 ) ? Math.ceil( n/400000 ) : 1;
+
+      function pass( rejectA, rejectB, rejectSigma )
+      {
+         var sx = 0, sy = 0, sxx = 0, sxy = 0, m = 0;
+         for ( var i = 0; i < n; i += step )
+         {
+            var x = data[i], y = model[i];
+            if ( x <= eps || y <= eps || ( valid && !valid[i] ) )
+               continue;
+            if ( rejectSigma > 0 && Math.abs( rejectA*x + rejectB - y ) > rejectSigma )
+               continue;
+            sx += x;
+            sy += y;
+            sxx += x*x;
+            sxy += x*y;
+            ++m;
+         }
+         if ( m < 100 )
+            return null;
+         var det = m*sxx - sx*sx;
+         if ( Math.abs( det ) < 1e-20 )
+            return null;
+         var a = ( m*sxy - sx*sy )/det;
+         var b = ( sy*sxx - sx*sxy )/det;
+         // residual sigma for the rejection pass
+         var rss = 0, m2 = 0;
+         for ( var i2 = 0; i2 < n; i2 += step*4 )
+         {
+            var x2 = data[i2], y2 = model[i2];
+            if ( x2 <= eps || y2 <= eps || ( valid && !valid[i2] ) )
+               continue;
+            var r = a*x2 + b - y2;
+            rss += r*r;
+            ++m2;
+         }
+         return { a: a, b: b, sigma: ( m2 > 10 ) ? Math.sqrt( rss/m2 ) : 0 };
+      }
+
+      var fit = pass( 0, 0, 0 );
+      if ( fit === null )
+         return { a: 1, b: 0 };
+      if ( fit.sigma > 0 )
+      {
+         var fit2 = pass( fit.a, fit.b, 3*fit.sigma );
+         if ( fit2 !== null )
+            fit = fit2;
+      }
+      return { a: fit.a, b: fit.b };
+   }
+
+   function applyLinear( data, a, b, eps )
+   {
+      // a*data + b on covered pixels; empty (border) pixels stay empty.
+      if ( !( eps > 0 ) )
+         eps = 1e-6;
+      var out = new Float32Array( data.length );
+      for ( var i = 0; i < data.length; ++i )
+         if ( data[i] > eps )
+         {
+            var v = a*data[i] + b;
+            out[i] = ( v > eps ) ? v : eps*2; // keep covered pixels nonzero
+         }
+      return out;
+   }
+
+   function erodeMask( mask, width, height, radius )
+   {
+      // Shrink the valid region by `radius` pixels (4-neighborhood passes):
+      // binning smears a hard border across a cell and resampling adds its
+      // own transition ring, so the last few cells next to any invalid
+      // pixel cannot be trusted either.
+      var cur = mask;
+      for ( var pass = 0; pass < radius; ++pass )
+      {
+         var next = new Uint8Array( cur.length );
+         for ( var y = 0; y < height; ++y )
+         {
+            var row = y*width;
+            for ( var x = 0; x < width; ++x )
+            {
+               if ( !cur[row + x] )
+                  continue;
+               if ( x === 0 || y === 0 || x === width - 1 || y === height - 1 )
+                  continue;
+               if ( cur[row + x - 1] && cur[row + x + 1] &&
+                    cur[row + x - width] && cur[row + x + width] )
+                  next[row + x] = 1;
+            }
+         }
+         cur = next;
+      }
+      return cur;
+   }
+
+   function subtractModel( data, model, mask )
+   {
+      // Positive residual of a frame against the static-sky model. Pixels
+      // outside the frame's own coverage or outside the model's validity
+      // mask are neutralized (fake positive edges along registration
+      // borders would otherwise be detected as perfectly straight trails).
+      var len = data.length;
+      var out = new Float32Array( len );
+      for ( var i = 0; i < len; ++i )
+      {
+         if ( mask !== undefined && mask !== null && !mask[i] )
+            continue;
+         var d = data[i], m = model[i];
+         if ( d <= 1e-6 || m <= 1e-6 )
+            continue;
+         var r = d - m;
+         out[i] = ( r > 0 ) ? r : 0;
+      }
+      return out;
+   }
+
+   // ------------------------------------------------------------------------
+   // Faint-streak pass: weighted (gray-level) Hough on the difference image.
+   //
+   // A narrowband satellite trail can sit at ~0.4 sigma per binned pixel —
+   // no per-pixel threshold sees it, but integrated along its length it is
+   // a 10-20 sigma event. So: z-normalize the residual (capped, so a bright
+   // star residue cannot fake a line), accumulate z along every (theta,rho),
+   // box-smooth each theta row across rho (an edge-to-edge trail drifts
+   // through ~L*sin(0.5 deg) rho bins at 1-degree theta resolution), and
+   // accept peaks that beat the noise expectation mu1*L by kLine sigmas of
+   // sigma1*sqrt(smooth*L). Endpoints come from the cumulative-sum extrema
+   // of the perpendicular-max profile (CUSUM change points — robust for
+   // signals far below the pixel noise), validated for uniformity in chunks.
+
+   var FAINT_DEFAULTS = {
+      faintKLine: 6.5,      // refined line-integral significance (sigmas);
+                            // calibrated: 0 false positives on pure-noise
+                            // fields, 100% recovery of 0.5-sigma-per-pixel
+                            // trails, ~40% at 0.4 sigma
+      faintZCap: 4,         // z-value ceiling per pixel
+      faintZMin: 0.5,       // pixels fainter than this contribute nothing
+      faintSmooth: 7,       // rho box-smooth window (odd)
+      faintMaxTrails: 8,
+      faintChunks: 6,       // uniformity segments along the accepted run
+      faintChunkMinFrac: 0.75,
+      minLengthFrac: 0.15,  // shared with the bright pass
+      maxPeekCandidates: 30
+   };
+
+   function noiseSigmaFromPositives( data )
+   {
+      // The residual is clamped at zero, so estimate the noise from the
+      // positive half-distribution: median(positives) = 0.674 sigma for a
+      // half-normal.
+      var pos = [];
+      for ( var i = 0; i < data.length; i += ( data.length > 500000 ? 2 : 1 ) )
+         if ( data[i] > 0 )
+            pos.push( data[i] );
+      if ( pos.length < 100 )
+         return 0;
+      return medianOf( pos )/0.674;
+   }
+
+   function houghWeighted( z, width, height, zMin )
+   {
+      var nTheta = 180;
+      var diag = Math.ceil( Math.sqrt( width*width + height*height ) );
+      var nRho = 2*diag + 1;
+      var acc = new Float64Array( nTheta*nRho );
+      var cosT = new Float64Array( nTheta );
+      var sinT = new Float64Array( nTheta );
+      for ( var t = 0; t < nTheta; ++t )
+      {
+         cosT[t] = Math.cos( t*Math.PI/180 );
+         sinT[t] = Math.sin( t*Math.PI/180 );
+      }
+      for ( var y = 0; y < height; ++y )
+      {
+         var row = y*width;
+         for ( var x = 0; x < width; ++x )
+         {
+            var v = z[row + x];
+            if ( v < zMin )
+               continue;
+            for ( var t2 = 0; t2 < nTheta; ++t2 )
+            {
+               var r = Math.round( x*cosT[t2] + y*sinT[t2] ) + diag;
+               acc[t2*nRho + r] += v;
+            }
+         }
+      }
+      return { acc: acc, nTheta: nTheta, nRho: nRho, rhoOffset: diag };
+   }
+
+   function smoothRhoRows( hough, window )
+   {
+      // Box-smooth each theta row along rho (sliding sum, not average: the
+      // significance test expects the summed weight of a `window`-wide
+      // corridor).
+      var half = window >> 1;
+      var out = new Float64Array( hough.acc.length );
+      for ( var t = 0; t < hough.nTheta; ++t )
+      {
+         var base = t*hough.nRho;
+         var sum = 0;
+         for ( var r = 0; r < hough.nRho; ++r )
+         {
+            sum += hough.acc[base + r];
+            if ( r - window >= 0 )
+               sum -= hough.acc[base + r - window];
+            if ( r - half >= 0 )
+               out[base + r - half] = sum;
+         }
+      }
+      return { acc: out, nTheta: hough.nTheta, nRho: hough.nRho, rhoOffset: hough.rhoOffset };
+   }
+
+   function lineExtent( width, height, thetaDeg, rho )
+   {
+      // Range of the line parameter t inside the image, or null.
+      var th = thetaDeg*Math.PI/180;
+      var ct = Math.cos( th ), st = Math.sin( th );
+      var tMin = -Infinity, tMax = Infinity;
+      if ( Math.abs( st ) > 1e-12 )
+      {
+         var ta = ( rho*ct - 0 )/st;
+         var tb = ( rho*ct - ( width - 1 ) )/st;
+         tMin = Math.max( tMin, Math.min( ta, tb ) );
+         tMax = Math.min( tMax, Math.max( ta, tb ) );
+      }
+      else if ( rho*ct < 0 || rho*ct > width - 1 )
+         return null;
+      if ( Math.abs( ct ) > 1e-12 )
+      {
+         var tc = ( 0 - rho*st )/ct;
+         var td = ( ( height - 1 ) - rho*st )/ct;
+         tMin = Math.max( tMin, Math.min( tc, td ) );
+         tMax = Math.min( tMax, Math.max( tc, td ) );
+      }
+      else if ( rho*st < 0 || rho*st > height - 1 )
+         return null;
+      if ( !( tMax > tMin ) )
+         return null;
+      return { t0: Math.ceil( tMin ), t1: Math.floor( tMax ), ct: ct, st: st };
+   }
+
+   function corridorSum( z, width, height, thetaDeg, rho, halfW )
+   {
+      // Direct integral of z along the (float) line, corridor width
+      // 2*halfW+1, plus the pixel count actually summed.
+      var ext = lineExtent( width, height, thetaDeg, rho );
+      if ( ext === null )
+         return null;
+      var sum = 0, count = 0;
+      for ( var t = ext.t0; t <= ext.t1; ++t )
+      {
+         var x = rho*ext.ct - t*ext.st;
+         var y = rho*ext.st + t*ext.ct;
+         for ( var o = -halfW; o <= halfW; ++o )
+         {
+            var xi = Math.round( x + o*ext.ct );
+            var yi = Math.round( y + o*ext.st );
+            if ( xi >= 0 && xi < width && yi >= 0 && yi < height )
+            {
+               sum += z[yi*width + xi];
+               ++count;
+            }
+         }
+      }
+      return { sum: sum, count: count, length: ext.t1 - ext.t0 + 1 };
+   }
+
+   function refineLine( z, width, height, thetaDeg, rho, mu1, sigma1 )
+   {
+      // Sub-degree, sub-pixel re-fit around a coarse Hough candidate: a real
+      // trail concentrates its flux into a narrow corridor once the line is
+      // aligned (drift over an edge-to-edge run at 1-degree theta resolution
+      // spans several rho bins), while a noise peak does not refine
+      // coherently. Returns the best refined line and its significance over
+      // a 3-wide corridor.
+      var best = null;
+      for ( var dt = -0.9; dt <= 0.901; dt += 0.15 )
+         for ( var dr = -3; dr <= 3.01; dr += 0.5 )
+         {
+            var cs = corridorSum( z, width, height, thetaDeg + dt, rho + dr, 1 );
+            if ( cs === null || cs.count < 10 )
+               continue;
+            var signif = ( cs.sum - mu1*cs.count )/( sigma1*Math.sqrt( cs.count ) );
+            if ( best === null || signif > best.signif )
+               best = { thetaDeg: thetaDeg + dt, rho: rho + dr, signif: signif,
+                        length: cs.length };
+         }
+      return best;
+   }
+
+   function faintProfile( z, width, height, ext, rho, perpTol )
+   {
+      // Perpendicular-max z profile along the line, one sample per t step.
+      var g = [];
+      for ( var t = ext.t0; t <= ext.t1; ++t )
+      {
+         var x = rho*ext.ct - t*ext.st;
+         var y = rho*ext.st + t*ext.ct;
+         var best = 0;
+         for ( var o = -perpTol; o <= perpTol; ++o )
+         {
+            var xi = Math.round( x + o*ext.ct );
+            var yi = Math.round( y + o*ext.st );
+            if ( xi >= 0 && xi < width && yi >= 0 && yi < height )
+            {
+               var v = z[yi*width + xi];
+               if ( v > best )
+                  best = v;
+            }
+         }
+         g.push( best );
+      }
+      return g;
+   }
+
+   function quantileOf( arr, q )
+   {
+      if ( arr.length === 0 )
+         return 0;
+      var s = Array.prototype.slice.call( arr ).sort( function( a, b ) { return a - b; } );
+      var i = Math.max( 0, Math.min( s.length - 1, Math.floor( q*s.length ) ) );
+      return s[i];
+   }
+
+   function cusumEndpoints( g, baseline )
+   {
+      // Cumulative sum of (g - baseline): the signal run is bracketed by
+      // the argmin and argmax of the cumulative series.
+      var cs = 0, csMin = 0, csMax = -Infinity;
+      var iMin = 0, iMax = 0;
+      for ( var i = 0; i < g.length; ++i )
+      {
+         cs += g[i] - baseline;
+         if ( cs < csMin )
+         {
+            csMin = cs;
+            iMin = i + 1;
+         }
+         if ( cs > csMax )
+         {
+            csMax = cs;
+            iMax = i;
+         }
+      }
+      if ( iMax <= iMin )
+         return null;
+      return { start: iMin, end: iMax };
+   }
+
+   function detectFaintCore( diff, width, height, params )
+   {
+      var p = {};
+      for ( var k in FAINT_DEFAULTS )
+         p[k] = ( params && params[k] !== undefined ) ? params[k] : FAINT_DEFAULTS[k];
+
+      var sigma = noiseSigmaFromPositives( diff );
+      if ( !( sigma > 0 ) )
+         return { trails: [], sigma: 0 };
+
+      // Capped z map + its noise moments over ALL pixels (zeros included),
+      // which is what a random line collects per unit length.
+      var n = diff.length;
+      var z = new Float32Array( n );
+      var sum1 = 0, sum2 = 0, sumZ = 0;
+      for ( var i = 0; i < n; ++i )
+      {
+         var v = diff[i]/sigma;
+         if ( v > p.faintZCap )
+            v = p.faintZCap;
+         z[i] = v;
+         sumZ += v;
+         var c = ( v >= p.faintZMin ) ? v : 0;
+         sum1 += c;
+         sum2 += c*c;
+      }
+      var mu1 = sum1/n;
+      var muZ = sumZ/n;
+      var sigma1 = Math.sqrt( Math.max( 1e-12, sum2/n - mu1*mu1 ) );
+
+      var diag = Math.sqrt( width*width + height*height );
+      var minLen = p.minLengthFrac*diag;
+
+      var trails = [];
+      for ( var iter = 0; iter < p.faintMaxTrails; ++iter )
+      {
+         var hough = smoothRhoRows( houghWeighted( z, width, height, p.faintZMin ), p.faintSmooth );
+         var accepted = null;
+         for ( var cand = 0; cand < p.maxPeekCandidates; ++cand )
+         {
+            var peak = findPeak( hough ); // works on any acc array shape
+            if ( peak === null || peak.count <= 0 )
+               break;
+            var ext = lineExtent( width, height, peak.thetaDeg, peak.rho );
+            if ( ext === null )
+            {
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               continue;
+            }
+            var L = ext.t1 - ext.t0 + 1;
+            if ( L < minLen )
+            {
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               continue;
+            }
+            // Stage 1: significance of the smoothed peak (faintSmooth-wide
+            // corridor of length L) — a permissive gate for candidates.
+            var expect = mu1*L*p.faintSmooth;
+            var noise = sigma1*Math.sqrt( L*p.faintSmooth );
+            var signif = ( peak.count - expect )/noise;
+            if ( signif < Math.max( 3.5, p.faintKLine - 2 ) )
+            {
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               continue;
+            }
+
+            // Stage 2: sub-degree refinement must concentrate the flux.
+            var refined = refineLine( z, width, height, peak.thetaDeg, peak.rho, mu1, sigma1 );
+            if ( refined === null || refined.signif < p.faintKLine ||
+                 refined.length < minLen )
+            {
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               continue;
+            }
+            ext = lineExtent( width, height, refined.thetaDeg, refined.rho );
+            if ( ext === null )
+            {
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               continue;
+            }
+            signif = refined.signif;
+            peak = { thetaDeg: refined.thetaDeg, rho: refined.rho, count: peak.count };
+
+            // Endpoints by CUSUM on the perpendicular-max profile; the
+            // baseline is the profile's lower quartile (noise level even
+            // when the trail covers most of the line).
+            var perpTol = 2;
+            var g = faintProfile( z, width, height, ext, peak.rho, perpTol );
+            var baseline = quantileOf( g, 0.25 );
+            var run = cusumEndpoints( g, baseline );
+            if ( run === null || ( run.end - run.start + 1 ) < minLen )
+            {
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               continue;
+            }
+
+            // Thin-ness: the excess must concentrate in a narrow corridor,
+            // or this is a chance line through diffuse residual structure.
+            var tSa = ext.t0 + run.start, tSb = ext.t0 + run.end;
+            var runSeg = { x1: peak.rho*ext.ct - tSa*ext.st, y1: peak.rho*ext.st + tSa*ext.ct,
+                           x2: peak.rho*ext.ct - tSb*ext.st, y2: peak.rho*ext.st + tSb*ext.ct };
+            if ( corridorConcentration( z, width, height, runSeg, muZ ) < 0.45 )
+            {
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               continue;
+            }
+
+            // Emptiness: a chance alignment through clamped noise is holey
+            // AND faint; a continuous trail is not holey, a flasher's dashes
+            // are not faint. Kills the chance lines that survive the
+            // integral test on correlated real-world residuals. z is already
+            // in sigma units.
+            if ( isNoiseLine( z, width, height, runSeg, 1 ) )
+            {
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               continue;
+            }
+
+            // Uniformity: the excess must be spread along the run, not
+            // packed into one bright blob.
+            var runLen = run.end - run.start + 1;
+            var chunkLen = Math.floor( runLen/p.faintChunks );
+            var okChunks = 0;
+            for ( var c2 = 0; c2 < p.faintChunks; ++c2 )
+            {
+               var a = run.start + c2*chunkLen;
+               var b = ( c2 === p.faintChunks - 1 ) ? run.end + 1 : a + chunkLen;
+               var s = 0;
+               for ( var j = a; j < b; ++j )
+                  s += g[j] - baseline;
+               if ( s > 0 )
+                  okChunks++;
+            }
+            if ( okChunks < Math.ceil( p.faintChunkMinFrac*p.faintChunks ) )
+            {
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               continue;
+            }
+
+            var tA = ext.t0 + run.start, tB = ext.t0 + run.end;
+            accepted = {
+               x1: peak.rho*ext.ct - tA*ext.st, y1: peak.rho*ext.st + tA*ext.ct,
+               x2: peak.rho*ext.ct - tB*ext.st, y2: peak.rho*ext.st + tB*ext.ct,
+               thetaDeg: peak.thetaDeg, rho: peak.rho,
+               signif: signif, length: runLen
+            };
+            break;
+         }
+         if ( accepted === null )
+            break;
+
+         var dx = accepted.x2 - accepted.x1, dy = accepted.y2 - accepted.y1;
+         trails.push( {
+            x1: accepted.x1, y1: accepted.y1, x2: accepted.x2, y2: accepted.y2,
+            lengthPx: Math.sqrt( dx*dx + dy*dy ),
+            angleDeg: normalizeAngleDeg( Math.atan2( dy, dx )*180/Math.PI ),
+            fill: 1,
+            faint: true,
+            score: Math.min( 1, accepted.signif/( 4*p.faintKLine ) )
+         } );
+
+         // Erase the corridor in the z map and iterate.
+         var th = accepted.thetaDeg*Math.PI/180;
+         var ct2 = Math.cos( th ), st2 = Math.sin( th );
+         var halfW = ( p.faintSmooth >> 1 ) + 1;
+         for ( var y2 = 0; y2 < height; ++y2 )
+         {
+            var row2 = y2*width;
+            for ( var x2 = 0; x2 < width; ++x2 )
+               if ( z[row2 + x2] > 0 && Math.abs( x2*ct2 + y2*st2 - accepted.rho ) <= halfW )
+                  z[row2 + x2] = 0;
+         }
+      }
+
+      return { trails: trails, sigma: sigma };
    }
 
    function scaleSegment( seg, binFactor )
@@ -425,6 +1099,18 @@ var SITrailCore = ( function()
       binImage: binImage,
       adaptiveThreshold: adaptiveThreshold,
       buildBinaryMap: buildBinaryMap,
+      medianStack: medianStack,
+      medianStackMasked: medianStackMasked,
+      erodeMask: erodeMask,
+      linearFitToModel: linearFitToModel,
+      applyLinear: applyLinear,
+      subtractModel: subtractModel,
+      detectFaintCore: detectFaintCore,
+      noiseSigmaFromPositives: noiseSigmaFromPositives,
+      cusumEndpoints: cusumEndpoints,
+      corridorConcentration: corridorConcentration,
+      lineEmptiness: lineEmptiness,
+      isNoiseLine: isNoiseLine,
       houghTransform: houghTransform,
       findPeak: findPeak,
       suppressPeak: suppressPeak,
@@ -512,13 +1198,13 @@ var SITrailDetect = ( function()
       return { meanFluxAdu: meanFluxAdu, brightnessVariation: brightnessVariation, widthPx: widthPx };
    }
 
-   function detect( image, params )
+   function binned( image )
    {
+      // Binned working copy of an image (channel 0), the shared front end of
+      // detect()/detectDiff(). Pulls pixels in horizontal strips and bins in
+      // JS; processEvents every 32 strips keeps the GUI alive.
       var width = image.width, height = image.height;
       var binFactor = Math.max( 1, Math.ceil( Math.max( width, height )/MAX_SMALL_SIDE ) );
-
-      // Pull pixels in horizontal strips (channel 0) and bin in JS;
-      // processEvents every 32 strips keeps the GUI alive.
       var stripCount = 0;
       var getStrip = function( y0, rows )
       {
@@ -528,10 +1214,13 @@ var SITrailDetect = ( function()
             processEvents();
          return a;
       };
-
       var small = SITrailCore.binImage( width, height, binFactor, getStrip, null );
-      var core = SITrailCore.detectCore( small.data, small.width, small.height, params );
+      return { data: small.data, width: small.width, height: small.height,
+               binFactor: binFactor, srcW: width, srcH: height };
+   }
 
+   function finishDetection( image, core, binFactor )
+   {
       var trails = [];
       for ( var i = 0; i < core.trails.length; ++i )
       {
@@ -561,5 +1250,74 @@ var SITrailDetect = ( function()
       };
    }
 
-   return { detect: detect };
+   function detect( image, params )
+   {
+      var b = binned( image );
+      var core = SITrailCore.detectCore( b.data, b.width, b.height, params );
+      return finishDetection( image, core, b.binFactor );
+   }
+
+   function eraseSegmentBinned( data, width, height, seg, halfW )
+   {
+      // Zero every pixel within halfW of the segment (binned coordinates),
+      // bounding-box limited.
+      var x1 = seg.x1, y1 = seg.y1, x2 = seg.x2, y2 = seg.y2;
+      var dx = x2 - x1, dy = y2 - y1;
+      var len2 = dx*dx + dy*dy;
+      var x0 = Math.max( 0, Math.floor( Math.min( x1, x2 ) - halfW ) );
+      var xN = Math.min( width - 1, Math.ceil( Math.max( x1, x2 ) + halfW ) );
+      var y0 = Math.max( 0, Math.floor( Math.min( y1, y2 ) - halfW ) );
+      var yN = Math.min( height - 1, Math.ceil( Math.max( y1, y2 ) + halfW ) );
+      for ( var y = y0; y <= yN; ++y )
+      {
+         var row = y*width;
+         for ( var x = x0; x <= xN; ++x )
+         {
+            var t = ( len2 > 0 ) ? Math.max( 0, Math.min( 1, ( ( x - x1 )*dx + ( y - y1 )*dy )/len2 ) ) : 0;
+            var px = x1 + t*dx, py = y1 + t*dy;
+            var ddx = x - px, ddy = y - py;
+            if ( ddx*ddx + ddy*ddy <= halfW*halfW )
+               data[row + x] = 0;
+         }
+      }
+   }
+
+   function detectDiff( image, binnedSelf, model, params, mask )
+   {
+      // Transient detection: subtract the static-sky model (per-pixel median
+      // of the registered frame set, same binning) before thresholding, so
+      // nebula and stars never reach the Hough stage. Two passes: the binary
+      // pipeline for bright streaks (precise endpoints, fill validation),
+      // then the weighted-Hough pass for streaks far below the per-pixel
+      // noise. Photometry still runs on the full-resolution image.
+      var diff = SITrailCore.subtractModel( binnedSelf.data, model, mask );
+      var muDiff = 0;
+      for ( var d = 0; d < diff.length; ++d )
+         muDiff += diff[d];
+      muDiff /= diff.length;
+      var sigmaDiff = SITrailCore.noiseSigmaFromPositives( diff );
+      var thinOnly = function( run )
+      {
+         return SITrailCore.corridorConcentration( diff, binnedSelf.width, binnedSelf.height,
+                                                   run, muDiff ) >= 0.45 &&
+                !SITrailCore.isNoiseLine( diff, binnedSelf.width, binnedSelf.height,
+                                          run, sigmaDiff );
+      };
+      var core = SITrailCore.detectCore( diff, binnedSelf.width, binnedSelf.height, params, thinOnly );
+
+      for ( var i = 0; i < core.trails.length; ++i )
+         eraseSegmentBinned( diff, binnedSelf.width, binnedSelf.height, core.trails[i], 5 );
+      processEvents();
+      var faint = SITrailCore.detectFaintCore( diff, binnedSelf.width, binnedSelf.height, params );
+      for ( var f = 0; f < faint.trails.length; ++f )
+         core.trails.push( faint.trails[f] );
+
+      var out = finishDetection( image, core, binnedSelf.binFactor );
+      for ( var t = 0; t < out.trails.length; ++t )
+         out.trails[t].faint = !!core.trails[t].faint;
+      out.stats.faintSigmaAdu = faint.sigma*65535;
+      return out;
+   }
+
+   return { detect: detect, binned: binned, detectDiff: detectDiff };
 } )();

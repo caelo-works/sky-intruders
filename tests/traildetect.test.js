@@ -166,3 +166,98 @@ function endpointError(trail, x1, y1, x2, y2) {
 }
 
 console.log("traildetect: binning, single trail, no-line, crossing, dashed rejection OK");
+
+// ---------------------------------------------------------------------------
+// Static-sky model: medianStack votes out single-frame transients, and
+// subtractModel leaves only the transient (with borders neutralized).
+
+{
+   const a = new Float32Array([0.10, 0.10, 0.50, 0.10]);
+   const b = new Float32Array([0.10, 0.12, 0.10, 0.10]);
+   const c = new Float32Array([0.12, 0.10, 0.10, 0.00]);
+   const model = T.medianStack([a, b, c]);
+   assert.ok(Math.abs(model[0] - 0.10) < 1e-6);
+   assert.ok(Math.abs(model[2] - 0.10) < 1e-6, "trail pixel voted out of the model");
+
+   const diff = T.subtractModel(a, model);
+   assert.ok(Math.abs(diff[2] - 0.40) < 1e-6, "transient survives subtraction");
+   assert.ok(diff[0] === 0 && diff[1] === 0, "static pixels vanish");
+   const diffC = T.subtractModel(c, model);
+   assert.strictEqual(diffC[3], 0, "zero (border) pixels stay zero");
+   assert.strictEqual(T.subtractModel(new Float32Array([0.2]), new Float32Array([0]))[0], 0,
+      "pixels outside the model coverage are neutralized");
+}
+
+console.log("traildetect: median stack + model subtraction OK");
+
+// ---------------------------------------------------------------------------
+// Faint-streak pass (weighted Hough): a trail at ~0.4 sigma per pixel is
+// invisible to any per-pixel threshold but must be found by the line
+// integral; pure noise must yield nothing.
+
+{
+   const W = 800, H = 500;
+   // deterministic gaussian-ish noise (sum of 12 uniforms), clamped at 0
+   let seed = 42;
+   const rnd = () => { seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; };
+   const gauss = () => { let s = 0; for (let i = 0; i < 12; i++) s += rnd(); return s - 6; };
+   const SIGMA = 0.01;
+   const mkNoise = () => {
+      const a = new Float32Array(W*H);
+      for (let i = 0; i < a.length; i++) a[i] = Math.max(0, gauss()*SIGMA);
+      return a;
+   };
+
+   const noisy = mkNoise();
+   // faint trail: 0.5 sigma per pixel, from (60,80) to (740,420)
+   const x1 = 60, y1 = 80, x2 = 740, y2 = 420;
+   const len = Math.hypot(x2 - x1, y2 - y1);
+   for (let t = 0; t <= Math.ceil(len); t++) {
+      const f = t/len;
+      const x = Math.round(x1 + (x2 - x1)*f), y = Math.round(y1 + (y2 - y1)*f);
+      noisy[y*W + x] += 0.5*SIGMA;
+   }
+   const found = T.detectFaintCore(noisy, W, H, {});
+   assert.strictEqual(found.trails.length, 1, `faint trail found (${found.trails.length})`);
+   const tr = found.trails[0];
+   const angle = Math.atan2(y2 - y1, x2 - x1)*180/Math.PI;
+   assert.ok(Math.abs(tr.angleDeg - angle) < 3, `angle ${tr.angleDeg} vs ${angle}`);
+   const dist = (px, py) => {
+      const dx = x2 - x1, dy = y2 - y1;
+      return Math.abs(dy*px - dx*py + x2*y1 - y2*x1)/len;
+   };
+   assert.ok(dist(tr.x1, tr.y1) < 6 && dist(tr.x2, tr.y2) < 6,
+      "endpoints lie on the injected line");
+   assert.ok(tr.lengthPx > 0.7*len, `length ${tr.lengthPx} vs ${len}`);
+   assert.ok(tr.faint === true, "flagged faint");
+
+   const clean = T.detectFaintCore(mkNoise(), W, H, {});
+   assert.strictEqual(clean.trails.length, 0, "pure noise stays clean");
+}
+
+console.log("traildetect: faint weighted-Hough pass OK");
+
+// ---------------------------------------------------------------------------
+// Photometric normalization: a frame seen through a clearer sky (signal
+// scaled up, offset shifted) must be brought back onto the model.
+
+{
+   const n = 5000;
+   const model = new Float32Array(n);
+   let seed = 3;
+   const rnd = () => { seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; };
+   for (let i = 0; i < n; i++) model[i] = 0.05 + 0.1*rnd();
+   const frame = new Float32Array(n);
+   for (let i = 0; i < n; i++) frame[i] = (model[i] - 0.01)/0.8; // inverse of a=0.8,b=0.01
+   const fit = T.linearFitToModel(frame, model, null);
+   assert.ok(Math.abs(fit.a - 0.8) < 0.01 && Math.abs(fit.b - 0.01) < 0.001,
+      `linear fit recovered (a=${fit.a}, b=${fit.b})`);
+   const norm = T.applyLinear(frame, fit.a, fit.b);
+   let worst = 0;
+   for (let i = 0; i < n; i++) worst = Math.max(worst, Math.abs(norm[i] - model[i]));
+   assert.ok(worst < 1e-4, `normalized frame matches model (worst ${worst})`);
+   assert.strictEqual(T.applyLinear(new Float32Array([0, 0.5]), 0.8, 0.01)[0], 0,
+      "empty pixels stay empty");
+}
+
+console.log("traildetect: photometric normalization OK");
