@@ -301,7 +301,78 @@ var SIMeteors = ( function()
       return findMovers( filterStationary( blobsByFrame, tolArcsec, null ), minFrames );
    }
 
+   // ------------------------------------------------------------------------
+   // Airplane heuristic. A plane crossing a sub leaves a BUNDLE of straight
+   // marks: wingtip/fuselage lights are parallel lines offset by tens to a
+   // few hundred pixels, strobes add collinear dashes. Satellites never do
+   // that — one pass, one line. So: 3+ segments in one frame, near-parallel
+   // (mod 180) and within a shared perpendicular corridor, are one airplane.
+
+   function groupPlanes( trails, opts )
+   {
+      opts = opts || {};
+      var angleTol = ( opts.angleTolDeg > 0 ) ? opts.angleTolDeg : 4;
+      var corridor = ( opts.corridorPx > 0 ) ? opts.corridorPx : 500;
+      var minSegments = ( opts.minSegments >= 2 ) ? opts.minSegments : 3;
+
+      function angleDiff( a, b )
+      {
+         var d = Math.abs( a - b ) % 180;
+         return ( d > 90 ) ? 180 - d : d;
+      }
+
+      var n = trails.length;
+      var used = new Array( n );
+      var groups = [];
+      for ( var i = 0; i < n; ++i )
+      {
+         if ( used[ i ] )
+            continue;
+         var th = trails[ i ].angleDeg*Math.PI/180;
+         var nx = -Math.sin( th ), ny = Math.cos( th ); // unit normal
+         var mi = { x: ( trails[ i ].x1 + trails[ i ].x2 )/2,
+                    y: ( trails[ i ].y1 + trails[ i ].y2 )/2 };
+         var members = [ i ];
+         for ( var j = 0; j < n; ++j )
+         {
+            if ( j === i || used[ j ] )
+               continue;
+            if ( angleDiff( trails[ i ].angleDeg, trails[ j ].angleDeg ) > angleTol )
+               continue;
+            var mj = { x: ( trails[ j ].x1 + trails[ j ].x2 )/2,
+                       y: ( trails[ j ].y1 + trails[ j ].y2 )/2 };
+            var perp = Math.abs( ( mj.x - mi.x )*nx + ( mj.y - mi.y )*ny );
+            if ( perp <= corridor )
+               members.push( j );
+         }
+         if ( members.length < minSegments )
+            continue;
+
+         // Overall extent: project every endpoint on the direction axis.
+         var ux = Math.cos( th ), uy = Math.sin( th );
+         var tMin = Infinity, tMax = -Infinity, pMin = null, pMax = null;
+         for ( var k = 0; k < members.length; ++k )
+         {
+            var tr = trails[ members[ k ] ];
+            used[ members[ k ] ] = true;
+            var pts = [ { x: tr.x1, y: tr.y1 }, { x: tr.x2, y: tr.y2 } ];
+            for ( var p = 0; p < 2; ++p )
+            {
+               var t = ( pts[ p ].x - mi.x )*ux + ( pts[ p ].y - mi.y )*uy;
+               if ( t < tMin ) { tMin = t; pMin = pts[ p ]; }
+               if ( t > tMax ) { tMax = t; pMax = pts[ p ]; }
+            }
+         }
+         groups.push( { indices: members,
+                        x1: pMin.x, y1: pMin.y, x2: pMax.x, y2: pMax.y,
+                        angleDeg: trails[ i ].angleDeg,
+                        segments: members.length } );
+      }
+      return groups;
+   }
+
    return {
+      groupPlanes: groupPlanes,
       SHOWERS: SHOWERS,
       activeShowers: activeShowers,
       classifyTrail: classifyTrail,

@@ -97,4 +97,35 @@ var R = require( "./build/module.js" ).SIReport;
    assert.strictEqual( r.summary.unknowns, 0, "asteroid not miscounted as unknown" );
 } )();
 
+
+// ---------------------------------------------------------------------------
+// groupPlanes: a bundle of near-parallel segments is one airplane; a lone
+// satellite trail at another angle stays out.
+
+( function()
+{
+   var mk = function( x1, y1, x2, y2 )
+   {
+      var ang = Math.atan2( y2 - y1, x2 - x1 )*180/Math.PI;
+      ang %= 180; if ( ang < 0 ) ang += 180;
+      return { x1: x1, y1: y1, x2: x2, y2: y2, angleDeg: ang };
+   };
+   var trails = [
+      mk( 100, 500, 1500, 1200 ),   // plane mark 1 (angle ~26.6)
+      mk( 400, 780, 1700, 1430 ),   // plane mark 2, parallel, offset ~140
+      mk( 900, 1000, 2100, 1600 ),  // plane mark 3
+      mk( 2000, 100, 2100, 1900 )   // steep satellite trail (~86.8 deg)
+   ];
+   var groups = M.groupPlanes( trails );
+   assert.strictEqual( groups.length, 1, "one bundle" );
+   assert.strictEqual( groups[ 0 ].segments, 3, "three marks in the bundle" );
+   assert.ok( groups[ 0 ].indices.indexOf( 3 ) < 0, "satellite trail left out" );
+   // extent spans from the first mark's start to the last mark's end
+   assert.ok( groups[ 0 ].x1 <= 100 + 1 && groups[ 0 ].x2 >= 2100 - 1, "full extent" );
+
+   // two parallel segments only: NOT a plane (could be a Starlink pair)
+   assert.strictEqual( M.groupPlanes( [ trails[ 0 ], trails[ 1 ] ] ).length, 0,
+      "two segments are not a bundle" );
+} )();
+
 console.log( "meteors.test.js: all assertions passed" );

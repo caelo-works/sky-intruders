@@ -19,6 +19,9 @@ var SIReport = ( function()
          meteors: "meteor candidates",
          satCandidates: "uncataloged satellite candidates",
          unknowns: "unidentified trails",
+         planes: "airplane(s)",
+         trains: "satellite train(s) — fresh launches, not yet cataloged",
+         predicted: "Predicted crossers (no matched trail)",
          movers: "asteroid candidates (slow movers)",
          funStats: "Night stats",
          operators: "Operator breakdown",
@@ -46,6 +49,9 @@ var SIReport = ( function()
          meteors: "candidats météores",
          satCandidates: "candidats satellites hors catalogue",
          unknowns: "traînées non identifiées",
+         planes: "avion(s)",
+         trains: "train(s) de satellites — lancements récents, pas encore catalogués",
+         predicted: "Passages prédits (sans traînée appariée)",
          movers: "candidats astéroïdes (objets lents)",
          funStats: "Stats de la nuit",
          operators: "Répartition par opérateur",
@@ -118,7 +124,7 @@ var SIReport = ( function()
     */
    function summarizeNight( night )
    {
-      var sats = 0, starlink = 0, meteors = 0, satCand = 0, unknowns = 0;
+      var sats = 0, starlink = 0, meteors = 0, satCand = 0, planes = 0, trains = 0, unknowns = 0;
       var operators = {};
       var notable = [];
       for ( var i = 0; i < night.events.length; ++i )
@@ -136,12 +142,14 @@ var SIReport = ( function()
          }
          else if ( e.klass == "meteor" ) meteors++;
          else if ( e.klass == "satellite-candidate" ) satCand++;
+         else if ( e.klass == "plane" ) planes++;
+         else if ( e.klass == "train" ) trains++;
          else if ( e.klass == "asteroid" ) ; // counted via night.movers
          else unknowns++;
       }
       return { date: night.dateLabel, frames: night.frames,
                satellites: sats, starlink: starlink, meteors: meteors,
-               satCandidates: satCand, unknowns: unknowns,
+               satCandidates: satCand, planes: planes, trains: trains, unknowns: unknowns,
                movers: ( night.movers || [] ).length,
                operators: operators, notable: notable };
    }
@@ -193,6 +201,12 @@ var SIReport = ( function()
       else if ( e.klass == "satellite-candidate" )
          what = ( lang == "fr" ? "satellite hors catalogue ?" : "uncataloged satellite?" ) +
                 " [" + ( T.confidence[ e.confidence ] || e.confidence ) + "]";
+      else if ( e.klass == "plane" )
+         what = ( lang == "fr" ? "avion" : "airplane" ) +
+                ( e.segments != null ? " (" + e.segments + ( lang == "fr" ? " traits" : " marks" ) + ")" : "" );
+      else if ( e.klass == "train" )
+         what = ( lang == "fr" ? "train de satellites" : "satellite train" ) +
+                ( e.segments != null ? " (" + e.segments + ( lang == "fr" ? " traînées parallèles" : " parallel streaks" ) + ")" : "" );
       else if ( e.klass == "asteroid" )
          what = ( lang == "fr" ? "candidat astéroïde" : "asteroid candidate" ) +
                 ( e.rateArcsecPerMin != null ? " (" + e.rateArcsecPerMin.toFixed( 1 ) + " arcsec/min)" : "" );
@@ -248,6 +262,25 @@ var SIReport = ( function()
             L.push( "- " + eventLine( sorted[ i ], lang ) );
          L.push( "" );
 
+         // Sunlit satellites the orbit propagation puts in the field during
+         // the exposures, but that no detected trail could be matched to —
+         // the honest answer to "why is nothing identified?".
+         var predicted = night.predicted || [];
+         if ( predicted.length > 0 )
+         {
+            L.push( "## " + T.predicted );
+            L.push( "" );
+            for ( var i = 0; i < predicted.length; ++i )
+            {
+               var p = predicted[ i ];
+               var t = p.timeUtc ? localTime( p.timeUtc ) : "--:--";
+               L.push( "- " + t + " — " + ( p.name || ( "NORAD " + p.noradId ) ) +
+                       ( p.elevationDeg != null ? " (" + Math.round( p.elevationDeg ) + "°)" : "" ) +
+                       "  ·  " + p.frameId );
+            }
+            L.push( "" );
+         }
+
          L.push( "## " + T.funStats );
          L.push( "" );
          L.push( "- " + summary.satellites + " " + T.satellites +
@@ -256,6 +289,10 @@ var SIReport = ( function()
             L.push( "- " + summary.meteors + " " + T.meteors );
          if ( summary.satCandidates > 0 )
             L.push( "- " + summary.satCandidates + " " + T.satCandidates );
+         if ( summary.planes > 0 )
+            L.push( "- " + summary.planes + " " + T.planes );
+         if ( summary.trains > 0 )
+            L.push( "- " + summary.trains + " " + T.trains );
          if ( summary.unknowns > 0 )
             L.push( "- " + summary.unknowns + " " + T.unknowns );
          var pct = ( night.frames > 0 ) ? Math.round( 100 * night.cleanFrames / night.frames ) : 100;
