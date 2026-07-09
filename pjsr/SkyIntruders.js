@@ -1466,6 +1466,94 @@ var TREASURE_STYLE = {
 };
 
 /*
+ * Locate PixInsight's src/scripts/AdP directory, where the distribution
+ * ships NGC-IC.csv and NamedStars.csv — the offline context catalogs for
+ * the star chart. Returns null when not found (context is then skipped).
+ */
+function findAdpDir()
+{
+   var cands = [];
+   try
+   {
+      if ( typeof CoreApplication !== "undefined" && CoreApplication.dirPath )
+         cands.push( CoreApplication.dirPath + "/../src/scripts/AdP" );
+   }
+   catch ( e ) {}
+   cands.push( "C:/Program Files/PixInsight/src/scripts/AdP" );
+   for ( var i = 0; i < cands.length; ++i )
+      try
+      {
+         if ( File.exists( cands[ i ] + "/NGC-IC.csv" ) )
+            return cands[ i ];
+      }
+      catch ( e2 ) {}
+   return null;
+}
+
+/*
+ * Context objects for the star chart: the brightest named stars and the
+ * largest NGC/IC neighbors that landed in the frame. Local files only.
+ */
+function loadChartContext( meta, width, height, maxStars, maxDsos )
+{
+   var out = { stars: [], dsos: [] };
+   var dir = findAdpDir();
+   if ( dir === null )
+      return out;
+   function projectInto( rows )
+   {
+      var kept = [];
+      for ( var i = 0; i < rows.length; ++i )
+      {
+         var p = null;
+         try { p = meta.wcs.celestialToImage( rows[ i ].raDeg, rows[ i ].decDeg ); }
+         catch ( e ) { p = null; }
+         if ( p === null || p === undefined )
+            continue;
+         if ( !( isFinite( p.x ) && isFinite( p.y ) &&
+                 p.x >= 0 && p.y >= 0 && p.x <= width - 1 && p.y <= height - 1 ) )
+            continue;
+         rows[ i ].x = p.x;
+         rows[ i ].y = p.y;
+         kept.push( rows[ i ] );
+      }
+      return kept;
+   }
+   try
+   {
+      var stars = projectInto( SICatalogs.parseNamedStarsCsv(
+         File.readTextFile( dir + "/NamedStars.csv" ) ) );
+      stars.sort( function( a, b ) { return ( a.mag || 99 ) - ( b.mag || 99 ); } );
+      out.stars = stars.slice( 0, maxStars );
+   }
+   catch ( e ) {}
+   try
+   {
+      var dsos = projectInto( SICatalogs.parseNgcIcCsv(
+         File.readTextFile( dir + "/NGC-IC.csv" ) ) );
+      dsos.sort( function( a, b )
+      {
+         return ( ( b.diamArcmin || 0 ) - ( a.diamArcmin || 0 ) ) ||
+                ( ( a.mag || 99 ) - ( b.mag || 99 ) );
+      } );
+      // The CSV can list one object twice (M16 = cluster + nebula rows):
+      // keep the largest per display name.
+      var seen = {}, unique = [];
+      for ( var d2 = 0; d2 < dsos.length && unique.length < maxDsos; ++d2 )
+      {
+         var keyName = dsos[ d2 ].messier || dsos[ d2 ].name;
+         if ( seen[ keyName ] )
+            continue;
+         seen[ keyName ] = true;
+         unique.push( dsos[ d2 ] );
+      }
+      out.dsos = unique;
+   }
+   catch ( e ) {}
+   return out;
+}
+
+/*
  * Sample an aperture + background annulus around a projected catalog
  * position and ask SITreasure.apertureDetection whether there is real
  * signal there. The aperture follows the object's catalog size (bounded);
@@ -1648,20 +1736,142 @@ function runTreasureHunt( window, filePath, params, onProgress )
    // Render: stretched base, annotated overlay window + embedded PNG.
    progress( "Rendering annotated field…" );
    var base = SIRender.stretchedBitmap( image );
-   var marks = [];
-   var labelCap = Math.min( treasures.length, 40 );
+   var fr = ( params.lang === "fr" );
+
+   // Star-chart items: every captured treasure, the most notable below-noise
+   // ones (dimmed), plus offline context — bright named stars and NGC/IC
+   // neighbors — so the chart reads like a map even when the deep catalogs
+   // came home empty. The full inventory lives in the HTML report.
+   var items = [];
+   function fmt1( x ) { return ( Math.round( x*10 )/10 ).toString(); }
+   function treasureSubs( o, dn )
+   {
+      var subs = [];
+      if ( dn.sub )
+         subs.push( dn.sub );
+      if ( o.type === "quasar" && typeof o.Rmag === "number" && isFinite( o.Rmag ) )
+         subs.push( "MAG " + fmt1( o.Rmag ) );
+      if ( o.type === "asteroid" )
+      {
+         if ( typeof o.magV === "number" && isFinite( o.magV ) )
+            subs.push( "MAG " + fmt1( o.magV ) );
+         if ( o.klass )
+            subs.push( String( o.klass ).toUpperCase() );
+      }
+      if ( o.type === "galaxy" && typeof o.diamArcmin === "number" && isFinite( o.diamArcmin ) )
+         subs.push( "\u00d8 " + fmt1( o.diamArcmin ) + "\u2032" );
+      if ( o.type === "pne" && typeof o.majDiamArcsec === "number" && isFinite( o.majDiamArcsec ) )
+         subs.push( "\u00d8 " + Math.round( o.majDiamArcsec ) + "\u2033" );
+      if ( o.captured === false )
+         subs.push( fr ? "sous le bruit" : "below the noise" );
+      return subs;
+   }
+   var dimBudget = 6;
    for ( var m = 0; m < treasures.length; ++m )
    {
       var o = treasures[ m ];
-      var style = TREASURE_STYLE[ o.type ] || TREASURE_STYLE.galaxy;
       var dn = SITreasure.displayName( o, params.lang );
-      marks.push( { x: o.x, y: o.y, color: style.color, glyph: style.glyph,
-                    label: ( m < labelCap ) ? dn.main : null,
-                    sub: ( m < labelCap ) ? dn.sub : null,
-                    dim: ( o.captured === false ),
-                    labelColor: style.color } );
+      if ( o.captured !== false )
+         items.push( { x: o.x, y: o.y, kind: o.type, main: dn.main,
+                       subs: treasureSubs( o, dn ), dim: false } );
+      else if ( dimBudget > 0 )
+      {
+         dimBudget--;
+         items.push( { x: o.x, y: o.y, kind: o.type, main: dn.main,
+                       subs: treasureSubs( o, dn ), dim: true } );
+      }
    }
-   var mapBmp = SIRender.annotateField( base, marks ); // sizes scale with the image
+
+   var context = loadChartContext( meta, width, height, 6, 5 );
+   for ( var cs = 0; cs < context.stars.length; ++cs )
+   {
+      var st = context.stars[ cs ];
+      var subs2 = [];
+      if ( st.commonName && st.commonName !== st.name )
+         subs2.push( st.name );
+      if ( typeof st.mag === "number" && isFinite( st.mag ) )
+         subs2.push( "MAG " + fmt1( st.mag ) );
+      items.push( { x: st.x, y: st.y, kind: "star",
+                    main: st.commonName || st.name, subs: subs2, dim: false } );
+   }
+   for ( var cd = 0; cd < context.dsos.length; ++cd )
+   {
+      var dso = context.dsos[ cd ];
+      var subs3 = [];
+      if ( dso.commonName )
+         subs3.push( dso.commonName );
+      if ( typeof dso.mag === "number" && isFinite( dso.mag ) )
+         subs3.push( "MAG " + fmt1( dso.mag ) );
+      var radiusPx = null;
+      if ( typeof dso.diamArcmin === "number" && isFinite( dso.diamArcmin ) &&
+           meta.pixScaleArcsec > 0 )
+         radiusPx = Math.min( Math.max( width, height )/3,
+                              dso.diamArcmin*60/meta.pixScaleArcsec/2 );
+      var dsoName = ( dso.messier || dso.name )
+         .replace( /^(NGC|IC|M)(\d)/, "$1 $2" );
+      items.push( { x: dso.x, y: dso.y, kind: "dso",
+                    main: dsoName, subs: subs3,
+                    radiusPx: radiusPx } );
+   }
+
+   // Corner cards: title (chart + field), legend (kinds present),
+   // observation data from the FITS keywords.
+   function stripQuotes( s )
+   {
+      return String( s || "" ).replace( /^'+|'+$/g, "" ).replace( /^\s+|\s+$/g, "" );
+   }
+   function raHms( ra )
+   {
+      var h = ra/15, hh = Math.floor( h ), mm = Math.round( ( h - hh )*60 );
+      if ( mm === 60 ) { hh = ( hh + 1 ) % 24; mm = 0; }
+      return hh + "h " + ( ( mm < 10 ) ? "0" : "" ) + mm + "m";
+   }
+   function decDm( dec )
+   {
+      var sg = ( dec < 0 ) ? "-" : "+";
+      var a = Math.abs( dec ), dd = Math.floor( a ), mm2 = Math.round( ( a - dd )*60 );
+      if ( mm2 === 60 ) { dd += 1; mm2 = 0; }
+      return sg + dd + "\u00b0 " + ( ( mm2 < 10 ) ? "0" : "" ) + mm2 + "\u2032";
+   }
+   var target = stripQuotes( meta.keywords[ "OBJECT" ] );
+   var titleLines = [ fr ? "CARTE STELLAIRE" : "STAR CHART" ];
+   if ( target )
+      titleLines.push( target.toUpperCase() );
+   titleLines.push( "RA " + raHms( raDeg ) + "  |  DEC " + decDm( decDeg ) );
+
+   var LEGEND_LABEL = {
+      galaxy: fr ? "GALAXIE" : "GALAXY",
+      quasar: "QUASAR",
+      pne: fr ? "N\u00c9BULEUSE PLAN\u00c9TAIRE" : "PLANETARY NEBULA",
+      asteroid: fr ? "AST\u00c9RO\u00cfDE" : "ASTEROID",
+      star: fr ? "\u00c9TOILE" : "STAR",
+      dso: fr ? "OBJET DU CIEL PROFOND" : "DEEP-SKY OBJECT"
+   };
+   var kindsSeen = {};
+   var legend = [];
+   for ( var ki = 0; ki < items.length; ++ki )
+      if ( !kindsSeen[ items[ ki ].kind ] )
+      {
+         kindsSeen[ items[ ki ].kind ] = true;
+         legend.push( { kind: items[ ki ].kind, label: LEGEND_LABEL[ items[ ki ].kind ] || items[ ki ].kind } );
+      }
+
+   var dataLines = [ fr ? "DONN\u00c9ES D'OBSERVATION" : "OBSERVATION DATA" ];
+   var instrume = stripQuotes( meta.keywords[ "TELESCOP" ] ) || stripQuotes( meta.keywords[ "INSTRUME" ] );
+   if ( instrume )
+      dataLines.push( ( fr ? "INSTRUMENT : " : "INSTRUMENT: " ) + instrume.toUpperCase() );
+   var filter = stripQuotes( meta.keywords[ "FILTER" ] );
+   if ( filter )
+      dataLines.push( ( fr ? "FILTRE : " : "FILTER: " ) + filter.toUpperCase() );
+   if ( meta.exposureSec > 0 )
+      dataLines.push( ( fr ? "EXPOSITION : " : "EXPOSURE: " ) + Math.round( meta.exposureSec ) + " s" );
+   if ( meta.dateObs )
+      dataLines.push( ( fr ? "DATE : " : "DATE: " ) + meta.dateObs.toISOString().substring( 0, 10 ) );
+
+   var mapBmp = SIRender.chartField( base, {
+      items: items,
+      cards: { title: titleLines, legend: legend, data: dataLines }
+   } );
    var mapWindow = SIRender.showBitmap( mapBmp, "Sky Intruders Treasure Map" );
 
    // Embed a downscaled copy in the HTML when the frame is large, so the file

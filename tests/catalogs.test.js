@@ -120,4 +120,33 @@ function allFinite( rows )
    assert( pn.diamArcmin > 0, "diameter converted to arcmin" );
 } )();
 
+// --- local context catalogs (AdP CSVs, RA in hours) --------------------------
+
+( function testContextCsvParsers()
+{
+   var ngc = Cat.parseNgcIcCsv(
+      "id,alpha,delta,magnitude,diameter,axisRatio,posAngle,Common name,PGC,PGC2,Messier\n" +
+      "NGC6888,20.201161,38.355203,10.00,18.00,1.50,30,Crescent Nebula,,,\n" +
+      "NGC1952,5.575547,22.014472,8.40,6.00,1.44,125,Crab Nebula,,,M1\n" +
+      "NGC6992,314.079167,31.743333,,60.00,,,Veil Nebula,,,\n" +
+      "badline\n" );
+   assert.strictEqual( ngc.length, 3, "three valid NGC rows" );
+   assert( Math.abs( ngc[ 2 ].raDeg - 314.079167 ) < 1e-6,
+           "hand-added rows carry DEGREES (alpha > 24): " + ngc[ 2 ].raDeg );
+   assert.strictEqual( ngc[ 2 ].mag, null, "empty magnitude tolerated" );
+   assert.strictEqual( ngc[ 0 ].name, "NGC6888" );
+   assert( Math.abs( ngc[ 0 ].raDeg - 20.201161*15 ) < 1e-6, "RA hours -> degrees" );
+   assert.strictEqual( ngc[ 0 ].commonName, "Crescent Nebula" );
+   assert.strictEqual( ngc[ 1 ].messier, "M1", "Messier column kept" );
+   assert.strictEqual( ngc[ 0 ].diamArcmin, 18, "diameter in arcmin" );
+
+   var stars = Cat.parseNamedStarsCsv(
+      "id,alpha,delta,magnitude,Spectral type,HD,HIP,Common name\n" +
+      "alf Cyg,20.690532,45.280339,1.25,A2Ia,HD197345,HIP102098,Deneb\n" );
+   assert.strictEqual( stars.length, 1 );
+   assert.strictEqual( stars[ 0 ].commonName, "Deneb" );
+   assert( Math.abs( stars[ 0 ].raDeg - 20.690532*15 ) < 1e-6, "star RA hours -> degrees" );
+   assert.strictEqual( stars[ 0 ].spectral, "A2Ia" );
+} )();
+
 console.log( "catalogs.test.js: all assertions passed" );

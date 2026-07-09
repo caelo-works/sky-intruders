@@ -227,6 +227,88 @@ var SICatalogs = ( function()
    }
 
    // ------------------------------------------------------------------------
+   // Local context catalogs (PixInsight ships NGC-IC.csv and NamedStars.csv
+   // with the AdP scripts; both use RA in HOURS). These give the star chart
+   // its context labels — bright named stars and deep-sky neighbors — with
+   // no network at all.
+
+   function splitCsvLine( line )
+   {
+      // The AdP CSVs are plain comma-separated without quoting.
+      return String( line ).split( "," );
+   }
+
+   function adpAlphaToDeg( raH )
+   {
+      // NGC-IC.csv mixes units in its alpha column: the machine-imported
+      // galaxy rows store HOURS, the hand-added showpieces (Veil, NA
+      // nebula...) store DEGREES. Anything above 24 can only be degrees.
+      return normRa( ( raH > 24 ) ? raH : raH*15 );
+   }
+
+   function parseNgcIcCsv( text )
+   {
+      // id,alpha,delta,magnitude,diameter,axisRatio,posAngle,Common name,...
+      // Returns [ { type:"dso", name, commonName, raDeg, decDeg, mag,
+      // diamArcmin, messier } ].
+      var out = [];
+      if ( text === null || text === undefined )
+         return out;
+      var lines = String( text ).split( /\r?\n/ );
+      for ( var i = 1; i < lines.length; ++i ) // skip header
+      {
+         var f = splitCsvLine( lines[ i ] );
+         if ( f.length < 5 )
+            continue;
+         var raH = toNumber( f[ 1 ] ), dec = toNumber( f[ 2 ] );
+         if ( raH === null || dec === null )
+            continue;
+         out.push( {
+            type: "dso",
+            name: trimStr( f[ 0 ] ),
+            raDeg: adpAlphaToDeg( raH ),
+            decDeg: dec,
+            mag: toNumber( f[ 3 ] ),
+            diamArcmin: toNumber( f[ 4 ] ),
+            commonName: ( f.length > 7 ) ? trimStr( f[ 7 ] ) : "",
+            messier: ( f.length > 10 ) ? trimStr( f[ 10 ] ) : ""
+         } );
+      }
+      return out;
+   }
+
+   function parseNamedStarsCsv( text )
+   {
+      // id,alpha,delta,magnitude,Spectral type,HD,HIP,Common name
+      // Returns [ { type:"star", name, commonName, raDeg, decDeg, mag,
+      // spectral, hd } ].
+      var out = [];
+      if ( text === null || text === undefined )
+         return out;
+      var lines = String( text ).split( /\r?\n/ );
+      for ( var i = 1; i < lines.length; ++i )
+      {
+         var f = splitCsvLine( lines[ i ] );
+         if ( f.length < 5 )
+            continue;
+         var raH = toNumber( f[ 1 ] ), dec = toNumber( f[ 2 ] );
+         if ( raH === null || dec === null )
+            continue;
+         out.push( {
+            type: "star",
+            name: trimStr( f[ 0 ] ),
+            raDeg: adpAlphaToDeg( raH ),
+            decDeg: dec,
+            mag: toNumber( f[ 3 ] ),
+            spectral: trimStr( f[ 4 ] ),
+            hd: ( f.length > 5 ) ? trimStr( f[ 5 ] ) : "",
+            commonName: ( f.length > 7 ) ? trimStr( f[ 7 ] ) : ""
+         } );
+      }
+      return out;
+   }
+
+   // ------------------------------------------------------------------------
    // Typed-row coercion shared by the query layer
 
    function typeGalaxyRow( r )
@@ -427,6 +509,8 @@ var SICatalogs = ( function()
       skybotUrl: skybotUrl,
       parseVizierTsv: parseVizierTsv,
       parseSkybot: parseSkybot,
+      parseNgcIcCsv: parseNgcIcCsv,
+      parseNamedStarsCsv: parseNamedStarsCsv,
       typeGalaxyRow: typeGalaxyRow,
       typeQuasarRow: typeQuasarRow,
       typePneRow: typePneRow,
