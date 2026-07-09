@@ -271,6 +271,47 @@ function clearDirectory( dir )
    catch ( e ) {}
 }
 
+// The usual sub-quality indicators, for picking the prettiest frame as the
+// result-image background: median star FWHM (sharpness), star count, sky
+// background. Cheap: profiles of the 40 brightest StarDetector stars.
+function frameQuality( image )
+{
+   try
+   {
+      var sd = new StarDetector;
+      sd.structureLayers = 5;
+      sd.applyHotPixelFilter = true;
+      var stars = sd.stars( image );
+      stars.sort( function( a, b ) { return ( b.flux || 0 ) - ( a.flux || 0 ); } );
+      var w = image.width, h = image.height;
+      var fwhms = [];
+      for ( var i = 0; i < Math.min( 40, stars.length ); ++i )
+      {
+         var s = stars[ i ];
+         var px = Math.round( ( s.pos != null ) ? s.pos.x : s.x );
+         var py = Math.round( ( s.pos != null ) ? s.pos.y : s.y );
+         if ( px < 5 || py < 5 || px >= w - 5 || py >= h - 5 )
+            continue;
+         var profX = [], profY = [];
+         for ( var o = -4; o <= 4; ++o )
+         {
+            profX.push( image.sample( px + o, py, 0 ) );
+            profY.push( image.sample( px, py + o, 0 ) );
+         }
+         var fx = SITrailCore.fwhmOfProfile( profX );
+         var fy = SITrailCore.fwhmOfProfile( profY );
+         if ( fx > 0 && fy > 0 )
+            fwhms.push( ( fx + fy )/2 );
+      }
+      return { starCount: stars.length,
+               fwhmPx: ( fwhms.length > 4 ) ? SITrailCore.medianOf( fwhms ) : 0 };
+   }
+   catch ( e )
+   {
+      return { starCount: 0, fwhmPx: 0 };
+   }
+}
+
 function analyzeNightSet( files, params )
 {
    if ( files.length < 3 )
@@ -324,6 +365,11 @@ function analyzeNightSet( files, params )
       }
       var b = SITrailDetect.binned( win.mainView.image );
       win.forceClose();
+      var bgSub = [];
+      for ( var bs = 0; bs < b.data.length; bs += 7 )
+         if ( b.data[ bs ] > 1e-6 )
+            bgSub.push( b.data[ bs ] );
+      b.skyBg = SITrailCore.medianOf( bgSub )*65535;
       if ( binLen < 0 )
          binLen = b.data.length;
       if ( b.data.length !== binLen )
@@ -402,6 +448,8 @@ function analyzeNightSet( files, params )
       // never let a bundle exhaust the slots and mask a lone trail.
       diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
       var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, frameMask );
+      e.quality = frameQuality( win2.mainView.image );
+      e.quality.skyBgAdu = e.binned.skyBg;
 
       var trails = [];
       for ( var t = 0; t < det.trails.length; ++t )
@@ -480,8 +528,39 @@ function analyzeNightSet( files, params )
    var regPaths = [];
    for ( var i = 0; i < entries.length; ++i )
       regPaths.push( entries[ i ].regPath );
+
+   // Best frame = sharpest stars, then most stars, then darkest sky —
+   // normalized against the set's medians so no indicator dominates.
+   function medianOfKey( key )
+   {
+      var v = [];
+      for ( var i = 0; i < entries.length; ++i )
+         if ( entries[ i ].quality && entries[ i ].quality[ key ] > 0 )
+            v.push( entries[ i ].quality[ key ] );
+      return ( v.length > 0 ) ? SITrailCore.medianOf( v ) : 0;
+   }
+   var mFwhm = medianOfKey( "fwhmPx" ), mStars = medianOfKey( "starCount" ),
+       mBg = medianOfKey( "skyBgAdu" );
+   var bestIndex = 0, bestScore = Infinity;
+   for ( var i = 0; i < entries.length; ++i )
+   {
+      var q = entries[ i ].quality || {};
+      var score = ( ( q.fwhmPx > 0 && mFwhm > 0 ) ? q.fwhmPx/mFwhm : 1.5 )
+                + ( ( q.skyBgAdu > 0 && mBg > 0 ) ? 0.5*q.skyBgAdu/mBg : 0.75 )
+                - ( ( q.starCount > 0 && mStars > 0 ) ? 0.3*q.starCount/mStars : 0 );
+      if ( score < bestScore )
+      {
+         bestScore = score;
+         bestIndex = i;
+      }
+   }
+   var bq = entries[ bestIndex ].quality || {};
+   console.writeln( format( "Best frame for the result image: %s (FWHM %.1f px, %d stars, sky %.0f ADU)",
+                            entries[ bestIndex ].meta.id, bq.fwhmPx || 0,
+                            bq.starCount || 0, bq.skyBgAdu || 0 ) );
+
    return { frames: frames, refMeta: refMeta, refW: refW, refH: refH,
-            regPaths: regPaths, regDir: regDir };
+            regPaths: regPaths, regDir: regDir, bestIndex: bestIndex };
 }
 
 function buildMatchRequest( frames, observer, params, fovOverride )
@@ -1017,14 +1096,36 @@ function runAnalysis( files, params )
    if ( set != null && params.nightResultImage !== false )
       try
       {
-         console.writeln( "Building the night composite (max-combine of the registered set)…" );
-         var comp = SIRender.maxCombine( set.regPaths );
-         if ( comp != null )
+         var bmp = null;
+         if ( params.nightResultCombine === "max" )
          {
-            var bmp = SIRender.stretchedBitmap( comp );
+            // Stack of everything — shows every streak in the pixels, but a
+            // darkless max-combine also stacks every frame's hot pixels.
+            console.writeln( "Building the night composite (max-combine of the registered set)…" );
+            var comp = SIRender.maxCombine( set.regPaths );
+            if ( comp != null )
+               bmp = SIRender.stretchedBitmap( comp );
+         }
+         else
+         {
+            // Default: the best single frame (sharpest/cleanest) as the
+            // background; every trail of the night is drawn on top anyway,
+            // all frames sharing the reference grid.
+            var bw = ImageWindow.open( set.regPaths[ set.bestIndex ] );
+            if ( bw.length > 0 )
+            {
+               for ( var k5 = 1; k5 < bw.length; ++k5 )
+                  bw[ k5 ].forceClose();
+               bmp = SIRender.stretchedBitmap( bw[ 0 ].mainView.image );
+               bw[ 0 ].forceClose();
+            }
+         }
+         if ( bmp != null )
+         {
             bmp = SIRender.annotateTrails( bmp, labeledTrails, { flagDir: flagAssetsDir() } );
             resultImagePath = File.systemTempDirectory + "/SkyIntruders-night-result.png";
             bmp.save( resultImagePath );
+
             try
             {
                SIRender.showBitmap( bmp, "SkyIntruders_night" );
