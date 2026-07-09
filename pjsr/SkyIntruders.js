@@ -86,6 +86,7 @@ var DEFAULT_PARAMS = {
    // Draw the predicted-but-unmatched sunlit crossers as ghost lines on the
    // result image (with flag and telemetry, in a distinct pale color).
    nightShowPredicted: false,
+   nightShowShadow: false,
    maxSources: 600,
    lang: "en",
    observerLatDeg: null,   // fallbacks when FITS headers lack the site
@@ -1304,26 +1305,30 @@ function runAnalysis( files, params )
    // Optional ghost layer for the composite: sunlit predicted crossers
    // that matched no trail, with flag and telemetry like the real ones.
    var predictedItems = [];
-   if ( params.nightShowPredicted && fitTanForOverlay != null )
+   if ( ( params.nightShowPredicted || params.nightShowShadow ) && fitTanForOverlay != null )
       for ( var pf = 0; pf < frames.length; ++pf )
       {
          var crsP = crossingsByFrame[ frames[ pf ].meta.id ] || [];
          for ( var pc = 0; pc < crsP.length; ++pc )
          {
             var cp = crsP[ pc ];
-            if ( !cp.sunlit || cp.matchedTrailIndex != null )
+            if ( cp.matchedTrailIndex != null )
+               continue;
+            if ( cp.sunlit ? !params.nightShowPredicted : !params.nightShowShadow )
                continue;
             var g1 = tanInvertForOverlay( fitTanForOverlay, cp.path.p1 );
             var g2 = tanInvertForOverlay( fitTanForOverlay, cp.path.p2 );
             if ( g1 == null || g2 == null )
                continue;
             predictedItems.push( { x1: g1.x, y1: g1.y, x2: g2.x, y2: g2.y,
-                                   color: "#e8d44d",
+                                   color: cp.sunlit ? "#e8d44d" : "#9aa0a8",
                                    flag: OWNER_FLAG[ ( satcatInfo[ cp.noradId ] || {} ).owner ] ||
                                          satCountryCode( cp.name ),
                                    label: ( cp.name || ( "NORAD " + cp.noradId ) ) +
                                           ( cp.entryUtc ? " \u00b7 " +
-                                            String( cp.entryUtc ).substring( 11, 16 ) + " UT" : "" ),
+                                            String( cp.entryUtc ).substring( 11, 16 ) + " UT" : "" ) +
+                                          ( cp.sunlit ? "" :
+                                            ( params.lang == "fr" ? " (ombre)" : " (shadow)" ) ),
                                    sub: satTelemetryLine( cp, satcatInfo, params.lang ) } );
          }
       }
@@ -2135,8 +2140,15 @@ class SkyIntrudersDialog extends Dialog
       this.titleLabel.font = tf;
 
       this.buildLabel = new Label( this );
-      this.buildLabel.text = "build " + SKYINTRUDERS_BUILD;
+      this.buildLabel.useRichText = true;
+      this.buildLabel.text = "by <span style=\"color:#5a8fd0; text-decoration:underline;\">CaeloWorks</span>";
       this.buildLabel.textAlignment = TextAlign.Left | TextAlign.VertCenter;
+      this.buildLabel.toolTip = "https://pixinsight-scripts.caelo.works/ — build " + SKYINTRUDERS_BUILD;
+      this.buildLabel.onMousePress = function()
+      {
+         openInBrowser( "https://pixinsight-scripts.caelo.works/" );
+      };
+      try { this.buildLabel.cursor = new Cursor( StdCursor_PointingHand ); } catch ( e ) {}
 
       this.taglineLabel = new Label( this );
       this.taglineLabel.useRichText = true;
@@ -2192,11 +2204,20 @@ class SkyIntrudersDialog extends Dialog
                                     "drawn as pale ghost lines with their flag and telemetry.";
       this.predictedCheck.onCheck = ( checked ) => { self.params.nightShowPredicted = checked; };
 
+      this.shadowCheck = new CheckBox( this );
+      this.shadowCheck.text = "Also draw shadow crossers";
+      this.shadowCheck.checked = !!params.nightShowShadow;
+      this.shadowCheck.toolTip = "Crossers the model puts in the Earth's shadow during your " +
+                                 "exposure — invisible by definition, drawn in grey. Useful to " +
+                                 "see the full traffic or to spot shadow-model errors.";
+      this.shadowCheck.onCheck = ( checked ) => { self.params.nightShowShadow = checked; };
+
       this.nightPage = this.makePage( [
          this.pageHint( "Identify satellite, meteor and asteroid trails across a night of " +
                         "light frames, then get a night log and a ready-to-post report." ),
          this.kSigmaControl,
          this.predictedCheck,
+         this.shadowCheck,
          this.observerGroup
       ] );
 
