@@ -34,7 +34,11 @@ photo*, Treasure Hunt asks *what's already in it*.
    physical size hints, "before the Sun / before Earth" hooks.
 5. Render:
    - **Overlay** — a new image window "Sky Intruders — Treasure Map": the stretched
-     image with catalog markers (per-type color/glyph) and labels.
+     image rendered as a star chart (single accent color, thin circled markers,
+     elbowed leader lines into small-caps labels with data sub-lines, corner cards
+     for title / legend / observation data). Context objects — the brightest
+     Hipparcos stars and the NGC/IC neighbors, at their catalog size — keep the
+     chart readable even when the deep catalogs come home empty.
    - **HTML** — a self-contained illustrated post: the annotated map (embedded
      PNG), zoomed base64 thumbnails per notable treasure, the narrative, and a
      forum-ready summary. No external assets (CSP-safe, shareable as one file).
@@ -50,7 +54,7 @@ the unit/dashes header rows; tab-separated).
 |---|---|---|---|
 | Galaxies | `VII/237` (HyperLEDA) | `_RAJ2000 _DEJ2000 PGC logD25` | `logD25` = log 0.1-arcmin diameter → apparent size |
 | Quasars | `VII/294` (Milliquas) | `_RAJ2000 _DEJ2000 Name z Rmag` | `z` = redshift (may be blank for photometric candidates) |
-| Planetary nebulae | *agent to finalize* (Acker `V/84`, HASH, or MASH) | name, position, size | pick a source that actually returns rows and verify |
+| Planetary nebulae | `V/127A/mash1` (MASH-I) | `PNG Name MajDiam MinDiam` | Acker `V/84` has no cone-searchable position index (returns empty); MASH-I carries H-alpha diameters |
 
 Asteroids/comets in the field **at the capture epoch** via SkyBoT (IMCCE):
 `https://ssp.imcce.fr/webservices/skybot/api/conesearch.php?-ra=<raDeg>&-dec=<decDeg>&-rd=<radiusDeg>&-ep=<jd|iso>&-mime=text&-output=object`

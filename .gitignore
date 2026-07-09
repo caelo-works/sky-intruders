@@ -6,6 +6,6 @@ bin/
 tests/build/
 testset/
 # Local working files (mockups, run artifacts dropped at the repo root)
-sketchup.png
+/*.png
+/*.jpg
 *:Zone.Identifier
-SkyIntruders-night-result.jpg

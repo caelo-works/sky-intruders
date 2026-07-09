@@ -6,7 +6,8 @@
 # release: the #include paths in SkyIntruders.js are relative, so staging pjsr/
 # intact lets you run it straight from Script > Execute Script File.
 #
-# Default dest is a Windows-accessible dev folder on this WSL host.
+# Dest resolution: explicit argument, else $SI_DEV_DIR, else (on WSL) the
+# Windows user's LocalAppData, else ~/SkyIntruders-dev.
 #
 #   ./scripts/stage-dev.sh
 #   -> then in PixInsight: Script > Execute Script File... ->
@@ -17,7 +18,25 @@
 set -euo pipefail
 
 REPO="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-DEST="${1:-$HOME/SkyIntruders-dev}"
+
+default_dest() {
+   if [ -n "${SI_DEV_DIR:-}" ]; then
+      echo "$SI_DEV_DIR"
+      return
+   fi
+   # On WSL, resolve the Windows user's LocalAppData through cmd.exe.
+   if command -v cmd.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
+      local lad
+      lad="$( cd /mnt/c 2>/dev/null && cmd.exe /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r' )"
+      if [ -n "$lad" ] && [[ "$lad" != *%* ]]; then
+         echo "$( wslpath "$lad" )/SkyIntruders-dev"
+         return
+      fi
+   fi
+   echo "$HOME/SkyIntruders-dev"
+}
+
+DEST="${1:-$(default_dest)}"
 
 rm -rf "$DEST"
 mkdir -p "$DEST/lib"
