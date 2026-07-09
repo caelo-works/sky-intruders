@@ -100,6 +100,7 @@ var DEFAULT_PARAMS = {
    treasureQuasars: true,
    treasurePne: true,
    treasureAsteroids: true,
+   treasureAccent: "#9FD8D2",
    // Trash to Art options.
    trashScheme: "type",       // "type" | "operator" | "time"
    trashChoreography: true,
@@ -1906,6 +1907,7 @@ function runTreasureHunt( window, filePath, params, onProgress )
    }
 
    var mapBmp = SIRender.chartField( base, {
+      accent: params.treasureAccent || "#9FD8D2",
       items: items,
       cards: { title: titleLines, legend: legend, data: dataLines }
    } );
@@ -2400,6 +2402,8 @@ var SI_UI = {
       huntForTip: "Which deep-catalog object types to search in the field.",
       huntGalaxies: "Galaxies", huntQuasars: "Quasars",
       huntPne: "Planetary nebulae", huntAsteroids: "Asteroids",
+      accentColor: "Overlay color:",
+      accentColorTip: "Color of the chart markers, leader lines, labels and cards.",
       cannotOpen: "Cannot open",
       needImage: "Add one plate-solved image, or open one in PixInsight first.",
       needSolve: "This image has no astrometric solution (WCS). Plate-solve it first (ImageSolver), then run Treasure Hunt."
@@ -2462,6 +2466,8 @@ var SI_UI = {
       huntForTip: "Types d'objets \u00e0 chasser dans les catalogues profonds.",
       huntGalaxies: "Galaxies", huntQuasars: "Quasars",
       huntPne: "N\u00e9buleuses plan\u00e9taires", huntAsteroids: "Ast\u00e9ro\u00efdes",
+      accentColor: "Couleur du trac\u00e9 :",
+      accentColorTip: "Couleur des marqueurs, lignes de renvoi, \u00e9tiquettes et cartouches de la carte.",
       cannotOpen: "Impossible d'ouvrir",
       needImage: "Ajoute une image r\u00e9solue (plate-solve), ou ouvre-la d'abord dans PixInsight.",
       needSolve: "Cette image n'a pas de solution astrom\u00e9trique (WCS). R\u00e9sous-la d'abord (ImageSolver), puis relance la chasse au tr\u00e9sor."
@@ -2472,6 +2478,84 @@ function uiT( lang, key )
 {
    var t = SI_UI[ lang ] || SI_UI.en;
    return ( t[ key ] !== undefined ) ? t[ key ] : SI_UI.en[ key ];
+}
+
+/*
+ * Minimal RGB color picker. The stock pjsr/SimpleColorDialog.jsh does not
+ * load under #engine v8, so this is a small native-controls equivalent:
+ * three 0-255 channel controls, a painted preview, OK/Cancel. Result in
+ * this.color (AARRGGBB) when execute() returns truthy.
+ */
+class SIColorDialog extends Dialog
+{
+   constructor( argb, title )
+   {
+      super();
+      var self = this;
+      this.color = argb | 0;
+      this.windowTitle = title || "Color";
+
+      this.preview = new Control( this );
+      this.preview.setFixedSize( 220, 36 );
+      this.preview.onPaint = function()
+      {
+         var g = new Graphics( this );
+         try
+         {
+            g.fillRect( 0, 0, this.width, this.height, new Brush( 0xff000000 | ( self.color & 0xffffff ) ) );
+         }
+         finally
+         {
+            g.end();
+         }
+      };
+
+      function channel( label, shift )
+      {
+         var nc = new NumericControl( self );
+         nc.label.text = label;
+         nc.label.minWidth = 20;
+         nc.setRange( 0, 255 );
+         nc.setPrecision( 0 );
+         nc.setValue( ( self.color >> shift ) & 0xff );
+         nc.onValueUpdated = ( v ) =>
+         {
+            var b = Math.max( 0, Math.min( 255, Math.round( v ) ) );
+            self.color = ( self.color & ~( 0xff << shift ) ) | ( b << shift );
+            self.color |= 0xff000000;
+            self.preview.repaint();
+         };
+         return nc;
+      }
+      this.rControl = channel( "R", 16 );
+      this.gControl = channel( "G", 8 );
+      this.bControl = channel( "B", 0 );
+
+      this.okButton = new PushButton( this );
+      this.okButton.text = "OK";
+      this.okButton.defaultButton = true;
+      this.okButton.onClick = () => this.ok();
+      this.cancelButton = new PushButton( this );
+      this.cancelButton.text = "Cancel";
+      this.cancelButton.onClick = () => this.cancel();
+      this.buttons = new HorizontalSizer;
+      this.buttons.addStretch();
+      this.buttons.add( this.okButton );
+      this.buttons.addSpacing( 6 );
+      this.buttons.add( this.cancelButton );
+
+      this.sizer = new VerticalSizer;
+      this.sizer.margin = 12;
+      this.sizer.spacing = 8;
+      this.sizer.add( this.preview );
+      this.sizer.add( this.rControl );
+      this.sizer.add( this.gControl );
+      this.sizer.add( this.bControl );
+      this.sizer.addSpacing( 4 );
+      this.sizer.add( this.buttons );
+      this.adjustToContents();
+      this.setFixedSize();
+   }
 }
 
 class ReportDialog extends Dialog
@@ -2772,11 +2856,66 @@ class SkyIntrudersDialog extends Dialog
       this.huntRow = new Control( this );
       this.huntRow.sizer = this.huntSizer;
 
+      // Overlay accent color: a swatch button opening the native color
+      // dialog. The swatch icon is just a bitmap filled with the color.
+      function accentToArgb( hex )
+      {
+         var h = String( hex || "#9FD8D2" ).replace( /^#/, "" );
+         var v = parseInt( h, 16 );
+         return isFinite( v ) ? ( 0xff000000 | v ) : 0xff9fd8d2;
+      }
+      function argbToAccent( argb )
+      {
+         var s = ( argb & 0xffffff ).toString( 16 ).toUpperCase();
+         while ( s.length < 6 )
+            s = "0" + s;
+         return "#" + s;
+      }
+      this.accentLabel = new Label( this );
+      this.accentLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
+      this.accentButton = new ToolButton( this );
+      this.updateAccentSwatch = function()
+      {
+         try
+         {
+            var sw = new Bitmap( 22, 14 );
+            sw.fill( accentToArgb( self.params.treasureAccent ) );
+            self.accentButton.icon = sw;
+         }
+         catch ( e ) {}
+      };
+      this.updateAccentSwatch();
+      this.accentButton.onClick = () =>
+      {
+         try
+         {
+            var cd = new SIColorDialog( accentToArgb( self.params.treasureAccent ),
+                                        uiT( self.params.lang, "accentColor" ).replace( /\s*:\s*$/, "" ) );
+            if ( cd.execute() )
+            {
+               self.params.treasureAccent = argbToAccent( cd.color );
+               self.updateAccentSwatch();
+            }
+         }
+         catch ( e )
+         {
+            console.warningln( "Color dialog unavailable: " + e.message );
+         }
+      };
+      this.accentSizer = new HorizontalSizer;
+      this.accentSizer.spacing = 6;
+      this.accentSizer.add( this.accentLabel );
+      this.accentSizer.add( this.accentButton );
+      this.accentSizer.addStretch();
+      this.accentRow = new Control( this );
+      this.accentRow.sizer = this.accentSizer;
+
       this.treasureHint = this.pageHint( "" );
       this.treasurePage = this.makePage( [
          this.treasureHint,
          this.treasureRows,
-         this.huntRow
+         this.huntRow,
+         this.accentRow
       ] );
 
       // Trash page: color scheme + output toggles.
@@ -3034,6 +3173,8 @@ class SkyIntrudersDialog extends Dialog
       this.huntPneCheck.text = uiT( L, "huntPne" );
       this.huntAsteroidsCheck.text = uiT( L, "huntAsteroids" );
       this.huntRow.toolTip = uiT( L, "huntForTip" );
+      this.accentLabel.text = uiT( L, "accentColor" );
+      this.accentButton.toolTip = uiT( L, "accentColorTip" );
       this.schemeLabel.text = uiT( L, "colorBy" );
       var schemeIdx = this.schemeCombo.currentItem;
       this.schemeCombo.clear();
@@ -3434,6 +3575,9 @@ function siConstructTest()
       out.richLen = rich.length;
       var hd = new HtmlResultDialog( "t", rich, "<html></html>", "x.html", File.systemTempDirectory );
       out.htmlDialogOk = ( typeof hd.openButton !== "undefined" );
+
+      var cdlg = new SIColorDialog( 0xff9fd8d2, "t" );
+      out.colorDialogOk = ( cdlg.color === ( 0xff9fd8d2 | 0 ) );
    }
    catch ( e )
    {
