@@ -24,7 +24,10 @@ var SICatalogs = ( function()
    var SOURCE = {
       galaxy: { source: "VII/237", cols: [ "PGC", "logD25" ] },
       quasar: { source: "VII/294", cols: [ "Name", "z", "Rmag" ] },
-      pne:    { source: "V/127A/mash1", cols: [ "PNG", "Name", "MajDiam", "MinDiam" ] }
+      pne:    { source: "V/127A/mash1", cols: [ "PNG", "Name", "MajDiam", "MinDiam" ] },
+      // Henry Draper: the "principal stars" layer of the chart. Ptm is the
+      // photovisual magnitude (~V), good enough to rank field stars.
+      hdstar: { source: "III/135A/catalog", cols: [ "HD", "Ptm", "SpType" ] }
    };
 
    // ------------------------------------------------------------------------
@@ -337,6 +340,14 @@ var SICatalogs = ( function()
                diamArcmin: ( maj === null ) ? null : maj/60 };
    }
 
+   function typeHdStarRow( r )
+   {
+      var hd = trimStr( r.HD );
+      return { type: "star", name: hd ? ( "HD " + hd ) : "star",
+               raDeg: r.raDeg, decDeg: r.decDeg,
+               mag: toNumber( r.Ptm ), spectral: trimStr( r.SpType ), commonName: "" };
+   }
+
    function typeAsteroidRow( r )
    {
       return { type: "asteroid", name: r.name, raDeg: r.raDeg, decDeg: r.decDeg,
@@ -458,6 +469,11 @@ var SICatalogs = ( function()
       return fetchVizier( "pne", raDeg, decDeg, radiusDeg, typePneRow, opts );
    }
 
+   function queryBrightStars( raDeg, decDeg, radiusDeg, opts )
+   {
+      return fetchVizier( "hdstar", raDeg, decDeg, radiusDeg, typeHdStarRow, opts );
+   }
+
    function queryAsteroids( raDeg, decDeg, radiusDeg, epochIso, opts )
    {
       // SkyBoT is flaky: up to 3 attempts with 1s/2s backoff. The cache key
@@ -514,11 +530,13 @@ var SICatalogs = ( function()
       typeGalaxyRow: typeGalaxyRow,
       typeQuasarRow: typeQuasarRow,
       typePneRow: typePneRow,
+      typeHdStarRow: typeHdStarRow,
       typeAsteroidRow: typeAsteroidRow,
       // PI query layer
       queryGalaxies: queryGalaxies,
       queryQuasars: queryQuasars,
       queryPne: queryPne,
+      queryBrightStars: queryBrightStars,
       queryAsteroids: queryAsteroids
    };
 } )();

@@ -1494,12 +1494,10 @@ function findAdpDir()
  * Context objects for the star chart: the brightest named stars and the
  * largest NGC/IC neighbors that landed in the frame. Local files only.
  */
-function loadChartContext( meta, width, height, maxStars, maxDsos )
+function loadChartContext( meta, width, height, maxStars, maxDsos, cone )
 {
    var out = { stars: [], dsos: [] };
    var dir = findAdpDir();
-   if ( dir === null )
-      return out;
    function projectInto( rows )
    {
       var kept = [];
@@ -1519,14 +1517,40 @@ function loadChartContext( meta, width, height, maxStars, maxDsos )
       }
       return kept;
    }
-   try
-   {
-      var stars = projectInto( SICatalogs.parseNamedStarsCsv(
-         File.readTextFile( dir + "/NamedStars.csv" ) ) );
-      stars.sort( function( a, b ) { return ( a.mag || 99 ) - ( b.mag || 99 ); } );
-      out.stars = stars.slice( 0, maxStars );
-   }
-   catch ( e ) {}
+   // Stars: the locally shipped named stars (Deneb, 52 Cyg...) merged with
+   // the brightest Henry Draper stars of the field (VizieR, cached) — the
+   // "principal stars of the image". A star present in both keeps its name.
+   var stars = [];
+   if ( dir !== null )
+      try
+      {
+         stars = projectInto( SICatalogs.parseNamedStarsCsv(
+            File.readTextFile( dir + "/NamedStars.csv" ) ) );
+      }
+      catch ( e ) {}
+   if ( cone )
+      try
+      {
+         var hd = projectInto( SICatalogs.queryBrightStars(
+            cone.raDeg, cone.decDeg, cone.radiusDeg, { max: 300 } ) );
+         for ( var hi = 0; hi < hd.length; ++hi )
+         {
+            if ( hd[ hi ].mag === null )
+               continue;
+            var dup = false;
+            for ( var ni = 0; ni < stars.length && !dup; ++ni )
+               if ( Math.abs( stars[ ni ].x - hd[ hi ].x ) < 12 &&
+                    Math.abs( stars[ ni ].y - hd[ hi ].y ) < 12 )
+                  dup = true;
+            if ( !dup )
+               stars.push( hd[ hi ] );
+         }
+      }
+      catch ( e2 ) {}
+   stars.sort( function( a, b ) { return ( a.mag || 99 ) - ( b.mag || 99 ); } );
+   out.stars = stars.slice( 0, maxStars );
+   if ( dir === null )
+      return out;
    try
    {
       var dsos = projectInto( SICatalogs.parseNgcIcCsv(
@@ -1782,7 +1806,8 @@ function runTreasureHunt( window, filePath, params, onProgress )
       }
    }
 
-   var context = loadChartContext( meta, width, height, 6, 5 );
+   var context = loadChartContext( meta, width, height, 8, 5,
+                                   { raDeg: raDeg, decDeg: decDeg, radiusDeg: radiusDeg } );
    for ( var cs = 0; cs < context.stars.length; ++cs )
    {
       var st = context.stars[ cs ];
@@ -1791,6 +1816,8 @@ function runTreasureHunt( window, filePath, params, onProgress )
          subs2.push( st.name );
       if ( typeof st.mag === "number" && isFinite( st.mag ) )
          subs2.push( "MAG " + fmt1( st.mag ) );
+      if ( st.spectral )
+         subs2.push( String( st.spectral ).substring( 0, 8 ).toUpperCase() );
       items.push( { x: st.x, y: st.y, kind: "star",
                     main: st.commonName || st.name, subs: subs2, dim: false } );
    }

@@ -149,4 +149,15 @@ function allFinite( rows )
    assert.strictEqual( stars[ 0 ].spectral, "A2Ia" );
 } )();
 
+// --- HD bright-star rows -------------------------------------------------------
+
+( function testHdStarRow()
+{
+   var r = Cat.typeHdStarRow( { HD: "192163", Ptm: "7.65", SpType: "WN6", raDeg: 303.9, decDeg: 38.35 } );
+   assert.strictEqual( r.type, "star" );
+   assert.strictEqual( r.name, "HD 192163" );
+   assert.strictEqual( r.mag, 7.65 );
+   assert.strictEqual( r.spectral, "WN6" );
+} )();
+
 console.log( "catalogs.test.js: all assertions passed" );
