@@ -74,6 +74,9 @@ var DEFAULT_PARAMS = {
    fillRatioMin: 0.6,
    maxTrails: 10,
    tleGroup: "active",
+   // Fresh launches take days to reach the "active" group — without
+   // last-30-days they all show up as unidentified.
+   tleExtraGroups: [ "last-30-days" ],
    tleMaxAgeHours: 12,
    tleBaseUrl: null,   // override to use a CelesTrak mirror
    matchMaxSepDeg: 0.2,

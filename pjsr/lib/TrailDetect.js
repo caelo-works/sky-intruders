@@ -1541,6 +1541,62 @@ var SITrailDetect = ( function()
       }
    }
 
+   function mergeDuplicateTrails( trails )
+   {
+      // The bright and faint passes can both fire on one streak (or the
+      // faint pass can refind the unerased shoulder of a wide one), a few
+      // pixels apart: near-parallel, near-collinear, overlapping segments
+      // are ONE trail — keep the longest. Real close-formation pairs (NOSS)
+      // fly ~60+ binned px apart and are untouched.
+      function angleDiff( a, b )
+      {
+         var d = Math.abs( a - b ) % 180;
+         return ( d > 90 ) ? 180 - d : d;
+      }
+      var keep = new Array( trails.length );
+      for ( var i = 0; i < trails.length; ++i )
+         keep[i] = true;
+      for ( var i = 0; i < trails.length; ++i )
+      {
+         if ( !keep[i] )
+            continue;
+         for ( var j = i + 1; j < trails.length; ++j )
+         {
+            if ( !keep[j] )
+               continue;
+            var a = trails[i], b = trails[j];
+            if ( angleDiff( a.angleDeg, b.angleDeg ) > 3 )
+               continue;
+            var dxA = a.x2 - a.x1, dyA = a.y2 - a.y1;
+            var lenA = Math.sqrt( dxA*dxA + dyA*dyA );
+            if ( lenA < 1 )
+               continue;
+            var ux = dxA/lenA, uy = dyA/lenA;
+            var mbx = ( b.x1 + b.x2 )/2 - a.x1, mby = ( b.y1 + b.y2 )/2 - a.y1;
+            var perp = Math.abs( -uy*mbx + ux*mby );
+            if ( perp > 10 )
+               continue;
+            // along-extent overlap of at least 30% of the shorter segment
+            var tB1 = ux*( b.x1 - a.x1 ) + uy*( b.y1 - a.y1 );
+            var tB2 = ux*( b.x2 - a.x1 ) + uy*( b.y2 - a.y1 );
+            var lo = Math.min( tB1, tB2 ), hi = Math.max( tB1, tB2 );
+            var lenB = hi - lo;
+            var overlap = Math.min( lenA, hi ) - Math.max( 0, lo );
+            if ( overlap < 0.3*Math.min( lenA, lenB ) )
+               continue;
+            if ( lenB > lenA )
+               keep[i] = false;
+            else
+               keep[j] = false;
+         }
+      }
+      var out = [];
+      for ( var k = 0; k < trails.length; ++k )
+         if ( keep[k] )
+            out.push( trails[k] );
+      return out;
+   }
+
    function detectDiff( image, binnedSelf, model, params, mask )
    {
       // Transient detection: subtract the static-sky model (per-pixel median
@@ -1582,6 +1638,7 @@ var SITrailDetect = ( function()
       if ( prof ) prof.faintMs = ( prof.faintMs || 0 ) + ( Date.now() - tP );
       for ( var f = 0; f < faint.trails.length; ++f )
          core.trails.push( faint.trails[f] );
+      core.trails = mergeDuplicateTrails( core.trails );
 
       tP = Date.now();
       var out = finishDetection( image, core, binnedSelf.binFactor );
