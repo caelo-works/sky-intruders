@@ -2481,56 +2481,241 @@ function uiT( lang, key )
 }
 
 /*
- * Minimal RGB color picker. The stock pjsr/SimpleColorDialog.jsh does not
- * load under #engine v8, so this is a small native-controls equivalent:
- * three 0-255 channel controls, a painted preview, OK/Cancel. Result in
+ * Color picker for the chart accent. The stock pjsr/SimpleColorDialog.jsh
+ * does not load under #engine v8, so this is a native implementation with
+ * the usual picker anatomy: a saturation/value pad, a hue strip, preset
+ * swatches tuned for the chart, a hex field and a live preview. Result in
  * this.color (AARRGGBB) when execute() returns truthy.
  */
+function siHsvToRgb( h, s, v )
+{
+   h = ( ( h % 360 ) + 360 ) % 360;
+   var c2 = v*s, x = c2*( 1 - Math.abs( ( h/60 ) % 2 - 1 ) ), m = v - c2;
+   var r = 0, g = 0, b = 0;
+   if ( h < 60 )       { r = c2; g = x; }
+   else if ( h < 120 ) { r = x;  g = c2; }
+   else if ( h < 180 ) { g = c2; b = x; }
+   else if ( h < 240 ) { g = x;  b = c2; }
+   else if ( h < 300 ) { r = x;  b = c2; }
+   else                { r = c2; b = x; }
+   return ( 0xff000000 |
+            ( Math.round( ( r + m )*255 ) << 16 ) |
+            ( Math.round( ( g + m )*255 ) << 8 ) |
+            Math.round( ( b + m )*255 ) );
+}
+
+function siRgbToHsv( argb )
+{
+   var r = ( ( argb >> 16 ) & 0xff )/255,
+       g = ( ( argb >> 8 ) & 0xff )/255,
+       b = ( argb & 0xff )/255;
+   var mx = Math.max( r, g, b ), mn = Math.min( r, g, b ), d = mx - mn;
+   var h = 0;
+   if ( d > 0 )
+   {
+      if ( mx === r )      h = 60*( ( ( g - b )/d ) % 6 );
+      else if ( mx === g ) h = 60*( ( b - r )/d + 2 );
+      else                 h = 60*( ( r - g )/d + 4 );
+   }
+   return { h: ( h + 360 ) % 360, s: ( mx > 0 ) ? d/mx : 0, v: mx };
+}
+
 class SIColorDialog extends Dialog
 {
    constructor( argb, title )
    {
       super();
       var self = this;
-      this.color = argb | 0;
+      this.color = ( argb | 0xff000000 ) | 0;
+      var hsv = siRgbToHsv( this.color );
+      this.hue = hsv.h;
+      this.sat = hsv.s;
+      this.val = hsv.v;
       this.windowTitle = title || "Color";
 
-      this.preview = new Control( this );
-      this.preview.setFixedSize( 220, 36 );
-      this.preview.onPaint = function()
+      var PAD = 232, STRIP = 22, RES = 116;
+
+      // --- saturation/value pad (bitmap cached per hue) -------------------
+      this.svBitmap = null;
+      this.svBitmapHue = -1;
+      this.rebuildSv = function()
       {
+         var hq = Math.round( self.hue );
+         if ( self.svBitmap !== null && self.svBitmapHue === hq )
+            return;
+         var bm = new Bitmap( RES, RES );
+         for ( var y = 0; y < RES; ++y )
+         {
+            var v = 1 - y/( RES - 1 );
+            for ( var x = 0; x < RES; ++x )
+               bm.setPixel( x, y, siHsvToRgb( hq, x/( RES - 1 ), v ) );
+         }
+         self.svBitmap = bm;
+         self.svBitmapHue = hq;
+      };
+
+      function syncFromHsv()
+      {
+         self.color = siHsvToRgb( self.hue, self.sat, self.val );
+         self.hexEdit.text = siArgbToHex( self.color );
+         self.svPad.repaint();
+         self.huePad.repaint();
+         self.preview.repaint();
+      }
+
+      function siArgbToHex( a )
+      {
+         var s = ( a & 0xffffff ).toString( 16 ).toUpperCase();
+         while ( s.length < 6 )
+            s = "0" + s;
+         return "#" + s;
+      }
+
+      this.svPad = new Control( this );
+      this.svPad.setFixedSize( PAD, PAD );
+      try { this.svPad.cursor = new Cursor( 13 ); } catch ( e ) {} // cross
+      this.svPad.onPaint = function()
+      {
+         self.rebuildSv();
          var g = new Graphics( this );
          try
          {
-            g.fillRect( 0, 0, this.width, this.height, new Brush( 0xff000000 | ( self.color & 0xffffff ) ) );
+            g.drawScaledBitmap( 0, 0, this.width, this.height, self.svBitmap );
+            var cx = self.sat*( this.width - 1 );
+            var cy = ( 1 - self.val )*( this.height - 1 );
+            g.antialiasing = true;
+            g.pen = new Pen( 0xff000000, 3 );
+            g.strokeCircle( cx, cy, 6 );
+            g.pen = new Pen( 0xffffffff, 1.5 );
+            g.strokeCircle( cx, cy, 6 );
          }
          finally
          {
             g.end();
          }
       };
-
-      function channel( label, shift )
+      function svFromMouse( x, y )
       {
-         var nc = new NumericControl( self );
-         nc.label.text = label;
-         nc.label.minWidth = 20;
-         nc.setRange( 0, 255 );
-         nc.setPrecision( 0 );
-         nc.setValue( ( self.color >> shift ) & 0xff );
-         nc.onValueUpdated = ( v ) =>
-         {
-            var b = Math.max( 0, Math.min( 255, Math.round( v ) ) );
-            self.color = ( self.color & ~( 0xff << shift ) ) | ( b << shift );
-            self.color |= 0xff000000;
-            self.preview.repaint();
-         };
-         return nc;
+         self.sat = Math.max( 0, Math.min( 1, x/( PAD - 1 ) ) );
+         self.val = Math.max( 0, Math.min( 1, 1 - y/( PAD - 1 ) ) );
+         syncFromHsv();
       }
-      this.rControl = channel( "R", 16 );
-      this.gControl = channel( "G", 8 );
-      this.bControl = channel( "B", 0 );
+      this.svPad.onMousePress = ( x, y ) => svFromMouse( x, y );
+      this.svPad.onMouseMove = ( x, y, buttonState ) =>
+      {
+         if ( buttonState & 0x01 )
+            svFromMouse( x, y );
+      };
 
+      // --- hue strip -------------------------------------------------------
+      this.hueBitmap = new Bitmap( 1, PAD );
+      for ( var hy = 0; hy < PAD; ++hy )
+         this.hueBitmap.setPixel( 0, hy, siHsvToRgb( 360*hy/( PAD - 1 ), 1, 1 ) );
+      this.huePad = new Control( this );
+      this.huePad.setFixedSize( STRIP, PAD );
+      this.huePad.onPaint = function()
+      {
+         var g = new Graphics( this );
+         try
+         {
+            g.drawScaledBitmap( 0, 0, this.width, this.height, self.hueBitmap );
+            var my = ( self.hue/360 )*( this.height - 1 );
+            g.pen = new Pen( 0xff000000, 3 );
+            g.drawLine( 0, my, this.width, my );
+            g.pen = new Pen( 0xffffffff, 1.5 );
+            g.drawLine( 0, my, this.width, my );
+         }
+         finally
+         {
+            g.end();
+         }
+      };
+      function hueFromMouse( y )
+      {
+         self.hue = Math.max( 0, Math.min( 360, 360*y/( PAD - 1 ) ) );
+         syncFromHsv();
+      }
+      this.huePad.onMousePress = ( x, y ) => hueFromMouse( y );
+      this.huePad.onMouseMove = ( x, y, buttonState ) =>
+      {
+         if ( buttonState & 0x01 )
+            hueFromMouse( y );
+      };
+
+      // --- preset swatches -------------------------------------------------
+      var PRESETS = [ 0xff9fd8d2, 0xff7fd1ff, 0xff8ff0cf, 0xffe8d44d,
+                      0xffffb86c, 0xffe39bff, 0xffff6e6e, 0xfff2f2f2 ];
+      this.presetSizer = new HorizontalSizer;
+      this.presetSizer.spacing = 6;
+      this.presetControls = [];
+      for ( var p = 0; p < PRESETS.length; ++p )
+      {
+         var sw = new Control( this );
+         sw.setFixedSize( 24, 24 );
+         sw.presetColor = PRESETS[ p ];
+         sw.onPaint = function()
+         {
+            var g = new Graphics( this );
+            try
+            {
+               g.fillRect( 0, 0, this.width, this.height, new Brush( 0xff10151a ) );
+               g.fillRect( 2, 2, this.width - 2, this.height - 2, new Brush( this.presetColor ) );
+            }
+            finally
+            {
+               g.end();
+            }
+         };
+         sw.onMousePress = function()
+         {
+            self.color = this.presetColor;
+            var hv = siRgbToHsv( self.color );
+            self.hue = hv.h; self.sat = hv.s; self.val = hv.v;
+            syncFromHsv();
+         };
+         this.presetControls.push( sw );
+         this.presetSizer.add( sw );
+      }
+      this.presetSizer.addStretch();
+
+      // --- preview + hex ---------------------------------------------------
+      this.preview = new Control( this );
+      this.preview.setFixedSize( 96, 30 );
+      this.preview.onPaint = function()
+      {
+         var g = new Graphics( this );
+         try
+         {
+            g.fillRect( 0, 0, this.width, this.height, new Brush( self.color | 0xff000000 ) );
+         }
+         finally
+         {
+            g.end();
+         }
+      };
+      this.hexEdit = new Edit( this );
+      this.hexEdit.setFixedWidth( 96 );
+      this.hexEdit.text = siArgbToHex( this.color );
+      this.hexEdit.onEditCompleted = function()
+      {
+         var m = String( this.text ).replace( /^\s*#?/, "" );
+         if ( /^[0-9a-fA-F]{6}$/.test( m ) )
+         {
+            self.color = 0xff000000 | parseInt( m, 16 );
+            var hv2 = siRgbToHsv( self.color );
+            self.hue = hv2.h; self.sat = hv2.s; self.val = hv2.v;
+            syncFromHsv();
+         }
+         else
+            this.text = siArgbToHex( self.color );
+      };
+      this.hexSizer = new HorizontalSizer;
+      this.hexSizer.spacing = 8;
+      this.hexSizer.add( this.preview );
+      this.hexSizer.add( this.hexEdit );
+      this.hexSizer.addStretch();
+
+      // --- buttons ----------------------------------------------------------
       this.okButton = new PushButton( this );
       this.okButton.text = "OK";
       this.okButton.defaultButton = true;
@@ -2544,13 +2729,17 @@ class SIColorDialog extends Dialog
       this.buttons.addSpacing( 6 );
       this.buttons.add( this.cancelButton );
 
+      this.padSizer = new HorizontalSizer;
+      this.padSizer.spacing = 8;
+      this.padSizer.add( this.svPad );
+      this.padSizer.add( this.huePad );
+
       this.sizer = new VerticalSizer;
       this.sizer.margin = 12;
       this.sizer.spacing = 8;
-      this.sizer.add( this.preview );
-      this.sizer.add( this.rControl );
-      this.sizer.add( this.gControl );
-      this.sizer.add( this.bControl );
+      this.sizer.add( this.padSizer );
+      this.sizer.add( this.presetSizer );
+      this.sizer.add( this.hexSizer );
       this.sizer.addSpacing( 4 );
       this.sizer.add( this.buttons );
       this.adjustToContents();
