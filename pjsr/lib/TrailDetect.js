@@ -869,6 +869,15 @@ var SITrailCore = ( function()
       var p = {};
       for ( var k in FAINT_DEFAULTS )
          p[k] = ( params && params[k] !== undefined ) ? params[k] : FAINT_DEFAULTS[k];
+      // Optional diagnosis channel: every candidate examined and the reason
+      // it was rejected land here (params.trace = []).
+      var trace = ( params && params.trace ) ? params.trace : null;
+      function tr( peak, reason, extra )
+      {
+         if ( trace )
+            trace.push( { thetaDeg: peak.thetaDeg, rho: peak.rho, reason: reason,
+                          extra: ( extra === undefined ) ? null : extra } );
+      }
 
       var sigma = noiseSigmaFromPositives( diff );
       if ( !( sigma > 0 ) )
@@ -910,12 +919,14 @@ var SITrailCore = ( function()
             var ext = lineExtent( width, height, peak.thetaDeg, peak.rho );
             if ( ext === null )
             {
+               tr( peak, "off-image" );
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
             var L = ext.t1 - ext.t0 + 1;
             if ( L < minLen )
             {
+               tr( peak, "line-too-short", L );
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
@@ -926,6 +937,7 @@ var SITrailCore = ( function()
             var signif = ( peak.count - expect )/noise;
             if ( signif < Math.max( 3.5, p.faintKLine - 2 ) )
             {
+               tr( peak, "stage1-signif", Math.round( signif*100 )/100 );
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
@@ -935,27 +947,34 @@ var SITrailCore = ( function()
             if ( refined === null || refined.signif < p.faintKLine ||
                  refined.length < minLen )
             {
+               tr( peak, "stage2-refined", refined ? Math.round( refined.signif*100 )/100 : null );
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
             ext = lineExtent( width, height, refined.thetaDeg, refined.rho );
             if ( ext === null )
             {
+               tr( peak, "refined-off-image" );
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
             signif = refined.signif;
-            peak = { thetaDeg: refined.thetaDeg, rho: refined.rho, count: peak.count };
+            // The refined line geometry is sub-degree/sub-pixel (floats);
+            // `peak` must stay INTEGER — suppressPeak indexes the
+            // accumulator with it, and a fractional index silently writes
+            // nowhere, so the rejected peak would be re-proposed forever.
+            var refT = refined.thetaDeg, refRho = refined.rho;
 
             // Endpoints by CUSUM on the perpendicular-max profile; the
             // baseline is the profile's lower quartile (noise level even
             // when the trail covers most of the line).
             var perpTol = 2;
-            var g = faintProfile( z, width, height, ext, peak.rho, perpTol );
+            var g = faintProfile( z, width, height, ext, refRho, perpTol );
             var baseline = quantileOf( g, 0.25 );
             var run = cusumEndpoints( g, baseline );
             if ( run === null || ( run.end - run.start + 1 ) < minLen )
             {
+               tr( peak, "cusum-run-short", run ? run.end - run.start + 1 : null );
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
@@ -963,10 +982,12 @@ var SITrailCore = ( function()
             // Thin-ness: the excess must concentrate in a narrow corridor,
             // or this is a chance line through diffuse residual structure.
             var tSa = ext.t0 + run.start, tSb = ext.t0 + run.end;
-            var runSeg = { x1: peak.rho*ext.ct - tSa*ext.st, y1: peak.rho*ext.st + tSa*ext.ct,
-                           x2: peak.rho*ext.ct - tSb*ext.st, y2: peak.rho*ext.st + tSb*ext.ct };
-            if ( corridorConcentration( z, width, height, runSeg, muZ ) < 0.45 )
+            var runSeg = { x1: refRho*ext.ct - tSa*ext.st, y1: refRho*ext.st + tSa*ext.ct,
+                           x2: refRho*ext.ct - tSb*ext.st, y2: refRho*ext.st + tSb*ext.ct };
+            var conc = corridorConcentration( z, width, height, runSeg, muZ );
+            if ( conc < 0.45 )
             {
+               tr( peak, "not-thin", Math.round( conc*100 )/100 );
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
@@ -978,6 +999,9 @@ var SITrailCore = ( function()
             // in sigma units.
             if ( isNoiseLine( z, width, height, runSeg, 1 ) )
             {
+               var emp = lineEmptiness( z, width, height, runSeg );
+               tr( peak, "noise-line", { zeroFrac: Math.round( emp.zeroFrac*100 )/100,
+                                         meanNonZero: Math.round( emp.meanNonZero*100 )/100 } );
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
@@ -999,15 +1023,17 @@ var SITrailCore = ( function()
             }
             if ( okChunks < Math.ceil( p.faintChunkMinFrac*p.faintChunks ) )
             {
+               tr( peak, "not-uniform", okChunks );
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
 
             var tA = ext.t0 + run.start, tB = ext.t0 + run.end;
+            tr( { thetaDeg: refT, rho: refRho }, "ACCEPTED", Math.round( signif*100 )/100 );
             accepted = {
-               x1: peak.rho*ext.ct - tA*ext.st, y1: peak.rho*ext.st + tA*ext.ct,
-               x2: peak.rho*ext.ct - tB*ext.st, y2: peak.rho*ext.st + tB*ext.ct,
-               thetaDeg: peak.thetaDeg, rho: peak.rho,
+               x1: refRho*ext.ct - tA*ext.st, y1: refRho*ext.st + tA*ext.ct,
+               x2: refRho*ext.ct - tB*ext.st, y2: refRho*ext.st + tB*ext.ct,
+               thetaDeg: refT, rho: refRho,
                signif: signif, length: runLen
             };
             break;

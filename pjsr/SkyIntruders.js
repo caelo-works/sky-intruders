@@ -724,7 +724,8 @@ function runAnalysis( files, params )
                if ( f.trails[ tt ].index === crossings[ c ].matchedTrailIndex )
                   tr0 = f.trails[ tt ];
             if ( tr0 != null )
-               labeledTrails.push( { x1: tr0.x1, y1: tr0.y1, x2: tr0.x2, y2: tr0.y2,
+               labeledTrails.push( { frameIndex: i,
+                                     x1: tr0.x1, y1: tr0.y1, x2: tr0.x2, y2: tr0.y2,
                                      color: TRAIL_STYLE.satellite,
                                      label: ( crossings[ c ].name || ( "NORAD " + crossings[ c ].noradId ) ) +
                                             ( crossings[ c ].entryUtc
@@ -741,7 +742,8 @@ function runAnalysis( files, params )
                         name: null,
                         segments: pg.segments,
                         frameId: f.meta.id } );
-         labeledTrails.push( { x1: pg.x1, y1: pg.y1, x2: pg.x2, y2: pg.y2,
+         labeledTrails.push( { frameIndex: i,
+                               x1: pg.x1, y1: pg.y1, x2: pg.x2, y2: pg.y2,
                                color: TRAIL_STYLE[ kind ],
                                label: langLabels[ kind ] + " (" + pg.segments + ")" } );
       }
@@ -759,7 +761,8 @@ function runAnalysis( files, params )
             var lb = langLabels[ cls.klass ] || langLabels.unknown;
             if ( cls.klass === "meteor" && cls.shower )
                lb += " (" + cls.shower.name + ")";
-            labeledTrails.push( { x1: f.trails[ t ].x1, y1: f.trails[ t ].y1,
+            labeledTrails.push( { frameIndex: i,
+                                  x1: f.trails[ t ].x1, y1: f.trails[ t ].y1,
                                   x2: f.trails[ t ].x2, y2: f.trails[ t ].y2,
                                   color: TRAIL_STYLE[ cls.klass ] || TRAIL_STYLE.unknown,
                                   label: lb } );
@@ -843,6 +846,34 @@ function runAnalysis( files, params )
       {
          console.warningln( SKYINTRUDERS_TITLE + ": night composite failed — " + e.message );
       }
+   // Frame-by-frame review aid: one annotated PNG per registered frame,
+   // with only that frame's trails drawn.
+   if ( set != null && params.debugFrameOverlays )
+      try
+      {
+         for ( var i = 0; i < frames.length; ++i )
+         {
+            var wins3 = ImageWindow.open( set.regPaths[ i ] );
+            if ( wins3.length == 0 )
+               continue;
+            for ( var k4 = 1; k4 < wins3.length; ++k4 )
+               wins3[ k4 ].forceClose();
+            var fbmp = SIRender.stretchedBitmap( wins3[ 0 ].mainView.image );
+            var mine = [];
+            for ( var lt = 0; lt < labeledTrails.length; ++lt )
+               if ( labeledTrails[ lt ].frameIndex === i )
+                  mine.push( labeledTrails[ lt ] );
+            fbmp = SIRender.annotateTrails( fbmp, mine );
+            fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + i + ".png" );
+            wins3[ 0 ].forceClose();
+            gc();
+         }
+      }
+      catch ( e )
+      {
+         console.warningln( SKYINTRUDERS_TITLE + ": frame overlays failed — " + e.message );
+      }
+
    if ( set != null )
       clearDirectory( set.regDir );
 

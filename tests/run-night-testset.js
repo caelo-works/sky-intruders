@@ -59,6 +59,7 @@ function runNightTestset()
       var params = JSON.parse( JSON.stringify( DEFAULT_PARAMS ) );
       params.lang = "fr";
       params.saveHistory = false;
+      params.debugFrameOverlays = true;
 
       var res = runAnalysis( files, params );
 
