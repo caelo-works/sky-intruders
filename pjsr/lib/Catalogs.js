@@ -25,9 +25,11 @@ var SICatalogs = ( function()
       galaxy: { source: "VII/237", cols: [ "PGC", "logD25" ] },
       quasar: { source: "VII/294", cols: [ "Name", "z", "Rmag" ] },
       pne:    { source: "V/127A/mash1", cols: [ "PNG", "Name", "MajDiam", "MinDiam" ] },
-      // Henry Draper: the "principal stars" layer of the chart. Ptm is the
-      // photovisual magnitude (~V), good enough to rank field stars.
-      hdstar: { source: "III/135A/catalog", cols: [ "HD", "Ptm", "SpType" ] }
+      // Principal stars of the chart. Hipparcos, NOT the original HD
+      // catalog: HD positions are epoch-1900 values rounded to 0.1 time-min
+      // (tens of arcsec off — markers visibly miss their stars). Hipparcos
+      // is milliarcsecond and carries the HD cross-id for display names.
+      hipstar: { source: "I/239/hip_main", cols: [ "HIP", "HD", "Vmag", "SpType" ] }
    };
 
    // ------------------------------------------------------------------------
@@ -340,12 +342,13 @@ var SICatalogs = ( function()
                diamArcmin: ( maj === null ) ? null : maj/60 };
    }
 
-   function typeHdStarRow( r )
+   function typeHipStarRow( r )
    {
-      var hd = trimStr( r.HD );
-      return { type: "star", name: hd ? ( "HD " + hd ) : "star",
+      var hd = trimStr( r.HD ), hip = trimStr( r.HIP );
+      return { type: "star",
+               name: hd ? ( "HD " + hd ) : ( hip ? ( "HIP " + hip ) : "star" ),
                raDeg: r.raDeg, decDeg: r.decDeg,
-               mag: toNumber( r.Ptm ), spectral: trimStr( r.SpType ), commonName: "" };
+               mag: toNumber( r.Vmag ), spectral: trimStr( r.SpType ), commonName: "" };
    }
 
    function typeAsteroidRow( r )
@@ -471,7 +474,7 @@ var SICatalogs = ( function()
 
    function queryBrightStars( raDeg, decDeg, radiusDeg, opts )
    {
-      return fetchVizier( "hdstar", raDeg, decDeg, radiusDeg, typeHdStarRow, opts );
+      return fetchVizier( "hipstar", raDeg, decDeg, radiusDeg, typeHipStarRow, opts );
    }
 
    function queryAsteroids( raDeg, decDeg, radiusDeg, epochIso, opts )
@@ -530,7 +533,7 @@ var SICatalogs = ( function()
       typeGalaxyRow: typeGalaxyRow,
       typeQuasarRow: typeQuasarRow,
       typePneRow: typePneRow,
-      typeHdStarRow: typeHdStarRow,
+      typeHipStarRow: typeHipStarRow,
       typeAsteroidRow: typeAsteroidRow,
       // PI query layer
       queryGalaxies: queryGalaxies,

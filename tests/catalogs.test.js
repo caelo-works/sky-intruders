@@ -149,15 +149,17 @@ function allFinite( rows )
    assert.strictEqual( stars[ 0 ].spectral, "A2Ia" );
 } )();
 
-// --- HD bright-star rows -------------------------------------------------------
+// --- Hipparcos bright-star rows --------------------------------------------------
 
-( function testHdStarRow()
+( function testHipStarRow()
 {
-   var r = Cat.typeHdStarRow( { HD: "192163", Ptm: "7.65", SpType: "WN6", raDeg: 303.9, decDeg: 38.35 } );
+   var r = Cat.typeHipStarRow( { HIP: "99546", HD: "192163", Vmag: "7.65", SpType: "WN6", raDeg: 303.9, decDeg: 38.35 } );
    assert.strictEqual( r.type, "star" );
-   assert.strictEqual( r.name, "HD 192163" );
+   assert.strictEqual( r.name, "HD 192163", "HD cross-id preferred for display" );
    assert.strictEqual( r.mag, 7.65 );
    assert.strictEqual( r.spectral, "WN6" );
+   var noHd = Cat.typeHipStarRow( { HIP: "12345", HD: "", Vmag: "8.1", SpType: "", raDeg: 1, decDeg: 2 } );
+   assert.strictEqual( noHd.name, "HIP 12345", "falls back to the HIP designation" );
 } )();
 
 console.log( "catalogs.test.js: all assertions passed" );
