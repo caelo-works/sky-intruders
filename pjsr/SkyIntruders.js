@@ -636,6 +636,17 @@ function runAnalysis( files, params )
                        pixScaleArcsec: set.refMeta.pixScaleArcsec,
                        width: set.refW, height: set.refH };
          var fit = SISatMatch.fitOrientation( fitFrames, field, {} );
+         if ( fit != null && fit.pairs.length < 3 )
+         {
+            // With one rotation, one parity and a center correction to play
+            // with, two pairs can almost always be made to agree — naming
+            // satellites on such a fit produces confident nonsense. The
+            // predicted-crossers section still tells the user what flew by.
+            console.writeln( format( "Field orientation fit found only %d matched pair(s) — " +
+                                     "not enough to trust satellite names; crossers are " +
+                                     "reported as predictions only.", fit.pairs.length ) );
+            fit = null;
+         }
          if ( fit != null && fit.pairs.length > 0 )
          {
             fitInfo = { rotationDeg: fit.rotationDeg, parity: fit.parity,

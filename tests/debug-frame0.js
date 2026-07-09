@@ -16,7 +16,7 @@
 #include "../pjsr/lib/Render.js"
 /* beautify ignore:end */
 
-var FRAME_IDX = 0;
+
 
 function dbgDir()
 {
@@ -51,9 +51,9 @@ function seg( t )
             ang: Math.round( t.angleDeg*10 )/10 };
 }
 
-function analyzeOnce( files, regDir, label, wantPng )
+function analyzeSet( files )
 {
-   var reg = SIRender.registerFramesMapped( files, regDir );
+   var reg = SIRender.registerFramesMapped( files, File.systemTempDirectory + "/si-f0-regA" );
    var binnedList = [];
    for ( var i = 0; i < files.length; ++i )
    {
@@ -79,7 +79,15 @@ function analyzeOnce( files, regDir, label, wantPng )
    var stack = SITrailCore.medianStackMasked( normalized, 1e-6 );
    var mask = SITrailCore.erodeMask( stack.valid, w, h, 3 );
 
-   var diff = SITrailCore.subtractModel( normalized[ FRAME_IDX ], stack.model, mask );
+   var frames = [];
+   for ( var fi = 0; fi < files.length; ++fi )
+      frames.push( analyzeFrameDiff( files[ fi ], normalized[ fi ], stack, mask, w, h, fi ) );
+   return { frames: frames };
+}
+
+function analyzeFrameDiff( path, norm, stack, mask, w, h, fi )
+{
+   var diff = SITrailCore.subtractModel( norm, stack.model, mask );
    var sigma = SITrailCore.noiseSigmaFromPositives( diff );
    var muDiff = 0;
    for ( var d = 0; d < diff.length; ++d )
@@ -91,7 +99,8 @@ function analyzeOnce( files, regDir, label, wantPng )
       return SITrailCore.corridorConcentration( diff, w, h, run, muDiff ) >= 0.45 &&
              !SITrailCore.isNoiseLine( diff, w, h, run, sigma );
    };
-   var core = SITrailCore.detectCore( diff, w, h, { kSigma: 4.5, maxTrails: 25 }, thinOnly );
+   var core = SITrailCore.detectCore( diff, w, h,
+      { kSigma: 4.5, maxTrails: 25, noiseOverride: { median: 0, sigma: sigma } }, thinOnly );
 
    var diff2 = new Float32Array( diff );
    for ( var t = 0; t < core.trails.length; ++t )
@@ -111,14 +120,14 @@ function analyzeOnce( files, regDir, label, wantPng )
    var trace = [];
    var faint = SITrailCore.detectFaintCore( diff2, w, h, { trace: trace } );
 
-   var out = { label: label, sigmaAdu: sigma*65535, w: w, h: h,
-               bright: [], faint: [], trace: trace.slice( 0, 60 ) };
+   var out = { file: path.split( "/" ).pop(), sigmaAdu: sigma*65535,
+               bright: [], faint: [], trace: trace.slice( 0, 40 ) };
    for ( var t = 0; t < core.trails.length; ++t )
       out.bright.push( seg( core.trails[ t ] ) );
    for ( var t = 0; t < faint.trails.length; ++t )
       out.faint.push( seg( faint.trails[ t ] ) );
 
-   if ( wantPng )
+   if ( false )
    {
       var bmp = new Bitmap( w, h );
       for ( var y = 0; y < h; ++y )
@@ -147,9 +156,9 @@ function main()
    var out = { ok: true };
  try {
    var files = listFits( dbgDir() + "/data" );
-   out.frame = files[ FRAME_IDX ];
-   out.runA = analyzeOnce( files, File.systemTempDirectory + "/si-f0-regA", "A", true );
-   out.runB = analyzeOnce( files, File.systemTempDirectory + "/si-f0-regB", "B", false );
+   var res = analyzeSet( files );
+   out.frames = res.frames;
+   out.error0 = res.error || null;
  } catch ( e ) {
    out.ok = false;
    out.error = String( e.message || e ) + " @ " + ( e.lineNumber || "?" );

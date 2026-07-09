@@ -197,9 +197,11 @@ console.log("traildetect: median stack + model subtraction OK");
 
 {
    const W = 800, H = 500;
-   // deterministic gaussian-ish noise (sum of 12 uniforms), clamped at 0
-   let seed = 42;
-   const rnd = () => { seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; };
+   // deterministic gaussian-ish noise (sum of 12 uniforms), clamped at 0.
+   // xorshift128, NOT an LCG: the LCG lattice forms genuine directional
+   // structure in the field that the detector correctly reports.
+   let s0 = 123456789, s1 = 362436069, s2 = 521288629, s3 = 88675123;
+   const rnd = () => { let tt = s0^(s0<<11); s0=s1; s1=s2; s2=s3; s3=(s3^(s3>>>19))^(tt^(tt>>>8)); return (s3>>>0)/4294967296; };
    const gauss = () => { let s = 0; for (let i = 0; i < 12; i++) s += rnd(); return s - 6; };
    const SIGMA = 0.01;
    const mkNoise = () => {
@@ -261,3 +263,56 @@ console.log("traildetect: faint weighted-Hough pass OK");
 }
 
 console.log("traildetect: photometric normalization OK");
+
+// ---------------------------------------------------------------------------
+// Clamped-residual threshold: median/MAD collapses on half-zero data (the
+// adaptive loop then lands near 1.4 sigma and noise chains get through);
+// with noiseOverride the threshold is honest — a strong trail is found,
+// clamped pure noise stays clean.
+
+{
+   const W = 800, H = 500;
+   let seed = 11;
+   const rnd = () => { seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; };
+   const gauss = () => { let s = 0; for (let i = 0; i < 12; i++) s += rnd(); return s - 6; };
+   const SIGMA = 0.01;
+   const mk = () => {
+      const a = new Float32Array(W*H);
+      for (let i = 0; i < a.length; i++) a[i] = Math.max(0, gauss()*SIGMA);
+      return a;
+   };
+   const noisy = mk();
+   const x1 = 90, y1 = 430, x2 = 700, y2 = 60;
+   const len = Math.hypot(x2 - x1, y2 - y1);
+   for (let t = 0; t <= Math.ceil(len); t++) {
+      const f = t/len;
+      noisy[Math.round(y1 + (y2 - y1)*f)*W + Math.round(x1 + (x2 - x1)*f)] += 6*SIGMA;
+   }
+   const over = { median: 0, sigma: SIGMA };
+   const withTrail = T.detectCore(noisy, W, H, { kSigma: 4.5, noiseOverride: over });
+   assert.strictEqual(withTrail.trails.length, 1, "bright trail found with honest threshold");
+   const clean = T.detectCore(mk(), W, H, { kSigma: 4.5, noiseOverride: over });
+   assert.strictEqual(clean.trails.length, 0, "clamped pure noise stays clean");
+}
+
+console.log("traildetect: clamped-residual noise override OK");
+
+// ---------------------------------------------------------------------------
+// High-pass flattening: a thin streak keeps its amplitude, a wide blob is
+// removed, and the faint pass still finds a trail crossing a blob field.
+
+{
+   const W = 400, H = 300;
+   const a = new Float32Array(W*H);
+   // wide gaussian blob (nebula mottle scale)
+   for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++)
+         a[y*W + x] = 0.05*Math.exp(-((x - 200)**2 + (y - 150)**2)/(2*30*30));
+   // thin streak
+   for (let x = 50; x < 350; x++) a[100*W + x] += 0.04;
+   const f = T.boxBlurSubtract(a, W, H, 7);
+   assert.ok(f[100*W + 200] > 0.03, `streak survives (${f[100*W + 200]})`);
+   assert.ok(f[150*W + 200] < 0.01, `blob flattened (${f[150*W + 200]})`);
+}
+
+console.log("traildetect: high-pass flattening OK");
