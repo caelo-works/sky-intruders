@@ -61,6 +61,9 @@ function runNightTestset()
       params.saveHistory = false;
       params.debugFrameOverlays = true;
       params.matchDiagnostics = true;
+      params.tleExtraGroups = [ "classfd", "last-30-days", "cosmos-2251-debris",
+                                "iridium-33-debris", "fengyun-1c-debris",
+                                "cosmos-1408-debris" ];
 
       var res = runAnalysis( files, params );
 

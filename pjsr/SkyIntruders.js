@@ -605,12 +605,43 @@ function runAnalysis( files, params )
          console.writeln( format( "   %d satellites, %s%s", tleInfo.count,
                                   tleInfo.fromCache ? "from cache" : "fresh download",
                                   tleInfo.stale ? " (STALE — network unreachable)" : "" ) );
+         var tleText = File.readTextFile( tleInfo.tlePath );
+         if ( params.tleExtraGroups && params.tleExtraGroups.length > 0 )
+         {
+            for ( var xg = 0; xg < params.tleExtraGroups.length; ++xg )
+               try
+               {
+                  var ext = SITleNet.fetchTle( params.tleExtraGroups[ xg ], configDir() + "/tle",
+                                               params.tleMaxAgeHours, params.tleBaseUrl );
+                  tleText += "\n" + File.readTextFile( ext.tlePath );
+                  console.writeln( format( "   + %s: %d satellites", params.tleExtraGroups[ xg ],
+                                           ext.count ) );
+               }
+               catch ( eg )
+               {
+                  console.warningln( "   + " + params.tleExtraGroups[ xg ] + ": " + eg.message );
+               }
+            // Dedup by NORAD id (first occurrence wins — list the primary
+            // group first).
+            var parsed = SISatMatch.parseTles( tleText );
+            var seenIds = {};
+            var rebuilt = [];
+            for ( var pt = 0; pt < parsed.length; ++pt )
+               if ( !seenIds[ parsed[ pt ].noradId ] )
+               {
+                  seenIds[ parsed[ pt ].noradId ] = true;
+                  rebuilt.push( parsed[ pt ].name + "\n" + parsed[ pt ].line1 + "\n" + parsed[ pt ].line2 );
+               }
+            tleText = rebuilt.join( "\n" );
+            tleInfo.count = rebuilt.length;
+            console.writeln( format( "   = %d satellites after merge/dedup", rebuilt.length ) );
+         }
          var fovOverride = ( set != null ) ? set.refMeta.wcs.fov() : null;
          var req = buildMatchRequest( frames, observer, params, fovOverride );
          if ( req.frames.length > 0 )
          {
             console.writeln( "Cross-matching " + req.frames.length + " frame window(s)…" );
-            matchResponse = SISatMatch.match( req, File.readTextFile( tleInfo.tlePath ) );
+            matchResponse = SISatMatch.match( req, tleText );
          }
       }
       catch ( e )
@@ -761,6 +792,31 @@ function runAnalysis( files, params )
       return "xx";
    }
 
+   // CelesTrak SATCAT OWNER codes -> ISO flag codes (vendored circle-flags).
+   var OWNER_FLAG = {
+      US: "us", PRC: "cn", CIS: "ru", UK: "gb", FR: "fr", GER: "de",
+      JPN: "jp", IND: "in", ESA: "eu", EUTE: "eu", EUME: "eu", EUSP: "eu",
+      IT: "it", CA: "ca", AUS: "au", BRAZ: "br", ISRA: "il", SKOR: "kr",
+      TURK: "tr", ARGN: "ar", SAFR: "za", SPN: "es", NETH: "nl", SWED: "se",
+      NOR: "no", SWTZ: "ch", POL: "pl", DEN: "dk", SING: "sg", THAI: "th",
+      INDO: "id", MEX: "mx", UKR: "ua", KAZ: "kz", SAUD: "sa", UAE: "ae",
+      LUXE: "lu", SES: "lu", O3B: "lu", GLOB: "us", IRID: "us", ORB: "us"
+   };
+
+   function loadSatcatOwners()
+   {
+      // NORAD id -> OWNER map from the (cached) SATCAT; empty on failure —
+      // the name heuristic then covers the flags.
+      try
+      {
+         var info = SITleNet.fetchSatcat( configDir() + "/tle", 24*7 );
+         if ( info != null )
+            return SITleNet.parseSatcatOwners( File.readTextFile( info.path ) );
+      }
+      catch ( e ) {}
+      return {};
+   }
+
    function flagAssetsDir()
    {
       try
@@ -790,6 +846,7 @@ function runAnalysis( files, params )
    };
    var langLabels = FALLBACK_LABEL[ params.lang ] || FALLBACK_LABEL.en;
    var labeledTrails = [];
+   var satcatOwners = loadSatcatOwners();
 
    var cleanFrames = 0, totalExposureSec = 0;
    var predicted = [];
@@ -830,7 +887,8 @@ function runAnalysis( files, params )
                labeledTrails.push( { frameIndex: i,
                                      x1: tr0.x1, y1: tr0.y1, x2: tr0.x2, y2: tr0.y2,
                                      color: TRAIL_STYLE.satellite,
-                                     flag: satCountryCode( crossings[ c ].name ),
+                                     flag: OWNER_FLAG[ satcatOwners[ crossings[ c ].noradId ] ] ||
+                                           satCountryCode( crossings[ c ].name ),
                                      label: ( crossings[ c ].name || ( "NORAD " + crossings[ c ].noradId ) ) +
                                             ( crossings[ c ].matchConfidence === "medium" ? " ?" : "" ) +
                                             ( crossings[ c ].entryUtc

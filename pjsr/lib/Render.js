@@ -327,7 +327,7 @@ var SIRender = ( function()
       var bmp = new Bitmap( baseBitmap );
       var longSide = Math.max( bmp.width, bmp.height );
       var lw = ( opts.lineWidth > 0 ) ? opts.lineWidth : Math.max( 2, Math.round( longSide/1300 ) );
-      var fontSize = ( opts.fontSize > 0 ) ? opts.fontSize : Math.max( 12, Math.round( longSide/80 ) );
+      var fontSize = ( opts.fontSize > 0 ) ? opts.fontSize : Math.max( 12, Math.round( longSide/114 ) );
       var halo = hexToArgb( "#000000", 0xb8 );
 
       // Country flags (circle-flags SVGs) rendered at text height, cached

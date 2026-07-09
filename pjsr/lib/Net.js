@@ -170,8 +170,93 @@ var SITleNet = ( function()
       throw new Error( "fetch-tle: no source reachable and no cache available: " + lastError );
    }
 
+   // SATCAT sources — the catalog CSV whose OWNER field maps every NORAD id
+   // to its operating country/organization.
+   var SATCAT_SOURCES = [
+      "https://celestrak.org/pub/satcat.csv",
+      "https://raw.githubusercontent.com/caelo-works/tle-mirror/main/tle/satcat.csv"
+   ];
+
+   /*
+    * fetchSatcat( cacheDir, maxAgeHours )
+    * -> { path, fromCache, stale? } or null when unreachable and uncached.
+    * Same cache/two-pass/stale discipline as fetchTle; never throws (country
+    * chips are decoration, a failure must not abort an analysis).
+    */
+   function fetchSatcat( cacheDir, maxAgeHours )
+   {
+      try
+      {
+         var path = cacheDir + "/satcat.csv";
+         var metaPath = cacheDir + "/satcat.meta.json";
+         var meta = readMeta( metaPath );
+         if ( meta != null && File.exists( path ) )
+         {
+            var ageHours = ( Date.now() - Date.parse( meta.fetchedUtc ) ) / 3600000;
+            if ( isFinite( ageHours ) && ageHours >= 0 && ageHours <= maxAgeHours )
+               return { path: path, fromCache: true };
+         }
+         for ( var pass = 0; pass < 2; ++pass )
+         {
+            for ( var i = 0; i < SATCAT_SOURCES.length; ++i )
+            {
+               var r = httpGet( SATCAT_SOURCES[ i ], pass == 0 ? 15 : 30 );
+               if ( r.ok && ( r.code == 0 || r.code == 200 ) &&
+                    r.text.indexOf( "NORAD_CAT_ID" ) >= 0 )
+               {
+                  if ( !File.directoryExists( cacheDir ) )
+                     File.createDirectory( cacheDir, true );
+                  File.writeTextFile( path, r.text );
+                  File.writeTextFile( metaPath, JSON.stringify(
+                     { fetchedUtc: ( new Date ).toISOString(),
+                       sourceUrl: SATCAT_SOURCES[ i ] }, null, 2 ) );
+                  return { path: path, fromCache: false };
+               }
+            }
+            if ( pass == 0 )
+               pause( 1500 );
+         }
+         if ( meta != null && File.exists( path ) )
+            return { path: path, fromCache: true, stale: true };
+      }
+      catch ( e ) {}
+      return null;
+   }
+
+   function parseSatcatOwners( csvText )
+   {
+      // NORAD id -> OWNER code map from the SATCAT CSV. Pure string work:
+      // locate the two columns from the header, split the rows (the fields
+      // used never contain quoted commas).
+      var out = {};
+      var lines = String( csvText ).split( "\n" );
+      if ( lines.length < 2 )
+         return out;
+      var header = lines[ 0 ].replace( /\r$/, "" ).split( "," );
+      var idCol = -1, ownerCol = -1;
+      for ( var i = 0; i < header.length; ++i )
+      {
+         if ( header[ i ] == "NORAD_CAT_ID" ) idCol = i;
+         if ( header[ i ] == "OWNER" ) ownerCol = i;
+      }
+      if ( idCol < 0 || ownerCol < 0 )
+         return out;
+      for ( var l = 1; l < lines.length; ++l )
+      {
+         var f = lines[ l ].split( "," );
+         if ( f.length <= Math.max( idCol, ownerCol ) )
+            continue;
+         var id = parseInt( f[ idCol ], 10 );
+         if ( isFinite( id ) && f[ ownerCol ] )
+            out[ id ] = f[ ownerCol ].replace( /\r$/, "" ).trim();
+      }
+      return out;
+   }
+
    return {
       fetchTle: fetchTle,
+      fetchSatcat: fetchSatcat,
+      parseSatcatOwners: parseSatcatOwners,
       countTlePairs: countTlePairs,
       DEFAULT_BASE: DEFAULT_BASE,
       DEFAULT_SOURCES: DEFAULT_SOURCES
