@@ -226,3 +226,72 @@ console.log("satmatch: 7 propagation steps within tolerance; match replay == Go 
    console.log("satmatch: circular FOV + orientation fit (rot " +
       fit.rotationDeg.toFixed(2) + ", parity " + fit.parity + ") OK");
 }
+
+// ---------------------------------------------------------------------------
+// Loose (no-plate-solve) assignment: an along-track offset of 0.6 degree —
+// a satellite running late on its ephemeris — must still match when the
+// orientation agrees; a wrong orientation or a cross-track offset must not.
+
+{
+   const mk = (raOff, decOff, paRotDeg) => {
+      // crossing path along +RA at dec 30, optionally rotated
+      const p1 = { raDeg: 100 - 0.8, decDeg: 30 };
+      const p2 = { raDeg: 100 + 0.8, decDeg: 30 };
+      const rot = (p, ang, c) => {
+         const t = ang*Math.PI/180;
+         const dx = (p.raDeg - c.raDeg)*Math.cos(30*Math.PI/180), dy = p.decDeg - c.decDeg;
+         return { raDeg: c.raDeg + (dx*Math.cos(t) - dy*Math.sin(t))/Math.cos(30*Math.PI/180),
+                  decDeg: c.decDeg + dx*Math.sin(t) + dy*Math.cos(t) };
+      };
+      const c = { raDeg: 100, decDeg: 30 };
+      return { p1: rot({ raDeg: p1.raDeg + raOff, decDeg: p1.decDeg + decOff }, paRotDeg, c),
+               p2: rot({ raDeg: p2.raDeg + raOff, decDeg: p2.decDeg + decOff }, paRotDeg, c) };
+   };
+   const crossing = (path, id) => ({ noradId: id, name: "SAT-" + id, sunlit: true,
+                                     path, matchedTrailIndex: null });
+
+   // trail = the crossing shifted 0.6 deg ALONG track (in RA)
+   const alongTrail = { index: 0, p1: { raDeg: 100 - 0.8 + 0.6/Math.cos(30*Math.PI/180), decDeg: 30 },
+                        p2: { raDeg: 100 + 0.8 + 0.6/Math.cos(30*Math.PI/180), decDeg: 30 } };
+   let crs = [crossing(mk(0, 0, 0), 1)];
+   SISatMatch.core.assignTrailsLoose(crs, { trails: [alongTrail] }, {});
+   assert.strictEqual(crs[0].matchedTrailIndex, 0, "along-track offset matches");
+
+   // cross-track 1.0 deg: beyond even the lone-pair rescue gate -> no match
+   const crossTrail = { index: 0, p1: { raDeg: 100 - 0.8, decDeg: 31.0 },
+                        p2: { raDeg: 100 + 0.8, decDeg: 31.0 } };
+   crs = [crossing(mk(0, 0, 0), 2)];
+   SISatMatch.core.assignTrailsLoose(crs, { trails: [crossTrail] }, {});
+   assert.strictEqual(crs[0].matchedTrailIndex, null, "large cross-track offset rejected");
+
+   // wrong orientation (30 deg): must NOT match
+   crs = [crossing(mk(0, 0, 30), 3)];
+   SISatMatch.core.assignTrailsLoose(crs, { trails: [alongTrail] }, {});
+   assert.strictEqual(crs[0].matchedTrailIndex, null, "wrong orientation rejected");
+
+   console.log("satmatch: loose along-track assignment OK");
+}
+
+// Rescue pass: a lone sunlit crossing 0.6 deg SIDEWAYS of a lone trail with
+// near-perfect orientation is matched at medium confidence; ambiguity
+// (two crossings) blocks the rescue.
+
+{
+   const path = { p1: { raDeg: 99.2, decDeg: 30 }, p2: { raDeg: 100.8, decDeg: 30 } };
+   const trail = { index: 0, p1: { raDeg: 99.2, decDeg: 30.6 }, p2: { raDeg: 100.8, decDeg: 30.6 } };
+   let crs = [{ noradId: 9, name: "LONE", sunlit: true, path, matchedTrailIndex: null }];
+   SISatMatch.core.assignTrailsLoose(crs, { trails: [trail] }, {});
+   assert.strictEqual(crs[0].matchedTrailIndex, 0, "lone sideways crossing rescued");
+   assert.strictEqual(crs[0].matchConfidence, "medium", "rescue is medium confidence");
+
+   // second crossing ALSO within the rescue gates (cross 0.65 deg from the
+   // trail) — a genuine ambiguity, so neither may be named
+   const path2 = { p1: { raDeg: 99.2, decDeg: 29.95 }, p2: { raDeg: 100.8, decDeg: 29.95 } };
+   crs = [{ noradId: 9, name: "A", sunlit: true, path, matchedTrailIndex: null },
+          { noradId: 10, name: "B", sunlit: true, path: path2, matchedTrailIndex: null }];
+   SISatMatch.core.assignTrailsLoose(crs, { trails: [trail] }, {});
+   assert.strictEqual(crs[0].matchedTrailIndex, null, "ambiguous rescue blocked (A)");
+   assert.strictEqual(crs[1].matchedTrailIndex, null, "ambiguous rescue blocked (B)");
+
+   console.log("satmatch: medium-confidence rescue OK");
+}

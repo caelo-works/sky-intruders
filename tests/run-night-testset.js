@@ -60,6 +60,7 @@ function runNightTestset()
       params.lang = "fr";
       params.saveHistory = false;
       params.debugFrameOverlays = true;
+      params.matchDiagnostics = true;
 
       var res = runAnalysis( files, params );
 

@@ -834,6 +834,127 @@ var SISatMatch = ( function()
       return best;
    }
 
+   function assignTrailsLoose( crossings, fr, opt )
+   {
+      // Trail assignment for fields WITHOUT a plate solution, tuned to the
+      // real error budget of a TLE prediction: the dominant error is
+      // ALONG-track (the satellite runs early or late on its ephemeris —
+      // easily half a degree a few days from epoch), while the cross-track
+      // error stays small. So the midpoint separation is decomposed against
+      // the crossing's direction: tight across (crossTolDeg), generous
+      // along (alongTolDeg). Orientation still must agree. One-to-one by
+      // score, like the strict assigner.
+      var o = opt || {};
+      var crossTol = ( o.crossTolDeg > 0 ) ? o.crossTolDeg : 0.3;
+      var alongTol = ( o.alongTolDeg > 0 ) ? o.alongTolDeg : 1.5;
+      var angleTol = ( o.angleTolDeg > 0 ) ? o.angleTolDeg : 12;
+
+      var trails = fr.trails || [];
+      var cands = [];
+      for ( var ci = 0; ci < crossings.length; ++ci )
+      {
+         var c = crossings[ci];
+         if ( !c.sunlit )
+            continue;
+         var cMid = midpointRaDec( c.path.p1, c.path.p2 );
+         var cPA = positionAngleDeg( c.path.p1, c.path.p2 );
+         var cLen = angularSepDeg( c.path.p1, c.path.p2 );
+         for ( var ti = 0; ti < trails.length; ++ti )
+         {
+            var tr = trails[ti];
+            if ( !tr.p1 || !tr.p2 )
+               continue;
+            var tMid = midpointRaDec( tr.p1, tr.p2 );
+            var sep = angularSepDeg( cMid, tMid );
+            var ad = orientationDiffDeg( cPA, positionAngleDeg( tr.p1, tr.p2 ) );
+            if ( ad > angleTol )
+               continue;
+            // Decompose the midpoint offset against the crossing direction.
+            var bearing = positionAngleDeg( cMid, tMid );
+            var rel = ( bearing - cPA )*DEG2RAD;
+            var along = Math.abs( sep*Math.cos( rel ) );
+            var cross = Math.abs( sep*Math.sin( rel ) );
+            if ( cross > crossTol || along > alongTol )
+               continue;
+            var tLen = angularSepDeg( tr.p1, tr.p2 );
+            var mx = Math.max( cLen, tLen );
+            var lenScore = ( mx > 0 ) ? 1 - Math.min( 1, Math.abs( cLen - tLen )/mx ) : 0;
+            var score = 0.5*( 1 - cross/crossTol ) +
+                        0.3*( 1 - ad/angleTol ) +
+                        0.1*( 1 - along/alongTol ) +
+                        0.1*lenScore;
+            cands.push( { ci: ci, ti: ti, score: score, sep: sep, ad: ad,
+                          cross: cross, along: along } );
+         }
+      }
+      cands.sort( function( a, b ) { return b.score - a.score; } );
+
+      var usedCross = {};
+      var usedTrail = {};
+      for ( var k = 0; k < cands.length; ++k )
+      {
+         var cd = cands[k];
+         if ( usedCross[cd.ci] || usedTrail[cd.ti] )
+            continue;
+         usedCross[cd.ci] = true;
+         usedTrail[cd.ti] = true;
+         crossings[cd.ci].matchedTrailIndex = trails[cd.ti].index;
+         crossings[cd.ci].matchScore = cd.score;
+         crossings[cd.ci].sepDeg = cd.sep;
+         crossings[cd.ci].angleDiffDeg = cd.ad;
+         crossings[cd.ci].matchConfidence = "high";
+      }
+
+      // Rescue pass: maneuvering constellations fly with stale published
+      // elements — the prediction lands up to ~0.8 degree SIDEWAYS of the
+      // observed streak while the orientation stays right. When exactly one
+      // unmatched sunlit crossing and exactly one unmatched trail point at
+      // each other (near-perfect angle, nothing else in the window), that
+      // is an identification a human would make — recorded at reduced
+      // confidence.
+      var rescue = [];
+      for ( var ci2 = 0; ci2 < crossings.length; ++ci2 )
+      {
+         var c2 = crossings[ci2];
+         if ( !c2.sunlit || usedCross[ci2] )
+            continue;
+         var cMid2 = midpointRaDec( c2.path.p1, c2.path.p2 );
+         var cPA2 = positionAngleDeg( c2.path.p1, c2.path.p2 );
+         for ( var ti2 = 0; ti2 < trails.length; ++ti2 )
+         {
+            var tr2 = trails[ti2];
+            if ( usedTrail[ti2] || !tr2.p1 || !tr2.p2 )
+               continue;
+            var ad2 = orientationDiffDeg( cPA2, positionAngleDeg( tr2.p1, tr2.p2 ) );
+            if ( ad2 > 6 )
+               continue;
+            var tMid2 = midpointRaDec( tr2.p1, tr2.p2 );
+            var sep2 = angularSepDeg( cMid2, tMid2 );
+            var rel2 = ( positionAngleDeg( cMid2, tMid2 ) - cPA2 )*DEG2RAD;
+            if ( Math.abs( sep2*Math.sin( rel2 ) ) > 0.8 ||
+                 Math.abs( sep2*Math.cos( rel2 ) ) > alongTol )
+               continue;
+            rescue.push( { ci: ci2, ti: ti2, sep: sep2, ad: ad2 } );
+         }
+      }
+      // keep only pairs where BOTH sides are unambiguous
+      for ( var r = 0; r < rescue.length; ++r )
+      {
+         var unique = true;
+         for ( var r2 = 0; r2 < rescue.length; ++r2 )
+            if ( r2 !== r && ( rescue[r2].ci === rescue[r].ci || rescue[r2].ti === rescue[r].ti ) )
+               unique = false;
+         if ( !unique )
+            continue;
+         var rc = rescue[r];
+         crossings[rc.ci].matchedTrailIndex = trails[rc.ti].index;
+         crossings[rc.ci].matchScore = 0.5;
+         crossings[rc.ci].sepDeg = rc.sep;
+         crossings[rc.ci].angleDiffDeg = rc.ad;
+         crossings[rc.ci].matchConfidence = "medium";
+      }
+   }
+
    function matchFrame( fr, obs, opt, sats )
    {
       var startMs = parseRfc3339Ms( fr.startUtc );
@@ -900,6 +1021,7 @@ var SISatMatch = ( function()
       useSgp4: function( lib ) { sgp4Lib = lib; },
       core: {
          assignTrails: assignTrails,
+         assignTrailsLoose: assignTrailsLoose,
          normalizedOptions: normalizedOptions,
          tanForOrientation: tanForOrientation,
          tanProject: tanProject,

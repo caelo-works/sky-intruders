@@ -186,6 +186,8 @@ var SIReport = ( function()
       if ( e.klass == "satellite" )
       {
          what = e.name;
+         if ( e.confidence == "medium" )
+            what += " [" + ( T.confidence.medium || "probable" ) + "]";
          var extra = [];
          if ( e.elevationDeg != null )
             extra.push( Math.round( e.elevationDeg ) + "°" );

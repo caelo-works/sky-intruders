@@ -669,9 +669,11 @@ function runAnalysis( files, params )
             console.writeln( format( "Field orientation fitted from %d trail(s): " +
                                      "rotation %.1f°, %s", fit.pairs.length, fit.rotationDeg,
                                      fit.parity < 0 ? "mirrored" : "direct" ) );
-            var opt = SISatMatch.core.normalizedOptions( {
-               matchMaxSepDeg: Math.max( 0.35, params.matchMaxSepDeg || 0 ),
-               matchMaxAngleDiffDeg: params.matchMaxAngleDiffDeg } );
+            // TLE predictions err mostly ALONG the track (early/late on
+            // the ephemeris); the loose assigner is tight across, generous
+            // along.
+            var opt = { crossTolDeg: 0.3, alongTolDeg: 1.5,
+                        angleTolDeg: params.matchMaxAngleDiffDeg || 12 };
             for ( var i = 0; i < frames.length; ++i )
             {
                var fr = frames[ i ];
@@ -686,8 +688,53 @@ function runAnalysis( files, params )
                for ( var t3 = 0; t3 < fr.trails.length; ++t3 )
                   if ( fr.trails[ t3 ].planeGroup == null )
                      assignable.push( fr.trails[ t3 ] );
-               SISatMatch.core.assignTrails( crossingsByFrame[ fr.meta.id ] || [],
-                                             { trails: assignable }, opt );
+               SISatMatch.core.assignTrailsLoose( crossingsByFrame[ fr.meta.id ] || [],
+                                                  { trails: assignable }, opt );
+
+               // Match diagnostics: for every trail, the nearest sunlit
+               // crossing and how far it is from the tolerances — the data
+               // needed to answer "why is this one unnamed?".
+               if ( params.matchDiagnostics )
+               {
+                  fitInfo.diag = fitInfo.diag || [];
+                  var crs = crossingsByFrame[ fr.meta.id ] || [];
+                  for ( var t4 = 0; t4 < assignable.length; ++t4 )
+                  {
+                     var trl = assignable[ t4 ];
+                     if ( !trl.p1 || !trl.p2 )
+                        continue;
+                     var tMid = SISatMatch.core.midpointRaDec( trl.p1, trl.p2 );
+                     var tPA = SISatMatch.core.positionAngleDeg( trl.p1, trl.p2 );
+                     var tLen = SISatMatch.core.angularSepDeg( trl.p1, trl.p2 );
+                     var best = null;
+                     for ( var c5 = 0; c5 < crs.length; ++c5 )
+                     {
+                        if ( !crs[ c5 ].sunlit )
+                           continue;
+                        var cMid = SISatMatch.core.midpointRaDec( crs[ c5 ].path.p1, crs[ c5 ].path.p2 );
+                        var sep = SISatMatch.core.angularSepDeg( tMid, cMid );
+                        var ad = SISatMatch.core.orientationDiffDeg(
+                           tPA, SISatMatch.core.positionAngleDeg( crs[ c5 ].path.p1, crs[ c5 ].path.p2 ) );
+                        var cLen = SISatMatch.core.angularSepDeg( crs[ c5 ].path.p1, crs[ c5 ].path.p2 );
+                        if ( best == null || sep < best.sepDeg )
+                        {
+                           var cPA5 = SISatMatch.core.positionAngleDeg( crs[ c5 ].path.p1, crs[ c5 ].path.p2 );
+                           var rel5 = ( SISatMatch.core.positionAngleDeg( cMid, tMid ) - cPA5 )*Math.PI/180;
+                           best = { name: crs[ c5 ].name || String( crs[ c5 ].noradId ),
+                                    sepDeg: Math.round( sep*1000 )/1000,
+                                    angleDiffDeg: Math.round( ad*10 )/10,
+                                    alongDeg: Math.round( Math.abs( sep*Math.cos( rel5 ) )*1000 )/1000,
+                                    crossDeg: Math.round( Math.abs( sep*Math.sin( rel5 ) )*1000 )/1000,
+                                    lenDeg: Math.round( cLen*100 )/100 };
+                        }
+                     }
+                     fitInfo.diag.push( { frame: fr.meta.id.substring( 0, 19 ),
+                                          trail: trl.index,
+                                          trailPA: Math.round( tPA*10 )/10,
+                                          trailLenDeg: Math.round( tLen*100 )/100,
+                                          bestCandidate: best } );
+                  }
+               }
             }
          }
          else
@@ -742,6 +789,7 @@ function runAnalysis( files, params )
                            klass: "satellite",
                            name: crossings[ c ].name,
                            noradId: crossings[ c ].noradId,
+                           confidence: crossings[ c ].matchConfidence || "high",
                            elevationDeg: crossings[ c ].elevationDeg,
                            angularRateDegPerSec: crossings[ c ].angularRateDegPerSec,
                            frameId: f.meta.id } );
@@ -754,6 +802,7 @@ function runAnalysis( files, params )
                                      x1: tr0.x1, y1: tr0.y1, x2: tr0.x2, y2: tr0.y2,
                                      color: TRAIL_STYLE.satellite,
                                      label: ( crossings[ c ].name || ( "NORAD " + crossings[ c ].noradId ) ) +
+                                            ( crossings[ c ].matchConfidence === "medium" ? " ?" : "" ) +
                                             ( crossings[ c ].entryUtc
                                                ? " · " + String( crossings[ c ].entryUtc ).substring( 11, 16 ) + " UT"
                                                : "" ) } );
