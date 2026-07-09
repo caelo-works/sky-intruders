@@ -92,7 +92,7 @@ function analyzeSet( files )
       var arrays = [];
       for ( var a0 = 0; a0 < idx.length; ++a0 )
          arrays.push( binnedList[ idx[ a0 ] ].data );
-      var minCover = Math.max( 3, arrays.length - 1 );
+      var minCover = Math.max( 3, Math.ceil( arrays.length*0.6 ) );
       var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
       for ( var a1 = 0; a1 < idx.length; ++a1 )
       {

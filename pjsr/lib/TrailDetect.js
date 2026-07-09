@@ -362,9 +362,10 @@ var SITrailCore = ( function()
    {
       // The combined rule: reject only what is holey AND faint.
       var e = lineEmptiness( data, width, height, seg );
-      // Bar at 1.35 sigma: clamped noise occupies at ~1.0-1.15 sigma; the
-      // dashes of a faint flasher sit at ~1.5+ and must survive.
-      return e.zeroFrac > 0.38 && e.meanNonZero < 1.35*sigma;
+      // Bar at 1.25 sigma: clamped noise occupies at ~1.0-1.15 sigma; the
+      // dashes of a faint flasher sit at ~1.3+ and must survive (a real
+      // trail was measured at 1.32 under a rich model).
+      return e.zeroFrac > 0.38 && e.meanNonZero < 1.25*sigma;
    }
 
    function lineEdgeAffinity( mask, width, height, seg, dist )
@@ -722,8 +723,9 @@ var SITrailCore = ( function()
       faintChunks: 6,       // uniformity segments along the accepted run
       faintChunkMinFrac: 0.75,
       faintFlattenRadius: 0, // high-pass box radius (0 = caller already flattened)
-      minLengthFrac: 0.15,  // shared with the bright pass
-      maxPeekCandidates: 30
+      minLengthFrac: 0.10,  // corner-clipping trails are short; the
+                            // significance floor already scales with length
+      maxPeekCandidates: 60 // diffuse-residual zones burn candidates fast
    };
 
    function boxBlurSubtract( data, width, height, radius )
@@ -1192,8 +1194,12 @@ var SITrailCore = ( function()
             var conc = corridorConcentration( z, width, height, runSeg, muZ );
             if ( conc < 0.45 )
             {
+               // Diffuse residual structure (nebula mottle) peaks over a
+               // WIDE accumulator region — a narrow suppression lets the
+               // same zone eat the whole candidate budget while a real
+               // trail waits beyond it.
                tr( peak, "not-thin", Math.round( conc*100 )/100 );
-               suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+               suppressPeak( hough, peak.thetaDeg, peak.rho, 3, 25 );
                continue;
             }
 

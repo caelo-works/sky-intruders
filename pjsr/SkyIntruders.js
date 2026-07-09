@@ -519,7 +519,12 @@ function analyzeNightSet( files, params )
       var arrays = [];
       for ( var a0 = 0; a0 < idx.length; ++a0 )
          arrays.push( entries[ idx[ a0 ] ].binned.data );
-      var minCover = Math.max( 3, idx.length - 1 );
+      // 60% of the group: N-1 forced the strict intersection of every
+      // pointing — on a multi-night session the one-night border zones
+      // (where trails live too) were masked out entirely. At 60% the
+      // population seams still involve enough frames for a solid median,
+      // and the per-frame ringing masks handle the frame edges.
+      var minCover = Math.max( 3, Math.ceil( idx.length*0.6 ) );
       SIProf.start( "model: median + normalize" );
       var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
       for ( var a1 = 0; a1 < idx.length; ++a1 )
