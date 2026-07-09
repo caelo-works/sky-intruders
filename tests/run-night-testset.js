@@ -103,6 +103,8 @@ function runNightTestset()
          out.trailsByFrame[ fr.meta.id ] = lst;
       }
       out.reportText = res.report.markdown;
+      out.timings = res.timings;
+      out.totalMs = res.totalMs;
       out.movers = res.night.movers.length;
    }
    catch ( e )

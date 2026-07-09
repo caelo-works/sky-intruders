@@ -518,18 +518,22 @@ var SITrailCore = ( function()
          }
          if ( m < ( ( minCover >= 3 ) ? minCover : 3 ) )
             continue;
-         // insertion sort — m is at most the frame count (tiny)
-         for ( var a2 = 1; a2 < m; ++a2 )
-         {
-            var x2 = v[a2];
-            var b = a2 - 1;
-            while ( b >= 0 && v[b] > x2 )
+         if ( m > 12 )
+            // big stacks: native typed-array sort — insertion is O(m^2) per
+            // pixel and turns a 124-sub session's model into minutes
+            v.subarray( 0, m ).sort();
+         else
+            for ( var a2 = 1; a2 < m; ++a2 )
             {
-               v[b + 1] = v[b];
-               --b;
+               var x2 = v[a2];
+               var b = a2 - 1;
+               while ( b >= 0 && v[b] > x2 )
+               {
+                  v[b + 1] = v[b];
+                  --b;
+               }
+               v[b + 1] = x2;
             }
-            v[b + 1] = x2;
-         }
          var mid = m >> 1;
          model[i] = ( m % 2 !== 0 ) ? v[mid] : ( v[mid - 1] + v[mid] )/2;
          valid[i] = 1;
@@ -607,17 +611,22 @@ var SITrailCore = ( function()
 
    function applyLinear( data, a, b, eps )
    {
-      // a*data + b on covered pixels; empty (border) pixels stay empty.
+      // a*data + b on covered pixels IN PLACE (returns the same array —
+      // duplicating every binned frame costs half a gigabyte on a
+      // hundred-sub session); empty (border) pixels stay empty.
       if ( !( eps > 0 ) )
          eps = 1e-6;
-      var out = new Float32Array( data.length );
       for ( var i = 0; i < data.length; ++i )
+      {
          if ( data[i] > eps )
          {
             var v = a*data[i] + b;
-            out[i] = ( v > eps ) ? v : eps*2; // keep covered pixels nonzero
+            data[i] = ( v > eps ) ? v : eps*2; // keep covered pixels nonzero
          }
-      return out;
+         else
+            data[i] = 0;
+      }
+      return data;
    }
 
    function erodeMask( mask, width, height, radius )
@@ -1084,13 +1093,27 @@ var SITrailCore = ( function()
       var lengthTable = lineLengthTable( width, height, 180,
                                          2*Math.ceil( diag ) + 1, Math.ceil( diag ) );
 
+      var profF = ( params && params.profile ) ? params.profile : null;
       var trails = [];
+      // The raw weighted accumulator is built ONCE; each accepted trail
+      // only SUBTRACTS its erased pixels' contributions (a corridor is a
+      // few thousand pixels — recomputing all ~300k contributing pixels
+      // per iteration dominated the whole detection cost).
+      var rawHough = null;
       for ( var iter = 0; iter < p.faintMaxTrails; ++iter )
       {
-         var hough = smoothRhoRows( houghWeighted( z, width, height, p.faintZMin ), p.faintSmooth );
+         var tH = Date.now();
+         if ( rawHough === null )
+            rawHough = houghWeighted( z, width, height, p.faintZMin );
+         var hough = smoothRhoRows( rawHough, p.faintSmooth );
          // Peaks are proposed by SIGNIFICANCE, not raw sum (see
          // normalizeToSignificance) — stage 1 reads the peak value directly.
          normalizeToSignificance( hough, lengthTable, p.faintSmooth, mu1, sigma1, minLen );
+         if ( profF )
+         {
+            profF.faintHoughMs = ( profF.faintHoughMs || 0 ) + ( Date.now() - tH );
+            profF.faintIters = ( profF.faintIters || 0 ) + 1;
+         }
          var accepted = null;
          for ( var cand = 0; cand < p.maxPeekCandidates; ++cand )
          {
@@ -1113,7 +1136,9 @@ var SITrailCore = ( function()
             }
 
             // Stage 2: sub-degree refinement must concentrate the flux.
+            var tR = Date.now();
             var refined = refineLine( z, width, height, peak.thetaDeg, peak.rho, muZ, sigmaZ );
+            if ( profF ) profF.faintRefineMs = ( profF.faintRefineMs || 0 ) + ( Date.now() - tR );
             if ( refined === null || refined.signif < p.faintKLine ||
                  refined.length < minLen )
             {
@@ -1231,16 +1256,33 @@ var SITrailCore = ( function()
             score: Math.min( 1, accepted.signif/( 4*p.faintKLine ) )
          } );
 
-         // Erase the corridor in the z map and iterate.
+         // Erase the corridor in the z map AND update the raw accumulator
+         // incrementally (subtract exactly what those pixels contributed).
          var th = accepted.thetaDeg*Math.PI/180;
          var ct2 = Math.cos( th ), st2 = Math.sin( th );
          var halfW = ( p.faintSmooth >> 1 ) + 1;
+         var nRhoU = rawHough.nRho, offU = rawHough.rhoOffset;
+         var cosU = new Float64Array( 180 ), sinU = new Float64Array( 180 );
+         for ( var tU = 0; tU < 180; ++tU )
+         {
+            cosU[tU] = Math.cos( tU*Math.PI/180 );
+            sinU[tU] = Math.sin( tU*Math.PI/180 );
+         }
          for ( var y2 = 0; y2 < height; ++y2 )
          {
             var row2 = y2*width;
             for ( var x2 = 0; x2 < width; ++x2 )
-               if ( z[row2 + x2] > 0 && Math.abs( x2*ct2 + y2*st2 - accepted.rho ) <= halfW )
+            {
+               var vz = z[row2 + x2];
+               if ( vz > 0 && Math.abs( x2*ct2 + y2*st2 - accepted.rho ) <= halfW )
+               {
                   z[row2 + x2] = 0;
+                  if ( vz >= p.faintZMin )
+                     for ( var tU2 = 0; tU2 < 180; ++tU2 )
+                        rawHough.acc[tU2*nRhoU +
+                           ( Math.round( x2*cosU[tU2] + y2*sinU[tU2] ) + offU )] -= vz;
+               }
+            }
          }
       }
 
@@ -1501,8 +1543,11 @@ var SITrailDetect = ( function()
       // pipeline for bright streaks (precise endpoints, fill validation),
       // then the weighted-Hough pass for streaks far below the per-pixel
       // noise. Photometry still runs on the full-resolution image.
+      var prof = ( params && params.profile ) ? params.profile : null;
+      var tP = Date.now();
       var signed = SITrailCore.subtractSigned( binnedSelf.data, model, mask );
       var diff = SITrailCore.boxBlurSubtract( signed, binnedSelf.width, binnedSelf.height, 7 );
+      if ( prof ) prof.subtractMs = ( prof.subtractMs || 0 ) + ( Date.now() - tP );
       var muDiff = 0;
       for ( var d = 0; d < diff.length; ++d )
          muDiff += diff[d];
@@ -1519,16 +1564,22 @@ var SITrailDetect = ( function()
       };
       params.noiseOverride = { median: 0, sigma: sigmaDiff };
       params.mask = mask;
+      tP = Date.now();
       var core = SITrailCore.detectCore( diff, binnedSelf.width, binnedSelf.height, params, thinOnly );
+      if ( prof ) prof.brightMs = ( prof.brightMs || 0 ) + ( Date.now() - tP );
 
+      tP = Date.now();
       for ( var i = 0; i < core.trails.length; ++i )
          eraseSegmentBinned( diff, binnedSelf.width, binnedSelf.height, core.trails[i], 5 );
       processEvents();
       var faint = SITrailCore.detectFaintCore( diff, binnedSelf.width, binnedSelf.height, params );
+      if ( prof ) prof.faintMs = ( prof.faintMs || 0 ) + ( Date.now() - tP );
       for ( var f = 0; f < faint.trails.length; ++f )
          core.trails.push( faint.trails[f] );
 
+      tP = Date.now();
       var out = finishDetection( image, core, binnedSelf.binFactor );
+      if ( prof ) prof.photometryMs = ( prof.photometryMs || 0 ) + ( Date.now() - tP );
       for ( var t = 0; t < out.trails.length; ++t )
          out.trails[t].faint = !!core.trails[t].faint;
       out.stats.faintSigmaAdu = faint.sigma*65535;

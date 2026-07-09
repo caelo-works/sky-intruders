@@ -134,6 +134,54 @@ function saveParams( params )
 }
 
 // ---------------------------------------------------------------------------
+// Wall-clock profiler: named accumulators + a sorted report. Timings answer
+// "what would hurt on a 124-sub session" — measure first, optimize second.
+
+var SIProf = ( function()
+{
+   var acc = {};
+   var open = {};
+   return {
+      reset: function() { acc = {}; open = {}; },
+      start: function( name ) { open[ name ] = Date.now(); },
+      end: function( name )
+      {
+         if ( open[ name ] !== undefined )
+         {
+            acc[ name ] = ( acc[ name ] || 0 ) + ( Date.now() - open[ name ] );
+            delete open[ name ];
+         }
+      },
+      add: function( name, ms ) { acc[ name ] = ( acc[ name ] || 0 ) + ms; },
+      table: function()
+      {
+         var rows = [];
+         for ( var k in acc )
+            rows.push( { name: k, ms: acc[ k ] } );
+         rows.sort( function( a, b ) { return b.ms - a.ms; } );
+         return rows;
+      },
+      report: function( frameCount )
+      {
+         var rows = this.table();
+         var total = 0;
+         for ( var i = 0; i < rows.length; ++i )
+            if ( rows[ i ].name.charAt( 0 ) != "." ) // dotted = sub-detail
+               total += rows[ i ].ms;
+         console.writeln( "<b>Timings</b> (" + ( total/1000 ).toFixed( 1 ) + " s wall for " +
+                          frameCount + " frame(s)):" );
+         for ( var i = 0; i < rows.length; ++i )
+         {
+            var r = rows[ i ];
+            var per = ( frameCount > 0 ) ? "  (" + ( r.ms/frameCount ).toFixed( 0 ) + " ms/frame)" : "";
+            console.writeln( format( "   %6.1f s  %s%s", r.ms/1000, r.name, per ) );
+         }
+         return rows;
+      }
+   };
+} )();
+
+// ---------------------------------------------------------------------------
 // Analysis pipeline.
 
 function analyzeFrame( filePath, params )
@@ -312,6 +360,29 @@ function frameQuality( image )
    }
 }
 
+// Cheap transparency proxy on the binned frame: local maxima above
+// med + 5 MAD. Clouds crush this count; it ranks frames for ~2 ms each so
+// the expensive full-resolution FWHM only runs on the finalists.
+function countBinnedPeaks( data, width, height )
+{
+   var mm = SITrailCore.medianMAD( data, 200000 );
+   var thresh = mm.median + 5*( mm.mad > 0 ? mm.mad : 1e-6 );
+   var n = 0;
+   for ( var y = 1; y < height - 1; ++y )
+   {
+      var row = y*width;
+      for ( var x = 1; x < width - 1; ++x )
+      {
+         var v = data[row + x];
+         if ( v > thresh &&
+              v >= data[row + x - 1] && v >= data[row + x + 1] &&
+              v >= data[row - width + x] && v >= data[row + width + x] )
+            ++n;
+      }
+   }
+   return n;
+}
+
 function analyzeNightSet( files, params )
 {
    if ( files.length < 3 )
@@ -321,7 +392,9 @@ function analyzeNightSet( files, params )
    clearDirectory( regDir );
    console.writeln( format( "Registering %d frames on a common grid (StarAlignment)…",
                             files.length ) );
+   SIProf.start( "registration (StarAlignment)" );
    var reg = SIRender.registerFramesMapped( files, regDir );
+   SIProf.end( "registration (StarAlignment)" );
    if ( reg == null )
       return null;
    var okCount = 0;
@@ -345,9 +418,13 @@ function analyzeNightSet( files, params )
          console.warningln( "   not registered, skipped: " + files[ i ] );
          continue;
       }
+      SIProf.start( "pass A: open+bin registered frames" );
       var wins = ImageWindow.open( reg.paths[ i ] );
       if ( wins.length == 0 )
+      {
+         SIProf.end( "pass A: open+bin registered frames" );
          continue;
+      }
       var win = wins[ 0 ];
       for ( var k = 1; k < wins.length; ++k )
          wins[ k ].forceClose();
@@ -378,6 +455,7 @@ function analyzeNightSet( files, params )
          continue;
       }
       entries.push( { meta: meta, regPath: reg.paths[ i ], binned: b } );
+      SIProf.end( "pass A: open+bin registered frames" );
       processEvents();
    }
    if ( entries.length < 3 )
@@ -392,6 +470,7 @@ function analyzeNightSet( files, params )
    for ( var i = 0; i < entries.length; ++i )
       arrays.push( entries[ i ].binned.data );
    var minCover = Math.max( 3, entries.length - 1 );
+   SIProf.start( "model: median + normalize" );
    var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
    var normalized = [];
    for ( var i = 0; i < entries.length; ++i )
@@ -409,6 +488,7 @@ function analyzeNightSet( files, params )
    // boundary, spread a few px by the intra-night dither.
    var mask = SITrailCore.erodeMask( stack.valid, entries[ 0 ].binned.width,
                                      entries[ 0 ].binned.height, 6 );
+   SIProf.end( "model: median + normalize" );
 
    // Pass B: transient detection per frame against the model.
    var refMeta = entries[ 0 ].meta;
@@ -420,10 +500,13 @@ function analyzeNightSet( files, params )
    }
 
    var frames = [];
+   var detProfile = {};
    for ( var i = 0; i < entries.length; ++i )
    {
       var e = entries[ i ];
+      SIProf.start( "pass B: reopen frames" );
       var wins2 = ImageWindow.open( e.regPath );
+      SIProf.end( "pass B: reopen frames" );
       if ( wins2.length == 0 )
          continue;
       var win2 = wins2[ 0 ];
@@ -442,14 +525,19 @@ function analyzeNightSet( files, params )
          frameMask[ m3 ] = ( mask[ m3 ] && fv[ m3 ] ) ? 1 : 0;
 
       var diffParams = JSON.parse( JSON.stringify( params ) );
+      diffParams.profile = detProfile;
       if ( params.diffKSigma > 0 )
          diffParams.kSigma = params.diffKSigma;
       // A satellite train alone can leave 10+ parallel streaks in one sub —
       // never let a bundle exhaust the slots and mask a lone trail.
       diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
+      SIProf.start( "pass B: detection (diff)" );
       var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, frameMask );
-      e.quality = frameQuality( win2.mainView.image );
-      e.quality.skyBgAdu = e.binned.skyBg;
+      SIProf.end( "pass B: detection (diff)" );
+      SIProf.start( "pass B: frame quality (binned peaks)" );
+      e.quality = { peaks: countBinnedPeaks( e.binned.data, e.binned.width, e.binned.height ),
+                    skyBgAdu: e.binned.skyBg };
+      SIProf.end( "pass B: frame quality (binned peaks)" );
 
       var trails = [];
       for ( var t = 0; t < det.trails.length; ++t )
@@ -529,8 +617,10 @@ function analyzeNightSet( files, params )
    for ( var i = 0; i < entries.length; ++i )
       regPaths.push( entries[ i ].regPath );
 
-   // Best frame = sharpest stars, then most stars, then darkest sky —
-   // normalized against the set's medians so no indicator dominates.
+   // Best frame, two stages: rank everything by the cheap indicators
+   // (peak count = transparency, sky background), then measure the real
+   // star FWHM at full resolution on the top 3 only.
+   SIProf.start( "best-frame pick (FWHM on top 3)" );
    function medianOfKey( key )
    {
       var v = [];
@@ -539,25 +629,52 @@ function analyzeNightSet( files, params )
             v.push( entries[ i ].quality[ key ] );
       return ( v.length > 0 ) ? SITrailCore.medianOf( v ) : 0;
    }
-   var mFwhm = medianOfKey( "fwhmPx" ), mStars = medianOfKey( "starCount" ),
-       mBg = medianOfKey( "skyBgAdu" );
-   var bestIndex = 0, bestScore = Infinity;
+   var mPeaks = medianOfKey( "peaks" ), mBg = medianOfKey( "skyBgAdu" );
+   var ranked = [];
    for ( var i = 0; i < entries.length; ++i )
    {
       var q = entries[ i ].quality || {};
-      var score = ( ( q.fwhmPx > 0 && mFwhm > 0 ) ? q.fwhmPx/mFwhm : 1.5 )
-                + ( ( q.skyBgAdu > 0 && mBg > 0 ) ? 0.5*q.skyBgAdu/mBg : 0.75 )
-                - ( ( q.starCount > 0 && mStars > 0 ) ? 0.3*q.starCount/mStars : 0 );
+      ranked.push( { i: i,
+                     light: ( ( q.skyBgAdu > 0 && mBg > 0 ) ? 0.5*q.skyBgAdu/mBg : 0.75 )
+                          - ( ( q.peaks > 0 && mPeaks > 0 ) ? q.peaks/mPeaks : 0 ) } );
+   }
+   ranked.sort( function( a, b ) { return a.light - b.light; } );
+   var bestIndex = ranked[ 0 ].i, bestFwhm = 0, bestScore = Infinity;
+   for ( var r5 = 0; r5 < Math.min( 3, ranked.length ); ++r5 )
+   {
+      var cand = ranked[ r5 ].i;
+      var cw = ImageWindow.open( entries[ cand ].regPath );
+      if ( cw.length == 0 )
+         continue;
+      for ( var k6 = 1; k6 < cw.length; ++k6 )
+         cw[ k6 ].forceClose();
+      var fq = frameQuality( cw[ 0 ].mainView.image );
+      cw[ 0 ].forceClose();
+      entries[ cand ].quality.fwhmPx = fq.fwhmPx;
+      entries[ cand ].quality.starCount = fq.starCount;
+      var score = ( fq.fwhmPx > 0 ? fq.fwhmPx : 9 ) + ranked[ r5 ].light;
       if ( score < bestScore )
       {
          bestScore = score;
-         bestIndex = i;
+         bestIndex = cand;
+         bestFwhm = fq.fwhmPx;
       }
+      gc();
    }
+   SIProf.end( "best-frame pick (FWHM on top 3)" );
    var bq = entries[ bestIndex ].quality || {};
-   console.writeln( format( "Best frame for the result image: %s (FWHM %.1f px, %d stars, sky %.0f ADU)",
-                            entries[ bestIndex ].meta.id, bq.fwhmPx || 0,
-                            bq.starCount || 0, bq.skyBgAdu || 0 ) );
+   console.writeln( format( "Best frame for the result image: %s (FWHM %.1f px, %d peaks, sky %.0f ADU)",
+                            entries[ bestIndex ].meta.id, bestFwhm,
+                            bq.peaks || 0, bq.skyBgAdu || 0 ) );
+
+   // Detector-internal split (dotted names = detail of "pass B: detection").
+   if ( detProfile.subtractMs ) SIProf.add( ".detect: subtract+flatten", detProfile.subtractMs );
+   if ( detProfile.brightMs ) SIProf.add( ".detect: bright pass", detProfile.brightMs );
+   if ( detProfile.faintMs ) SIProf.add( ".detect: faint pass", detProfile.faintMs );
+   if ( detProfile.faintHoughMs ) SIProf.add( ".detect: faint hough+normalize", detProfile.faintHoughMs );
+   if ( detProfile.faintRefineMs ) SIProf.add( ".detect: faint refine", detProfile.faintRefineMs );
+   if ( detProfile.photometryMs ) SIProf.add( ".detect: photometry", detProfile.photometryMs );
+   if ( detProfile.faintIters ) SIProf.add( ".detect: faint iterations (count)", detProfile.faintIters );
 
    return { frames: frames, refMeta: refMeta, refW: refW, refH: refH,
             regPaths: regPaths, regDir: regDir, bestIndex: bestIndex };
@@ -620,6 +737,8 @@ function nightLabel( frames )
 
 function runAnalysis( files, params )
 {
+   SIProf.reset();
+   var tRun = Date.now();
    // Registered-difference analysis first (3+ frames of one field); fall
    // back to independent per-frame detection when the set cannot register.
    var set = null;
@@ -679,6 +798,7 @@ function runAnalysis( files, params )
       try
       {
          console.writeln( "Fetching TLE catalog (group: " + params.tleGroup + ")…" );
+         SIProf.start( "TLE fetch (+extras)" );
          tleInfo = SITleNet.fetchTle( params.tleGroup, configDir() + "/tle",
                                       params.tleMaxAgeHours, params.tleBaseUrl );
          console.writeln( format( "   %d satellites, %s%s", tleInfo.count,
@@ -715,12 +835,15 @@ function runAnalysis( files, params )
             tleInfo.count = rebuilt.length;
             console.writeln( format( "   = %d satellites after merge/dedup", rebuilt.length ) );
          }
+         SIProf.end( "TLE fetch (+extras)" );
          var fovOverride = ( set != null ) ? set.refMeta.wcs.fov() : null;
          var req = buildMatchRequest( frames, observer, params, fovOverride );
          if ( req.frames.length > 0 )
          {
             console.writeln( "Cross-matching " + req.frames.length + " frame window(s)…" );
+            SIProf.start( "SGP4 cross-match" );
             matchResponse = SISatMatch.match( req, tleText );
+            SIProf.end( "SGP4 cross-match" );
          }
       }
       catch ( e )
@@ -760,7 +883,9 @@ function runAnalysis( files, params )
          var field = { raDeg: refFov.raDeg, decDeg: refFov.decDeg,
                        pixScaleArcsec: set.refMeta.pixScaleArcsec,
                        width: set.refW, height: set.refH };
+         SIProf.start( "orientation fit" );
          var fit = SISatMatch.fitOrientation( fitFrames, field, {} );
+         SIProf.end( "orientation fit" );
          if ( fit != null && fit.pairs.length < 3 )
          {
             // With one rotation, one parity and a center correction to play
@@ -954,7 +1079,9 @@ function runAnalysis( files, params )
    };
    var langLabels = FALLBACK_LABEL[ params.lang ] || FALLBACK_LABEL.en;
    var labeledTrails = [];
+   SIProf.start( "SATCAT fetch+parse" );
    var satcatInfo = loadSatcatInfo();
+   SIProf.end( "SATCAT fetch+parse" );
 
    var cleanFrames = 0, totalExposureSec = 0;
    var predicted = [];
@@ -1096,6 +1223,7 @@ function runAnalysis( files, params )
    if ( set != null && params.nightResultImage !== false )
       try
       {
+         SIProf.start( "result image (stretch+annotate+save)" );
          var bmp = null;
          if ( params.nightResultCombine === "max" )
          {
@@ -1140,11 +1268,13 @@ function runAnalysis( files, params )
       {
          console.warningln( SKYINTRUDERS_TITLE + ": night composite failed — " + e.message );
       }
+   SIProf.end( "result image (stretch+annotate+save)" );
    // Frame-by-frame review aid: one annotated PNG per registered frame,
    // with only that frame's trails drawn.
    if ( set != null && params.debugFrameOverlays )
       try
       {
+         SIProf.start( "debug frame overlays" );
          for ( var i = 0; i < frames.length; ++i )
          {
             var wins3 = ImageWindow.open( set.regPaths[ i ] );
@@ -1167,13 +1297,21 @@ function runAnalysis( files, params )
       {
          console.warningln( SKYINTRUDERS_TITLE + ": frame overlays failed — " + e.message );
       }
+   SIProf.end( "debug frame overlays" );
 
    if ( set != null )
       clearDirectory( set.regDir );
 
+   SIProf.add( "(untimed rest)", Math.max( 0, ( Date.now() - tRun ) -
+      ( function() { var s = 0, t = SIProf.table(); for ( var i = 0; i < t.length; ++i )
+        if ( t[ i ].name.charAt( 0 ) != "." && t[ i ].name.indexOf( "(count)" ) < 0 ) s += t[ i ].ms;
+        return s; } )() ) );
+   var timings = SIProf.report( frames.length );
+
    return { night: night, report: report, tleInfo: tleInfo, frames: frames,
             resultImagePath: resultImagePath, fitInfo: fitInfo,
-            registered: ( set != null ) };
+            registered: ( set != null ), timings: timings,
+            totalMs: Date.now() - tRun };
 }
 
 // ---------------------------------------------------------------------------
