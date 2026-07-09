@@ -791,6 +791,28 @@ function nightLabel( frames )
    return ( a == b ) ? a : a + "/" + b.substring( 8 );
 }
 
+// Invert the fitted synthetic TAN: sky -> reference-grid pixels (for the
+// predicted-crosser ghost overlay).
+function tanInvertForOverlay( tan, p )
+{
+   var DEG = Math.PI/180;
+   var ra0 = tan.crval1*DEG, dec0 = tan.crval2*DEG;
+   var ra = p.raDeg*DEG, dec = p.decDeg*DEG;
+   var dRA = ra - ra0;
+   var sinD0 = Math.sin( dec0 ), cosD0 = Math.cos( dec0 );
+   var sinD = Math.sin( dec ), cosD = Math.cos( dec );
+   var D = sinD*sinD0 + cosD*cosD0*Math.cos( dRA );
+   if ( D <= 0 )
+      return null;
+   var xi = ( cosD*Math.sin( dRA )/D )/DEG;
+   var eta = ( ( sinD*cosD0 - cosD*sinD0*Math.cos( dRA ) )/D )/DEG;
+   var det = tan.cd11*tan.cd22 - tan.cd12*tan.cd21;
+   if ( det === 0 )
+      return null;
+   return { x: tan.crpix1 + ( tan.cd22*xi - tan.cd12*eta )/det - 1,
+            y: tan.crpix2 + ( tan.cd11*eta - tan.cd21*xi )/det - 1 };
+}
+
 function runAnalysis( files, params )
 {
    SIProf.reset();
@@ -920,6 +942,7 @@ function runAnalysis( files, params )
    // crossings, then give every trail sky coordinates and run the standard
    // trail <-> crossing assignment.
    var fitInfo = null;
+   var fitTanForOverlay = null;
    if ( set != null && !hasUsableWcs( set.refMeta.wcs.kind ) && matchResponse != null &&
         !matchResponse.error )
    {
@@ -957,13 +980,14 @@ function runAnalysis( files, params )
          {
             fitInfo = { rotationDeg: fit.rotationDeg, parity: fit.parity,
                         pairs: fit.pairs.length, score: fit.score };
+            fitTanForOverlay = fit.tan;
             console.writeln( format( "Field orientation fitted from %d trail(s): " +
                                      "rotation %.1f°, %s", fit.pairs.length, fit.rotationDeg,
                                      fit.parity < 0 ? "mirrored" : "direct" ) );
             // TLE predictions err mostly ALONG the track (early/late on
             // the ephemeris); the loose assigner is tight across, generous
             // along.
-            var opt = { crossTolDeg: 0.3, alongTolDeg: 1.5,
+            var opt = { crossTolDeg: 0.4, alongTolDeg: 1.5,
                         angleTolDeg: params.matchMaxAngleDiffDeg || 12 };
             for ( var i = 0; i < frames.length; ++i )
             {
@@ -1000,8 +1024,6 @@ function runAnalysis( files, params )
                      var best = null;
                      for ( var c5 = 0; c5 < crs.length; ++c5 )
                      {
-                        if ( !crs[ c5 ].sunlit )
-                           continue;
                         var cMid = SISatMatch.core.midpointRaDec( crs[ c5 ].path.p1, crs[ c5 ].path.p2 );
                         var sep = SISatMatch.core.angularSepDeg( tMid, cMid );
                         var ad = SISatMatch.core.orientationDiffDeg(
@@ -1012,6 +1034,7 @@ function runAnalysis( files, params )
                            var cPA5 = SISatMatch.core.positionAngleDeg( crs[ c5 ].path.p1, crs[ c5 ].path.p2 );
                            var rel5 = ( SISatMatch.core.positionAngleDeg( cMid, tMid ) - cPA5 )*Math.PI/180;
                            best = { name: crs[ c5 ].name || String( crs[ c5 ].noradId ),
+                                    sunlit: !!crs[ c5 ].sunlit,
                                     sepDeg: Math.round( sep*1000 )/1000,
                                     angleDiffDeg: Math.round( ad*10 )/10,
                                     alongDeg: Math.round( Math.abs( sep*Math.cos( rel5 ) )*1000 )/1000,
@@ -1343,6 +1366,27 @@ function runAnalysis( files, params )
             for ( var lt = 0; lt < labeledTrails.length; ++lt )
                if ( labeledTrails[ lt ].frameIndex === i )
                   mine.push( labeledTrails[ lt ] );
+            // Ghost lines: every predicted crossing of this frame's window,
+            // projected through the fitted TAN — sunlit in pale yellow,
+            // eclipsed in grey. The visual gap between a ghost and a real
+            // streak IS the TLE/shadow-model error.
+            if ( fitTanForOverlay != null )
+            {
+               var crsG = crossingsByFrame[ frames[ i ].meta.id ] || [];
+               for ( var cg = 0; cg < crsG.length; ++cg )
+               {
+                  var g1 = SISatMatch.core.tanForOrientation ? null : null;
+                  var pA = crsG[ cg ].path.p1, pB = crsG[ cg ].path.p2;
+                  var q1 = tanInvertForOverlay( fitTanForOverlay, pA );
+                  var q2 = tanInvertForOverlay( fitTanForOverlay, pB );
+                  if ( q1 == null || q2 == null )
+                     continue;
+                  mine.push( { x1: q1.x, y1: q1.y, x2: q2.x, y2: q2.y,
+                               color: crsG[ cg ].sunlit ? "#e8d44d" : "#9aa0a8",
+                               label: ( crsG[ cg ].name || String( crsG[ cg ].noradId ) ) +
+                                      ( crsG[ cg ].sunlit ? "" : " (ombre)" ) } );
+               }
+            }
             fbmp = SIRender.annotateTrails( fbmp, mine, { flagDir: flagAssetsDir() } );
             fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + i + ".png" );
             wins3[ 0 ].forceClose();

@@ -845,7 +845,7 @@ var SISatMatch = ( function()
       // along (alongTolDeg). Orientation still must agree. One-to-one by
       // score, like the strict assigner.
       var o = opt || {};
-      var crossTol = ( o.crossTolDeg > 0 ) ? o.crossTolDeg : 0.3;
+      var crossTol = ( o.crossTolDeg > 0 ) ? o.crossTolDeg : 0.4;
       var alongTol = ( o.alongTolDeg > 0 ) ? o.alongTolDeg : 1.5;
       var angleTol = ( o.angleTolDeg > 0 ) ? o.angleTolDeg : 12;
 
@@ -931,19 +931,26 @@ var SISatMatch = ( function()
             var tMid2 = midpointRaDec( tr2.p1, tr2.p2 );
             var sep2 = angularSepDeg( cMid2, tMid2 );
             var rel2 = ( positionAngleDeg( cMid2, tMid2 ) - cPA2 )*DEG2RAD;
-            if ( Math.abs( sep2*Math.sin( rel2 ) ) > 0.8 ||
+            var cross2 = Math.abs( sep2*Math.sin( rel2 ) );
+            // Maneuvering constellations (G60...) publish elements that land
+            // more than a degree SIDEWAYS: with a near-exact orientation the
+            // sideways gate opens further.
+            var crossGate = ( ad2 <= 1.5 ) ? 1.6 : 0.8;
+            if ( cross2 > crossGate ||
                  Math.abs( sep2*Math.cos( rel2 ) ) > alongTol )
                continue;
             rescue.push( { ci: ci2, ti: ti2, sep: sep2, ad: ad2 } );
          }
       }
-      // keep only pairs where BOTH sides are unambiguous
+      // keep pairs that are unambiguous — or whose orientation DOMINATES
+      // every competitor (angle 5x closer, competitors above 8 degrees)
       for ( var r = 0; r < rescue.length; ++r )
       {
          var unique = true;
          for ( var r2 = 0; r2 < rescue.length; ++r2 )
             if ( r2 !== r && ( rescue[r2].ci === rescue[r].ci || rescue[r2].ti === rescue[r].ti ) )
-               unique = false;
+               if ( !( rescue[r2].ad > 8 && rescue[r2].ad >= 5*Math.max( 0.5, rescue[r].ad ) ) )
+                  unique = false;
          if ( !unique )
             continue;
          var rc = rescue[r];
