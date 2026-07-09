@@ -1961,6 +1961,130 @@ function buildTreasureRich( res, lang )
 // ---------------------------------------------------------------------------
 // UI.
 
+
+// ---------------------------------------------------------------------------
+// UI strings — the language selector switches the WHOLE interface, not just
+// the report. Console/log messages stay English (developer-facing).
+
+var SI_UI = {
+   en: {
+      tabNight: "Night trails", tabTreasure: "Treasure Hunt", tabTrash: "Trash to Art",
+      tagNight: "\ud83d\udef0  <i>Who crossed your photo last night?</i>",
+      tagTreasure: "\ud83d\udc8e  <i>What you photographed without knowing.</i>",
+      tagTrash: "\ud83c\udfa8  <i>Your rejects have talent.</i>",
+      hintNight: "Identify satellite, meteor and asteroid trails across a night of " +
+                 "light frames, then get a night log and a ready-to-post report.",
+      hintTreasure: "Point at a <b>plate-solved</b> image (uses the active window if the list " +
+                    "is empty) and discover the galaxies, quasars, nebulae and passing " +
+                    "asteroids hiding in your field.",
+      hintTrash: "Recycle rejected frames into art — from this session's rejects or any " +
+                 "folder of discards.",
+      kSigma: "Detection threshold (\u03c3):",
+      kSigmaTip: "Trail pixels must exceed the frame background by this many " +
+                 "robust sigmas. Lower catches fainter trails but risks noise.",
+      predicted: "Draw predicted crossers on the result image",
+      predictedTip: "Satellites the orbit propagation puts inside your field " +
+                    "during an exposure but that no detected trail matched — " +
+                    "drawn as pale ghost lines with their flag and telemetry.",
+      shadow: "Also draw shadow crossers",
+      shadowTip: "Crossers the model puts in the Earth's shadow during your " +
+                 "exposure — invisible by definition, drawn in grey. Useful to " +
+                 "see the full traffic or to spot shadow-model errors.",
+      observer: "Observer site — only if FITS headers lack SITELAT / SITELONG",
+      lat: "Lat (\u00b0):", lon: "Lon (\u00b0):", alt: "Alt (m):",
+      treasureRows: "Max catalog rows / type:",
+      treasureRowsTip: "Upper bound on objects fetched per catalog (galaxies, quasars, " +
+                       "nebulae, asteroids) around your field.",
+      colorBy: "Color by:",
+      scheme0: "type (satellite / meteor / \u2026)",
+      scheme1: "operator (Starlink / OneWeb / \u2026)",
+      scheme2: "time (dusk \u2192 dawn gradient)",
+      choreo: "Intruder choreography",
+      choreoTip: "Every detected trail drawn on one canvas, color-coded.",
+      starTrails: "Star-trail composite",
+      starTrailsTip: "Classic lighten/maximum combine of the frames.",
+      poster: "Designed poster (HTML)",
+      posterTip: "A shareable poster: choreography + thumbnails + stats.",
+      outputs: "Outputs", input: "Input",
+      addFiles: "Add files\u2026", addFolder: "Add folder\u2026", clear: "Clear",
+      language: "Language:", languageTip: "Interface and report language.",
+      analyzeNight: "Analyze night", analyzeTreasure: "Hunt treasures", analyzeTrash: "Make art",
+      close: "Close",
+      statusNone: "<i>No frames added yet.</i>",
+      statusOne: " frame ready.", statusMany: " frames ready.",
+      working: "<i>Working\u2026</i>",
+      treeNight: "Light frames",
+      treeTreasure: "Plate-solved image — active window used if empty",
+      treeTrash: "Reject frames — or add a folder of rejects",
+      saveReport: "Save report\u2026", saveReportCaption: "Save night report",
+      openImage: "Open image", openHtml: "Open HTML",
+      openHtmlTip: "Open the illustrated report in your web browser.",
+      saveHtml: "Save HTML\u2026", saveHtmlCaption: "Save illustrated report",
+      selectFrames: "Select frames", selectFolder: "Select a folder of frames"
+   },
+   fr: {
+      tabNight: "Tra\u00een\u00e9es de nuit", tabTreasure: "Chasse au tr\u00e9sor", tabTrash: "Rejets en art",
+      tagNight: "\ud83d\udef0  <i>Qui a travers\u00e9 ta photo cette nuit ?</i>",
+      tagTreasure: "\ud83d\udc8e  <i>Ce que tu as photographi\u00e9 sans le savoir.</i>",
+      tagTrash: "\ud83c\udfa8  <i>Tes rejets ont du talent.</i>",
+      hintNight: "Identifie les tra\u00een\u00e9es de satellites, m\u00e9t\u00e9ores et ast\u00e9ro\u00efdes sur une " +
+                 "nuit de brutes, puis obtiens un journal de nuit et un rapport pr\u00eat \u00e0 publier.",
+      hintTreasure: "Pointe une image <b>r\u00e9solue astrom\u00e9triquement</b> (fen\u00eatre active si la " +
+                    "liste est vide) et d\u00e9couvre les galaxies, quasars, n\u00e9buleuses et " +
+                    "ast\u00e9ro\u00efdes de passage cach\u00e9s dans ton champ.",
+      hintTrash: "Recycle les brutes rejet\u00e9es en art — rejets de la session ou n'importe " +
+                 "quel dossier d'\u00e9cart\u00e9es.",
+      kSigma: "Seuil de d\u00e9tection (\u03c3) :",
+      kSigmaTip: "Les pixels d'une tra\u00een\u00e9e doivent d\u00e9passer le fond de ce nombre de " +
+                 "sigmas robustes. Plus bas = tra\u00een\u00e9es plus faibles, mais risque de bruit.",
+      predicted: "Tracer les passages pr\u00e9dits sur l'image r\u00e9sultat",
+      predictedTip: "Satellites que la propagation orbitale place dans le champ pendant une " +
+                    "pose mais qu'aucune tra\u00een\u00e9e d\u00e9tect\u00e9e n'a confirm\u00e9s — trac\u00e9s en " +
+                    "lignes fant\u00f4mes p\u00e2les avec drapeau et t\u00e9l\u00e9m\u00e9trie.",
+      shadow: "Tracer aussi les passages dans l'ombre",
+      shadowTip: "Passages que le mod\u00e8le place dans l'ombre de la Terre pendant la pose — " +
+                 "invisibles par d\u00e9finition, trac\u00e9s en gris. Utile pour voir tout le trafic " +
+                 "ou d\u00e9busquer une erreur du mod\u00e8le d'ombre.",
+      observer: "Site d'observation — seulement si les headers FITS n'ont pas SITELAT / SITELONG",
+      lat: "Lat (\u00b0) :", lon: "Lon (\u00b0) :", alt: "Alt (m) :",
+      treasureRows: "Objets max / type de catalogue :",
+      treasureRowsTip: "Plafond d'objets r\u00e9cup\u00e9r\u00e9s par catalogue (galaxies, quasars, " +
+                       "n\u00e9buleuses, ast\u00e9ro\u00efdes) autour du champ.",
+      colorBy: "Couleur par :",
+      scheme0: "type (satellite / m\u00e9t\u00e9ore / \u2026)",
+      scheme1: "op\u00e9rateur (Starlink / OneWeb / \u2026)",
+      scheme2: "heure (d\u00e9grad\u00e9 cr\u00e9puscule \u2192 aube)",
+      choreo: "Chor\u00e9graphie des intrus",
+      choreoTip: "Toutes les tra\u00een\u00e9es d\u00e9tect\u00e9es sur un seul canevas, en couleurs.",
+      starTrails: "Composite star-trails",
+      starTrailsTip: "Empilement classique par \u00e9claircissement (maximum).",
+      poster: "Poster design\u00e9 (HTML)",
+      posterTip: "Un poster partageable : chor\u00e9graphie + vignettes + stats.",
+      outputs: "Sorties", input: "Entr\u00e9e",
+      addFiles: "Ajouter des fichiers\u2026", addFolder: "Ajouter un dossier\u2026", clear: "Vider",
+      language: "Langue :", languageTip: "Langue de l'interface et du rapport.",
+      analyzeNight: "Analyser la nuit", analyzeTreasure: "Chasser les tr\u00e9sors", analyzeTrash: "Cr\u00e9er l'art",
+      close: "Fermer",
+      statusNone: "<i>Aucune brute ajout\u00e9e.</i>",
+      statusOne: " brute pr\u00eate.", statusMany: " brutes pr\u00eates.",
+      working: "<i>Travail en cours\u2026</i>",
+      treeNight: "Brutes (lights)",
+      treeTreasure: "Image r\u00e9solue — fen\u00eatre active si la liste est vide",
+      treeTrash: "Brutes rejet\u00e9es — ou ajoute un dossier de rejets",
+      saveReport: "Enregistrer le rapport\u2026", saveReportCaption: "Enregistrer le journal de nuit",
+      openImage: "Ouvrir l'image", openHtml: "Ouvrir le HTML",
+      openHtmlTip: "Ouvre le rapport illustr\u00e9 dans ton navigateur.",
+      saveHtml: "Enregistrer le HTML\u2026", saveHtmlCaption: "Enregistrer le rapport illustr\u00e9",
+      selectFrames: "S\u00e9lectionner des brutes", selectFolder: "S\u00e9lectionner un dossier de brutes"
+   }
+};
+
+function uiT( lang, key )
+{
+   var t = SI_UI[ lang ] || SI_UI.en;
+   return ( t[ key ] !== undefined ) ? t[ key ] : SI_UI.en[ key ];
+}
+
 class ReportDialog extends Dialog
 {
    constructor( result, params, suggestedDir )
@@ -1980,13 +2104,14 @@ class ReportDialog extends Dialog
       this.textBox.text = result.report.markdown;
       this.textBox.setMinSize( 640, 480 );
 
+      var L = ( params && params.lang ) || "en";
       this.saveButton = new PushButton( this );
-      this.saveButton.text = "Save report…";
+      this.saveButton.text = uiT( L, "saveReport" );
       this.saveButton.icon = siIcon( this, ":/icons/save.png" );
       this.saveButton.onClick = () =>
       {
          var d = new SaveFileDialog;
-         d.caption = "Save night report";
+         d.caption = uiT( L, "saveReportCaption" );
          d.filters = [ [ "Markdown", "*.md" ], [ "Any file", "*" ] ];
          d.initialPath = ( suggestedDir || File.homeDirectory ) +
                          "/SkyIntruders-" + result.night.dateLabel.replace( "/", "-" ) + ".md";
@@ -1998,7 +2123,7 @@ class ReportDialog extends Dialog
       };
 
       this.closeButton = new PushButton( this );
-      this.closeButton.text = "Close";
+      this.closeButton.text = uiT( L, "close" );
       this.closeButton.icon = siIcon( this, ":/icons/close.png" );
       this.closeButton.onClick = () => this.ok();
 
@@ -2008,7 +2133,7 @@ class ReportDialog extends Dialog
       if ( result.resultImagePath && File.exists( result.resultImagePath ) )
       {
          this.imageButton = new PushButton( this );
-         this.imageButton.text = "Open image";
+         this.imageButton.text = uiT( L, "openImage" );
          this.imageButton.icon = siIcon( this, ":/icons/picture.png" );
          this.imageButton.onClick = () =>
          {
@@ -2042,7 +2167,7 @@ class ReportDialog extends Dialog
 // standalone .html in a browser or save it.
 class HtmlResultDialog extends Dialog
 {
-   constructor( title, bodyRich, html, suggestedName, suggestedDir )
+   constructor( title, bodyRich, html, suggestedName, suggestedDir, lang )
    {
       super();
       this.windowTitle = title;
@@ -2058,9 +2183,10 @@ class HtmlResultDialog extends Dialog
       this.body.setMinWidth( 560 );
 
       this.openButton = new PushButton( this );
-      this.openButton.text = "Open HTML";
+      var L2 = lang || "en";
+      this.openButton.text = uiT( L2, "openHtml" );
       this.openButton.icon = siIcon( this, ":/icons/internet.png" );
-      this.openButton.toolTip = "Open the illustrated report in your web browser.";
+      this.openButton.toolTip = uiT( L2, "openHtmlTip" );
       this.openButton.onClick = () =>
       {
          try
@@ -2078,12 +2204,12 @@ class HtmlResultDialog extends Dialog
       };
 
       this.saveButton = new PushButton( this );
-      this.saveButton.text = "Save HTML…";
+      this.saveButton.text = uiT( L2, "saveHtml" );
       this.saveButton.icon = siIcon( this, ":/icons/save.png" );
       this.saveButton.onClick = () =>
       {
          var d = new SaveFileDialog;
-         d.caption = "Save illustrated report";
+         d.caption = uiT( L2, "saveHtmlCaption" );
          d.filters = [ [ "HTML", "*.html" ], [ "Any file", "*" ] ];
          d.initialPath = ( suggestedDir || File.homeDirectory ) + "/" + this.suggestedName;
          if ( d.execute() )
@@ -2094,7 +2220,7 @@ class HtmlResultDialog extends Dialog
       };
 
       this.closeButton = new PushButton( this );
-      this.closeButton.text = "Close";
+      this.closeButton.text = uiT( L2, "close" );
       this.closeButton.icon = siIcon( this, ":/icons/close.png" );
       this.closeButton.onClick = () => this.ok();
 
@@ -2212,9 +2338,9 @@ class SkyIntrudersDialog extends Dialog
                                  "see the full traffic or to spot shadow-model errors.";
       this.shadowCheck.onCheck = ( checked ) => { self.params.nightShowShadow = checked; };
 
+      this.nightHint = this.pageHint( "" );
       this.nightPage = this.makePage( [
-         this.pageHint( "Identify satellite, meteor and asteroid trails across a night of " +
-                        "light frames, then get a night log and a ready-to-post report." ),
+         this.nightHint,
          this.kSigmaControl,
          this.predictedCheck,
          this.shadowCheck,
@@ -2231,10 +2357,9 @@ class SkyIntrudersDialog extends Dialog
                                   "nebulae, asteroids) around your field.";
       this.treasureRows.onValueUpdated = ( v ) => { self.params.treasureMaxRows = Math.round( v ); };
 
+      this.treasureHint = this.pageHint( "" );
       this.treasurePage = this.makePage( [
-         this.pageHint( "Point at a <b>plate-solved</b> image (uses the active window if the list " +
-                        "is empty) and discover the galaxies, quasars, nebulae and passing " +
-                        "asteroids hiding in your field." ),
+         this.treasureHint,
          this.treasureRows
       ] );
 
@@ -2284,9 +2409,9 @@ class SkyIntrudersDialog extends Dialog
       this.outputsGroup.sizer.margin = 8;
       this.outputsGroup.sizer.add( this.outputsSizer );
 
+      this.trashHint = this.pageHint( "" );
       this.trashPage = this.makePage( [
-         this.pageHint( "Recycle rejected frames into art — from this session's rejects or any " +
-                        "folder of discards." ),
+         this.trashHint,
          this.schemeSizer,
          this.outputsGroup
       ] );
@@ -2319,7 +2444,7 @@ class SkyIntrudersDialog extends Dialog
       {
          var d = new OpenFileDialog;
          d.multipleSelections = true;
-         d.caption = "Select frames";
+         d.caption = uiT( self.params.lang, "selectFrames" );
          d.filters = [ [ "FITS / XISF", "*.fits", "*.fit", "*.fts", "*.xisf" ], [ "Any file", "*" ] ];
          if ( d.execute() )
             self.addFiles( d.fileNames );
@@ -2331,7 +2456,7 @@ class SkyIntrudersDialog extends Dialog
       this.addDirButton.onClick = () =>
       {
          var d = new GetDirectoryDialog;
-         d.caption = "Select a folder of frames";
+         d.caption = uiT( self.params.lang, "selectFolder" );
          if ( d.execute() )
          {
             var found = [];
@@ -2383,10 +2508,14 @@ class SkyIntrudersDialog extends Dialog
       this.langCombo.addItem( "English" );
       this.langCombo.addItem( "Français" );
       this.langCombo.currentItem = ( params.lang == "fr" ) ? 1 : 0;
-      this.langCombo.toolTip = "Report language.";
-      this.langCombo.onItemSelected = ( i ) => { self.params.lang = ( i == 1 ) ? "fr" : "en"; };
+      this.langCombo.toolTip = uiT( params.lang, "languageTip" );
+      this.langCombo.onItemSelected = ( i ) =>
+      {
+         self.params.lang = ( i == 1 ) ? "fr" : "en";
+         self.applyLanguage();
+      };
       this.langLabel = new Label( this );
-      this.langLabel.text = "Report:";
+      this.langLabel.text = uiT( params.lang, "language" );
       this.langLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
 
       this.statusLabel = new Label( this );
@@ -2423,7 +2552,7 @@ class SkyIntrudersDialog extends Dialog
       this.sizer.add( this.inputGroup, 100 );
       this.sizer.add( this.actions );
 
-      this.updateMode();
+      this.applyLanguage();
       this.setMinWidth( 620 );
       this.adjustToContents();
    }
@@ -2463,6 +2592,58 @@ class SkyIntrudersDialog extends Dialog
       return ctrl;
    }
 
+   applyLanguage()
+   {
+      var L = this.params.lang;
+      this.langCombo.toolTip = uiT( L, "languageTip" );
+      this.langLabel.text = uiT( L, "language" );
+      this.nightHint.text = uiT( L, "hintNight" );
+      this.treasureHint.text = uiT( L, "hintTreasure" );
+      this.trashHint.text = uiT( L, "hintTrash" );
+      this.kSigmaControl.label.text = uiT( L, "kSigma" );
+      this.kSigmaControl.toolTip = uiT( L, "kSigmaTip" );
+      this.predictedCheck.text = uiT( L, "predicted" );
+      this.predictedCheck.toolTip = uiT( L, "predictedTip" );
+      this.shadowCheck.text = uiT( L, "shadow" );
+      this.shadowCheck.toolTip = uiT( L, "shadowTip" );
+      this.observerGroup.title = uiT( L, "observer" );
+      this.latEdit.label.text = uiT( L, "lat" );
+      this.lonEdit.label.text = uiT( L, "lon" );
+      this.altEdit.label.text = uiT( L, "alt" );
+      this.treasureRows.label.text = uiT( L, "treasureRows" );
+      this.treasureRows.toolTip = uiT( L, "treasureRowsTip" );
+      this.schemeLabel.text = uiT( L, "colorBy" );
+      var schemeIdx = this.schemeCombo.currentItem;
+      this.schemeCombo.clear();
+      this.schemeCombo.addItem( uiT( L, "scheme0" ) );
+      this.schemeCombo.addItem( uiT( L, "scheme1" ) );
+      this.schemeCombo.addItem( uiT( L, "scheme2" ) );
+      this.schemeCombo.currentItem = ( schemeIdx >= 0 ) ? schemeIdx : 0;
+      this.choreoCheck.text = uiT( L, "choreo" );
+      this.choreoCheck.toolTip = uiT( L, "choreoTip" );
+      this.starTrailsCheck.text = uiT( L, "starTrails" );
+      this.starTrailsCheck.toolTip = uiT( L, "starTrailsTip" );
+      this.posterCheck.text = uiT( L, "poster" );
+      this.posterCheck.toolTip = uiT( L, "posterTip" );
+      this.outputsGroup.title = uiT( L, "outputs" );
+      this.inputGroup.title = uiT( L, "input" );
+      this.addFilesButton.text = uiT( L, "addFiles" );
+      this.addDirButton.text = uiT( L, "addFolder" );
+      this.clearButton.text = uiT( L, "clear" );
+      this.closeButton.text = uiT( L, "close" );
+      try
+      {
+         if ( typeof this.tabBox.setPageLabel == "function" )
+         {
+            this.tabBox.setPageLabel( 0, uiT( L, "tabNight" ) );
+            this.tabBox.setPageLabel( 1, uiT( L, "tabTreasure" ) );
+            this.tabBox.setPageLabel( 2, uiT( L, "tabTrash" ) );
+         }
+      }
+      catch ( e ) {}
+      this.updateMode();
+   }
+
    pageHint( richText )
    {
       var l = new Label( this );
@@ -2490,27 +2671,28 @@ class SkyIntrudersDialog extends Dialog
    updateMode()
    {
       var mode = this.params.mode;
+      var L = this.params.lang;
       var taglines = {
-         night:    "🛰  <i>Who crossed your photo last night?</i>",
-         treasure: "💎  <i>What you photographed without knowing.</i>",
-         trash:    "🎨  <i>Your rejects have talent.</i>"
+         night: uiT( L, "tagNight" ),
+         treasure: uiT( L, "tagTreasure" ),
+         trash: uiT( L, "tagTrash" )
       };
       this.taglineLabel.text = taglines[ mode ] || taglines.night;
 
       if ( mode === "treasure" )
       {
-         this.analyzeButton.text = "Hunt treasures";
-         this.fileTree.setHeaderText( 0, "Plate-solved image — active window used if empty" );
+         this.analyzeButton.text = uiT( L, "analyzeTreasure" );
+         this.fileTree.setHeaderText( 0, uiT( L, "treeTreasure" ) );
       }
       else if ( mode === "trash" )
       {
-         this.analyzeButton.text = "Make art";
-         this.fileTree.setHeaderText( 0, "Reject frames — or add a folder of rejects" );
+         this.analyzeButton.text = uiT( L, "analyzeTrash" );
+         this.fileTree.setHeaderText( 0, uiT( L, "treeTrash" ) );
       }
       else
       {
-         this.analyzeButton.text = "Analyze night";
-         this.fileTree.setHeaderText( 0, "Light frames" );
+         this.analyzeButton.text = uiT( L, "analyzeNight" );
+         this.fileTree.setHeaderText( 0, uiT( L, "treeNight" ) );
       }
       this.updateStatus();
    }
@@ -2524,8 +2706,8 @@ class SkyIntrudersDialog extends Dialog
       }
       var n = this.files.length;
       this.statusLabel.text = ( n == 0 )
-         ? "<i>No frames added yet.</i>"
-         : ( n + ( n == 1 ? " frame ready." : " frames ready." ) );
+         ? uiT( this.params.lang, "statusNone" )
+         : ( n + uiT( this.params.lang, ( n == 1 ) ? "statusOne" : "statusMany" ) );
    }
 
    makeCoordEdit( label, value, apply )
@@ -2568,7 +2750,7 @@ class SkyIntrudersDialog extends Dialog
       this.addDirButton.enabled = !busy;
       this.clearButton.enabled = !busy;
       this.tabBox.enabled = !busy;
-      this.updateStatus( busy ? "<i>Working…</i>" : undefined );
+      this.updateStatus( busy ? uiT( this.params.lang, "working" ) : undefined );
       processEvents();
    }
 
@@ -2667,7 +2849,7 @@ class SkyIntrudersDialog extends Dialog
                     ( res.meta.keywords[ "OBJECT" ] || res.meta.id || "field" ).replace( /[^A-Za-z0-9_.-]+/g, "_" ) + ".html";
          var bodyRich = buildTreasureRich( res, this.params.lang );
          ( new HtmlResultDialog( SKYINTRUDERS_TITLE + " — Treasure Hunt", bodyRich,
-                                 res.html, name, dir ) ).execute();
+                                 res.html, name, dir, this.params.lang ) ).execute();
       }
       catch ( e )
       {
@@ -2764,7 +2946,8 @@ class SkyIntrudersDialog extends Dialog
                     : "Artwork generated — open the poster for the full version." ) + "</font></p>";
             ( new HtmlResultDialog( SKYINTRUDERS_TITLE + " — Trash to Art",
                                     bodyRich,
-                                    res.posterHtml, "SkyIntruders-Poster.html", dir ) ).execute();
+                                    res.posterHtml, "SkyIntruders-Poster.html", dir,
+                                    this.params.lang ) ).execute();
          }
          else
             console.writeln( SKYINTRUDERS_TITLE + ": image windows produced (no poster requested)." );
@@ -2804,6 +2987,17 @@ function siConstructTest()
    {
       var d = new SkyIntrudersDialog( loadParams() );
       out.modes = [ d.tabBox.numberOfPages, d.tabBox.currentPageIndex ];
+
+      // Live language switch must relabel the whole UI, both directions.
+      d.params.lang = "fr";
+      d.applyLanguage();
+      out.frAnalyze = d.analyzeButton.text;
+      d.params.lang = "en";
+      d.applyLanguage();
+      out.enAnalyze = d.analyzeButton.text;
+      out.langSwitchOk = ( out.frAnalyze !== out.enAnalyze ) &&
+                         ( out.frAnalyze === uiT( "fr", "analyzeNight" ) ) &&
+                         ( out.enAnalyze === uiT( "en", "analyzeNight" ) );
 
       // Exercise the result dialogs too (they are built on demand at runtime).
       var res = { summary: { counts: { galaxy: 2, quasar: 1, pne: 0, asteroid: 1 },
