@@ -296,7 +296,6 @@ function main()
       return "512x512 composite, center sample " + v.toFixed( 3 );
    } );
 
-
    // Clean up the synthetic image window and temp file.
    try { if ( syn && syn.window ) syn.window.forceClose(); } catch ( e ) {}
    try { if ( syn && File.exists( syn.path ) ) File.remove( syn.path ); } catch ( e ) {}

@@ -251,42 +251,11 @@ var SICatalogs = ( function()
       return normRa( ( raH > 24 ) ? raH : raH*15 );
    }
 
-   function parseNgcIcCsv( text )
+   function parseAdpCsv( text, mapRow )
    {
-      // id,alpha,delta,magnitude,diameter,axisRatio,posAngle,Common name,...
-      // Returns [ { type:"dso", name, commonName, raDeg, decDeg, mag,
-      // diamArcmin, messier } ].
-      var out = [];
-      if ( text === null || text === undefined )
-         return out;
-      var lines = String( text ).split( /\r?\n/ );
-      for ( var i = 1; i < lines.length; ++i ) // skip header
-      {
-         var f = splitCsvLine( lines[ i ] );
-         if ( f.length < 5 )
-            continue;
-         var raH = toNumber( f[ 1 ] ), dec = toNumber( f[ 2 ] );
-         if ( raH === null || dec === null )
-            continue;
-         out.push( {
-            type: "dso",
-            name: trimStr( f[ 0 ] ),
-            raDeg: adpAlphaToDeg( raH ),
-            decDeg: dec,
-            mag: toNumber( f[ 3 ] ),
-            diamArcmin: toNumber( f[ 4 ] ),
-            commonName: ( f.length > 7 ) ? trimStr( f[ 7 ] ) : "",
-            messier: ( f.length > 10 ) ? trimStr( f[ 10 ] ) : ""
-         } );
-      }
-      return out;
-   }
-
-   function parseNamedStarsCsv( text )
-   {
-      // id,alpha,delta,magnitude,Spectral type,HD,HIP,Common name
-      // Returns [ { type:"star", name, commonName, raDeg, decDeg, mag,
-      // spectral, hd } ].
+      // Common scaffold for the AdP CSVs: skip the header, require parseable
+      // alpha/delta in columns 1/2 (alpha through adpAlphaToDeg), delegate
+      // the per-catalog fields to mapRow( fields, raDeg, decDeg ).
       var out = [];
       if ( text === null || text === undefined )
          return out;
@@ -299,18 +268,45 @@ var SICatalogs = ( function()
          var raH = toNumber( f[ 1 ] ), dec = toNumber( f[ 2 ] );
          if ( raH === null || dec === null )
             continue;
-         out.push( {
+         out.push( mapRow( f, adpAlphaToDeg( raH ), dec ) );
+      }
+      return out;
+   }
+
+   function parseNgcIcCsv( text )
+   {
+      // id,alpha,delta,magnitude,diameter,axisRatio,posAngle,Common name,...
+      return parseAdpCsv( text, function( f, raDeg, decDeg )
+      {
+         return {
+            type: "dso",
+            name: trimStr( f[ 0 ] ),
+            raDeg: raDeg,
+            decDeg: decDeg,
+            mag: toNumber( f[ 3 ] ),
+            diamArcmin: toNumber( f[ 4 ] ),
+            commonName: ( f.length > 7 ) ? trimStr( f[ 7 ] ) : "",
+            messier: ( f.length > 10 ) ? trimStr( f[ 10 ] ) : ""
+         };
+      } );
+   }
+
+   function parseNamedStarsCsv( text )
+   {
+      // id,alpha,delta,magnitude,Spectral type,HD,HIP,Common name
+      return parseAdpCsv( text, function( f, raDeg, decDeg )
+      {
+         return {
             type: "star",
             name: trimStr( f[ 0 ] ),
-            raDeg: adpAlphaToDeg( raH ),
-            decDeg: dec,
+            raDeg: raDeg,
+            decDeg: decDeg,
             mag: toNumber( f[ 3 ] ),
             spectral: trimStr( f[ 4 ] ),
             hd: ( f.length > 5 ) ? trimStr( f[ 5 ] ) : "",
             commonName: ( f.length > 7 ) ? trimStr( f[ 7 ] ) : ""
-         } );
-      }
-      return out;
+         };
+      } );
    }
 
    // ------------------------------------------------------------------------

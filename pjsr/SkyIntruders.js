@@ -63,6 +63,10 @@ function ensureMinimumVersion( maj, min, rel )
 // ---------------------------------------------------------------------------
 // Parameters, persisted as JSON (Settings-free: one less v8 API risk).
 
+// The chart accent color the whole Treasure UI defaults to (params, swatch,
+// picker presets, chartField call).
+var SI_DEFAULT_ACCENT = "#9FD8D2";
+
 var DEFAULT_PARAMS = {
    kSigma: 5.0,
    // Detection threshold on the registered DIFFERENCE image: the static sky
@@ -99,7 +103,7 @@ var DEFAULT_PARAMS = {
    treasureQuasars: true,
    treasurePne: true,
    treasureAsteroids: true,
-   treasureAccent: "#9FD8D2"
+   treasureAccent: SI_DEFAULT_ACCENT
 };
 
 function configDir()
@@ -1453,13 +1457,6 @@ function runAnalysis( files, params )
 // Treasure Hunt mode — what you photographed without knowing.
 
 // Per-type overlay marker style (color + glyph) for the annotated map.
-var TREASURE_STYLE = {
-   galaxy:   { color: "#7fd1ff", glyph: "circle" },
-   quasar:   { color: "#e39bff", glyph: "diamond" },
-   pne:      { color: "#8ff0cf", glyph: "square" },
-   asteroid: { color: "#ffd38f", glyph: "circle" }
-};
-
 /*
  * Locate PixInsight's src/scripts/AdP directory, where the distribution
  * ships NGC-IC.csv and NamedStars.csv — the offline context catalogs for
@@ -1487,17 +1484,34 @@ function findAdpDir()
 
 /*
  * Context objects for the star chart: the brightest named stars and the
- * largest NGC/IC neighbors that landed in the frame. Local files only.
+ * largest NGC/IC neighbors that landed in the frame. The local catalogs are
+ * static distribution files — parse them once per session.
  */
+var siAdpCatalogCache = {};
+function loadAdpCatalog( dir, fileName, parse )
+{
+   var key = dir + "/" + fileName;
+   if ( siAdpCatalogCache[ key ] === undefined )
+      siAdpCatalogCache[ key ] = parse( File.readTextFile( key ) );
+   return siAdpCatalogCache[ key ];
+}
+
 function loadChartContext( meta, width, height, maxStars, maxDsos, cone )
 {
    var out = { stars: [], dsos: [] };
    var dir = findAdpDir();
    function projectInto( rows )
    {
+      // Cheap angular prefilter first: >99% of a full-sky catalog is far
+      // outside the field, and spline WCS inversions are not free.
+      var maxSep = cone ? cone.radiusDeg*1.15 : null;
       var kept = [];
       for ( var i = 0; i < rows.length; ++i )
       {
+         if ( maxSep !== null &&
+              SIFrameMetaCore.angularSeparationDeg( cone.raDeg, cone.decDeg,
+                                           rows[ i ].raDeg, rows[ i ].decDeg ) > maxSep )
+            continue;
          var p = null;
          try { p = meta.wcs.celestialToImage( rows[ i ].raDeg, rows[ i ].decDeg ); }
          catch ( e ) { p = null; }
@@ -1519,8 +1533,8 @@ function loadChartContext( meta, width, height, maxStars, maxDsos, cone )
    if ( dir !== null )
       try
       {
-         stars = projectInto( SICatalogs.parseNamedStarsCsv(
-            File.readTextFile( dir + "/NamedStars.csv" ) ) );
+         stars = projectInto( loadAdpCatalog( dir, "NamedStars.csv",
+                                              SICatalogs.parseNamedStarsCsv ) );
       }
       catch ( e ) {}
    if ( cone )
@@ -1548,8 +1562,8 @@ function loadChartContext( meta, width, height, maxStars, maxDsos, cone )
       return out;
    try
    {
-      var dsos = projectInto( SICatalogs.parseNgcIcCsv(
-         File.readTextFile( dir + "/NGC-IC.csv" ) ) );
+      var dsos = projectInto( loadAdpCatalog( dir, "NGC-IC.csv",
+                                              SICatalogs.parseNgcIcCsv ) );
       dsos.sort( function( a, b )
       {
          return ( ( b.diamArcmin || 0 ) - ( a.diamArcmin || 0 ) ) ||
@@ -1578,29 +1592,66 @@ function loadChartContext( meta, width, height, maxStars, maxDsos, cone )
  * signal there. The aperture follows the object's catalog size (bounded);
  * point sources get a small default.
  */
-function measureCaptureAt( image, x0, y0, apR )
+function apertureGeom( apR )
 {
+   // One source of truth for the aperture/annulus/decoy-ring geometry: the
+   // decoy ring must clear the target's own background annulus.
    var annIn = apR + 3;
    var annOut = annIn + Math.max( 4, apR );
-   var apVals = [], bgVals = [];
-   var w = image.width, h = image.height;
-   for ( var dy = -annOut; dy <= annOut; ++dy )
+   return { annIn: annIn, annOut: annOut, ringR: annOut + apR + 4 };
+}
+
+/*
+ * Batch pixel access for the capture scoring: one native getSamples read of
+ * the whole patch around a position instead of thousands of image.sample
+ * calls (target + 12 decoy apertures re-visit the same neighborhood).
+ * Falls back to per-pixel sampling if the batch read is unavailable.
+ */
+function makePatchReader( image, x0, y0, half )
+{
+   var xa = Math.max( 0, x0 - half ), ya = Math.max( 0, y0 - half );
+   var xb = Math.min( image.width - 1, x0 + half );
+   var yb = Math.min( image.height - 1, y0 + half );
+   var w = xb - xa + 1, h = yb - ya + 1;
+   try
    {
-      var yy = y0 + dy;
-      if ( yy < 0 || yy >= h )
-         continue;
-      for ( var dx = -annOut; dx <= annOut; ++dx )
+      var buf = [];
+      image.getSamples( buf, new Rect( xa, ya, xb + 1, yb + 1 ), 0 );
+      if ( buf.length !== w*h )
+         throw new Error( "short read" );
+      return function( x, y )
       {
-         var xx = x0 + dx;
-         if ( xx < 0 || xx >= w )
-            continue;
-         var rr = dx*dx + dy*dy;
-         if ( rr <= apR*apR )
-            apVals.push( image.sample( xx, yy, 0 ) );
-         else if ( rr >= annIn*annIn && rr <= annOut*annOut )
-            bgVals.push( image.sample( xx, yy, 0 ) );
-      }
+         return ( x < xa || y < ya || x > xb || y > yb ) ? null : buf[ ( y - ya )*w + ( x - xa ) ];
+      };
    }
+   catch ( e )
+   {
+      return function( x, y )
+      {
+         return ( x < 0 || y < 0 || x >= image.width || y >= image.height )
+            ? null : image.sample( x, y, 0 );
+      };
+   }
+}
+
+function measureCaptureAt( readPx, x0, y0, apR )
+{
+   var geom = apertureGeom( apR );
+   var apVals = [], bgVals = [];
+   for ( var dy = -geom.annOut; dy <= geom.annOut; ++dy )
+      for ( var dx = -geom.annOut; dx <= geom.annOut; ++dx )
+      {
+         var rr = dx*dx + dy*dy;
+         if ( rr > geom.annOut*geom.annOut )
+            continue;
+         var v = readPx( x0 + dx, y0 + dy );
+         if ( v === null )
+            continue;
+         if ( rr <= apR*apR )
+            apVals.push( v );
+         else if ( rr >= geom.annIn*geom.annIn )
+            bgVals.push( v );
+      }
    return SITreasure.apertureDetection( apVals, bgVals );
 }
 
@@ -1610,26 +1661,91 @@ function measureCapture( image, t )
    if ( typeof t.pxDiam === "number" && isFinite( t.pxDiam ) && t.pxDiam > 0 )
       apR = Math.max( 3, Math.min( 40, Math.round( t.pxDiam/2 ) ) );
    var x0 = Math.round( t.x ), y0 = Math.round( t.y );
-   var det = SITreasure.apertureDetection ? measureCaptureAt( image, x0, y0, apR ) : null;
-   if ( !det || !det.captured )
-      return det || { captured: false, snr: null };
+   var geom = apertureGeom( apR );
+   var readPx = makePatchReader( image, x0, y0, geom.ringR + geom.annOut );
+
+   var det = measureCaptureAt( readPx, x0, y0, apR );
+   det.apR = apR;
+   if ( !det.captured )
+      return det;
 
    // The aperture says "signal": make it beat 12 decoy apertures on a ring
    // around the position before claiming a capture (chance field stars set
-   // the local false-alarm floor; see SITreasure.captureVerdict).
-   var ringR = ( apR + 3 + Math.max( 4, apR ) ) + apR + 4;
-   var decoys = [];
+   // the local false-alarm floor; see SITreasure.captureVerdict). Once the
+   // running decoy maxima already sink both verdict conditions, the
+   // remaining decoys cannot change the outcome — stop measuring.
+   var C = SITreasure.CAPTURE;
+   var decoys = [], maxSnr = 0, maxFrac = 0;
    for ( var k = 0; k < 12; ++k )
    {
       var a = 2*Math.PI*k/12;
-      var dxk = Math.round( x0 + ringR*Math.cos( a ) );
-      var dyk = Math.round( y0 + ringR*Math.sin( a ) );
+      var dxk = Math.round( x0 + geom.ringR*Math.cos( a ) );
+      var dyk = Math.round( y0 + geom.ringR*Math.sin( a ) );
       if ( dxk < 0 || dyk < 0 || dxk >= image.width || dyk >= image.height )
          continue;
-      decoys.push( measureCaptureAt( image, dxk, dyk, apR ) );
+      var d = measureCaptureAt( readPx, dxk, dyk, apR );
+      decoys.push( d );
+      if ( typeof d.snr === "number" && d.snr > maxSnr )
+         maxSnr = d.snr;
+      if ( typeof d.fracAbove === "number" && d.fracAbove > maxFrac )
+         maxFrac = d.fracAbove;
+      if ( decoys.length >= C.MIN_DECOYS &&
+           det.snr < C.SNR_MARGIN*maxSnr && det.fracAbove < C.FRAC_MARGIN*maxFrac )
+         break;
    }
    det.captured = SITreasure.captureVerdict( det, decoys );
    return det;
+}
+
+// --- star-chart formatting helpers (pure) -----------------------------------
+
+function siFmt1( x )
+{
+   return ( Math.round( x*10 )/10 ).toString();
+}
+
+function siStripQuotes( s )
+{
+   return String( s || "" ).replace( /^'+|'+$/g, "" ).replace( /^\s+|\s+$/g, "" );
+}
+
+function siRaHms( ra )
+{
+   var h = ra/15, hh = Math.floor( h ), mm = Math.round( ( h - hh )*60 );
+   if ( mm === 60 ) { hh = ( hh + 1 ) % 24; mm = 0; }
+   return hh + "h " + ( ( mm < 10 ) ? "0" : "" ) + mm + "m";
+}
+
+function siDecDm( dec )
+{
+   var sg = ( dec < 0 ) ? "-" : "+";
+   var a = Math.abs( dec ), dd = Math.floor( a ), mm = Math.round( ( a - dd )*60 );
+   if ( mm === 60 ) { dd += 1; mm = 0; }
+   return sg + dd + "\u00b0 " + ( ( mm < 10 ) ? "0" : "" ) + mm + "\u2032";
+}
+
+// Data sub-lines under a treasure's chart label.
+function treasureSubs( o, dn, fr )
+{
+   var subs = [];
+   if ( dn.sub )
+      subs.push( dn.sub );
+   if ( o.type === "quasar" && typeof o.Rmag === "number" && isFinite( o.Rmag ) )
+      subs.push( "MAG " + siFmt1( o.Rmag ) );
+   if ( o.type === "asteroid" )
+   {
+      if ( typeof o.magV === "number" && isFinite( o.magV ) )
+         subs.push( "MAG " + siFmt1( o.magV ) );
+      if ( o.klass )
+         subs.push( String( o.klass ).toUpperCase() );
+   }
+   if ( o.type === "galaxy" && typeof o.diamArcmin === "number" && isFinite( o.diamArcmin ) )
+      subs.push( "\u00d8 " + siFmt1( o.diamArcmin ) + "\u2032" );
+   if ( o.type === "pne" && typeof o.majDiamArcsec === "number" && isFinite( o.majDiamArcsec ) )
+      subs.push( "\u00d8 " + Math.round( o.majDiamArcsec ) + "\u2033" );
+   if ( o.captured === false )
+      subs.push( fr ? "sous le bruit" : "below the noise" );
+   return subs;
 }
 
 function runTreasureHunt( window, filePath, params, onProgress )
@@ -1684,20 +1800,17 @@ function runTreasureHunt( window, filePath, params, onProgress )
    }
 
    progress( "Querying deep catalogs…" );
-   var galaxies = ( params.treasureGalaxies !== false )
-      ? safeQuery( "galaxy", "galaxies", function() { return SICatalogs.queryGalaxies( raDeg, decDeg, radiusDeg, qopts ); } )
-      : [];
-   var quasars = ( params.treasureQuasars !== false )
-      ? safeQuery( "quasar", "quasars", function() { return SICatalogs.queryQuasars( raDeg, decDeg, radiusDeg, qopts ); } )
-      : [];
-   var pne = ( params.treasurePne !== false )
-      ? safeQuery( "pne", "nebulae", function() { return SICatalogs.queryPne( raDeg, decDeg, radiusDeg, qopts ); } )
-      : [];
-   var asteroids = ( params.treasureAsteroids !== false )
-      ? safeQuery( "asteroid", "asteroids", function() { return SICatalogs.queryAsteroids( raDeg, decDeg, radiusDeg, epochIso, qopts ); } )
-      : [];
+   var HUNTS = [
+      [ "galaxy",   "galaxies",  "treasureGalaxies",  function() { return SICatalogs.queryGalaxies( raDeg, decDeg, radiusDeg, qopts ); } ],
+      [ "quasar",   "quasars",   "treasureQuasars",   function() { return SICatalogs.queryQuasars( raDeg, decDeg, radiusDeg, qopts ); } ],
+      [ "pne",      "nebulae",   "treasurePne",       function() { return SICatalogs.queryPne( raDeg, decDeg, radiusDeg, qopts ); } ],
+      [ "asteroid", "asteroids", "treasureAsteroids", function() { return SICatalogs.queryAsteroids( raDeg, decDeg, radiusDeg, epochIso, qopts ); } ]
+   ];
+   var flat = [];
+   for ( var hq = 0; hq < HUNTS.length; ++hq )
+      if ( params[ HUNTS[ hq ][ 2 ] ] !== false )
+         flat = flat.concat( safeQuery( HUNTS[ hq ][ 0 ], HUNTS[ hq ][ 1 ], HUNTS[ hq ][ 3 ] ) );
 
-   var flat = galaxies.concat( quasars ).concat( pne ).concat( asteroids );
    var treasures = SITreasure.crossMatch( flat, meta.wcs.celestialToImage, width, height );
    progress( treasures.length + " object(s) landed inside the frame." );
 
@@ -1714,7 +1827,6 @@ function runTreasureHunt( window, filePath, params, onProgress )
    // annulus background. This is what separates "captured" from "in the
    // field, below your noise" — a mag-20 asteroid lands in every frame but
    // shows in none, and the report must not oversell it.
-   var capturedCount = 0;
    for ( var ci = 0; ci < treasures.length; ++ci )
    {
       var ct = treasures[ ci ];
@@ -1724,31 +1836,19 @@ function runTreasureHunt( window, filePath, params, onProgress )
          ct.snr = Math.round( det.snr*10 )/10;
       // A predicted position looser than the aperture cannot attribute the
       // flux to the object (poorly observed asteroids have arcminute errors).
-      if ( ct.captured && typeof ct.errArcsec === "number" && meta.pixScaleArcsec > 0 )
-      {
-         var apArcsec = Math.max( 3, Math.min( 40, ( ct.pxDiam > 0 ) ? ct.pxDiam/2 : 4 ) )*meta.pixScaleArcsec;
-         if ( ct.errArcsec > apArcsec )
-            ct.captured = false;
-      }
+      if ( ct.captured && typeof ct.errArcsec === "number" && meta.pixScaleArcsec > 0 &&
+           ct.errArcsec > det.apR*meta.pixScaleArcsec )
+         ct.captured = false;
    }
    // Cross-object sanity: an object far fainter than the typical honest
    // non-detection of its own type is a chance star, not a capture.
    SITreasure.applyMagConsistency( treasures );
-   for ( var cc = 0; cc < treasures.length; ++cc )
-      if ( treasures[ cc ].captured )
-         capturedCount++;
-   progress( capturedCount + " of " + treasures.length + " show signal above the local noise." );
 
    // Captured objects lead the list (and the thumbnails); the below-noise
    // ones keep their notability order after them.
-   var ordered = [];
-   for ( var oc = 0; oc < treasures.length; ++oc )
-      if ( treasures[ oc ].captured )
-         ordered.push( treasures[ oc ] );
-   for ( var on = 0; on < treasures.length; ++on )
-      if ( !treasures[ on ].captured )
-         ordered.push( treasures[ on ] );
-   treasures = ordered;
+   var capturedList = treasures.filter( function( o ) { return o.captured; } );
+   treasures = capturedList.concat( treasures.filter( function( o ) { return !o.captured; } ) );
+   progress( capturedList.length + " of " + treasures.length + " show signal above the local noise." );
 
    var summary = SITreasure.summarize( treasures, params.lang );
 
@@ -1758,47 +1858,26 @@ function runTreasureHunt( window, filePath, params, onProgress )
    var fr = ( params.lang === "fr" );
 
    // Star-chart items: every captured treasure, the most notable below-noise
-   // ones (dimmed), plus offline context — bright named stars and NGC/IC
-   // neighbors — so the chart reads like a map even when the deep catalogs
-   // came home empty. The full inventory lives in the HTML report.
+   // ones, plus offline context — bright named stars and NGC/IC neighbors —
+   // so the chart reads like a map even when the deep catalogs came home
+   // empty. The full inventory lives in the HTML report; past the label cap
+   // objects keep their marker but stay unlabeled.
    var items = [];
-   function fmt1( x ) { return ( Math.round( x*10 )/10 ).toString(); }
-   function treasureSubs( o, dn )
-   {
-      var subs = [];
-      if ( dn.sub )
-         subs.push( dn.sub );
-      if ( o.type === "quasar" && typeof o.Rmag === "number" && isFinite( o.Rmag ) )
-         subs.push( "MAG " + fmt1( o.Rmag ) );
-      if ( o.type === "asteroid" )
-      {
-         if ( typeof o.magV === "number" && isFinite( o.magV ) )
-            subs.push( "MAG " + fmt1( o.magV ) );
-         if ( o.klass )
-            subs.push( String( o.klass ).toUpperCase() );
-      }
-      if ( o.type === "galaxy" && typeof o.diamArcmin === "number" && isFinite( o.diamArcmin ) )
-         subs.push( "\u00d8 " + fmt1( o.diamArcmin ) + "\u2032" );
-      if ( o.type === "pne" && typeof o.majDiamArcsec === "number" && isFinite( o.majDiamArcsec ) )
-         subs.push( "\u00d8 " + Math.round( o.majDiamArcsec ) + "\u2033" );
-      if ( o.captured === false )
-         subs.push( fr ? "sous le bruit" : "below the noise" );
-      return subs;
-   }
+   var LABEL_CAP = 40;
    var dimBudget = 6;
    for ( var m = 0; m < treasures.length; ++m )
    {
       var o = treasures[ m ];
-      var dn = SITreasure.displayName( o, params.lang );
-      if ( o.captured !== false )
-         items.push( { x: o.x, y: o.y, kind: o.type, main: dn.main,
-                       subs: treasureSubs( o, dn ), dim: false } );
-      else if ( dimBudget > 0 )
+      if ( o.captured === false && dimBudget-- <= 0 )
+         continue;
+      if ( items.length >= LABEL_CAP )
       {
-         dimBudget--;
-         items.push( { x: o.x, y: o.y, kind: o.type, main: dn.main,
-                       subs: treasureSubs( o, dn ), dim: true } );
+         items.push( { x: o.x, y: o.y, kind: o.type } );
+         continue;
       }
+      var dn = SITreasure.displayName( o, params.lang );
+      items.push( { x: o.x, y: o.y, kind: o.type, main: dn.main,
+                    subs: treasureSubs( o, dn, fr ) } );
    }
 
    var context = loadChartContext( meta, width, height, 8, 5,
@@ -1810,11 +1889,11 @@ function runTreasureHunt( window, filePath, params, onProgress )
       if ( st.commonName && st.commonName !== st.name )
          subs2.push( st.name );
       if ( typeof st.mag === "number" && isFinite( st.mag ) )
-         subs2.push( "MAG " + fmt1( st.mag ) );
+         subs2.push( "MAG " + siFmt1( st.mag ) );
       if ( st.spectral )
          subs2.push( String( st.spectral ).substring( 0, 8 ).toUpperCase() );
       items.push( { x: st.x, y: st.y, kind: "star",
-                    main: st.commonName || st.name, subs: subs2, dim: false } );
+                    main: st.commonName || st.name, subs: subs2 } );
    }
    for ( var cd = 0; cd < context.dsos.length; ++cd )
    {
@@ -1823,7 +1902,7 @@ function runTreasureHunt( window, filePath, params, onProgress )
       if ( dso.commonName )
          subs3.push( dso.commonName );
       if ( typeof dso.mag === "number" && isFinite( dso.mag ) )
-         subs3.push( "MAG " + fmt1( dso.mag ) );
+         subs3.push( "MAG " + siFmt1( dso.mag ) );
       var radiusPx = null;
       if ( typeof dso.diamArcmin === "number" && isFinite( dso.diamArcmin ) &&
            meta.pixScaleArcsec > 0 )
@@ -1838,28 +1917,11 @@ function runTreasureHunt( window, filePath, params, onProgress )
 
    // Corner cards: title (chart + field), legend (kinds present),
    // observation data from the FITS keywords.
-   function stripQuotes( s )
-   {
-      return String( s || "" ).replace( /^'+|'+$/g, "" ).replace( /^\s+|\s+$/g, "" );
-   }
-   function raHms( ra )
-   {
-      var h = ra/15, hh = Math.floor( h ), mm = Math.round( ( h - hh )*60 );
-      if ( mm === 60 ) { hh = ( hh + 1 ) % 24; mm = 0; }
-      return hh + "h " + ( ( mm < 10 ) ? "0" : "" ) + mm + "m";
-   }
-   function decDm( dec )
-   {
-      var sg = ( dec < 0 ) ? "-" : "+";
-      var a = Math.abs( dec ), dd = Math.floor( a ), mm2 = Math.round( ( a - dd )*60 );
-      if ( mm2 === 60 ) { dd += 1; mm2 = 0; }
-      return sg + dd + "\u00b0 " + ( ( mm2 < 10 ) ? "0" : "" ) + mm2 + "\u2032";
-   }
-   var target = stripQuotes( meta.keywords[ "OBJECT" ] );
+   var target = siStripQuotes( meta.keywords[ "OBJECT" ] );
    var titleLines = [ fr ? "CARTE STELLAIRE" : "STAR CHART" ];
    if ( target )
       titleLines.push( target.toUpperCase() );
-   titleLines.push( "RA " + raHms( raDeg ) + "  |  DEC " + decDm( decDeg ) );
+   titleLines.push( "RA " + siRaHms( raDeg ) + "  |  DEC " + siDecDm( decDeg ) );
 
    var LEGEND_LABEL = {
       galaxy: fr ? "GALAXIE" : "GALAXY",
@@ -1879,10 +1941,10 @@ function runTreasureHunt( window, filePath, params, onProgress )
       }
 
    var dataLines = [ fr ? "DONN\u00c9ES D'OBSERVATION" : "OBSERVATION DATA" ];
-   var instrume = stripQuotes( meta.keywords[ "TELESCOP" ] ) || stripQuotes( meta.keywords[ "INSTRUME" ] );
+   var instrume = siStripQuotes( meta.keywords[ "TELESCOP" ] ) || siStripQuotes( meta.keywords[ "INSTRUME" ] );
    if ( instrume )
       dataLines.push( ( fr ? "INSTRUMENT : " : "INSTRUMENT: " ) + instrume.toUpperCase() );
-   var filter = stripQuotes( meta.keywords[ "FILTER" ] );
+   var filter = siStripQuotes( meta.keywords[ "FILTER" ] );
    if ( filter )
       dataLines.push( ( fr ? "FILTRE : " : "FILTER: " ) + filter.toUpperCase() );
    if ( meta.exposureSec > 0 )
@@ -1901,7 +1963,7 @@ function runTreasureHunt( window, filePath, params, onProgress )
    }
 
    var mapBmp = SIRender.chartField( base, {
-      accent: params.treasureAccent || "#9FD8D2",
+      accent: params.treasureAccent || SI_DEFAULT_ACCENT,
       items: items,
       cards: { title: titleLines, legend: legend, data: dataLines }
    } );
@@ -2028,7 +2090,7 @@ function buildTreasureRich( res, lang )
       if ( n > 0 )
          h += "<td bgcolor=\"" + TYPE[ k ].bg + "\"><font color=\"" + TYPE[ k ].c +
               "\">&nbsp;<b>" + nc + "</b> " + TYPE[ k ].n +
-              ( ( n > nc ) ? " <i>(+" + ( n - nc ) + ( fr ? " sous le bruit" : " below noise" ) + ")</i>" : "" ) +
+              ( ( n > nc ) ? " <i>(+" + ( n - nc ) + ( fr ? " sous le bruit" : " below the noise" ) + ")</i>" : "" ) +
               "&nbsp;</font></td>";
    }
    h += "</tr></table>";
@@ -2113,6 +2175,7 @@ var SI_UI = {
       huntPne: "Planetary nebulae", huntAsteroids: "Asteroids",
       accentColor: "Overlay color:",
       accentColorTip: "Color of the chart markers, leader lines, labels and cards.",
+      needFrames: "Add some light frames first.",
       cannotOpen: "Cannot open",
       needImage: "Add one plate-solved image, or open one in PixInsight first.",
       needSolve: "This image has no astrometric solution (WCS). Plate-solve it first (ImageSolver), then run Treasure Hunt."
@@ -2163,6 +2226,7 @@ var SI_UI = {
       huntPne: "N\u00e9buleuses plan\u00e9taires", huntAsteroids: "Ast\u00e9ro\u00efdes",
       accentColor: "Couleur du trac\u00e9 :",
       accentColorTip: "Couleur des marqueurs, lignes de renvoi, \u00e9tiquettes et cartouches de la carte.",
+      needFrames: "Ajoute d'abord des brutes (lights).",
       cannotOpen: "Impossible d'ouvrir",
       needImage: "Ajoute une image r\u00e9solue (plate-solve), ou ouvre-la d'abord dans PixInsight.",
       needSolve: "Cette image n'a pas de solution astrom\u00e9trique (WCS). R\u00e9sous-la d'abord (ImageSolver), puis relance la chasse au tr\u00e9sor."
@@ -2221,49 +2285,53 @@ class SIColorDialog extends Dialog
    {
       super();
       var self = this;
-      this.color = ( argb | 0xff000000 ) | 0;
+      this.color = argb | 0xff000000;
       var hsv = siRgbToHsv( this.color );
       this.hue = hsv.h;
       this.sat = hsv.s;
       this.val = hsv.v;
       this.windowTitle = title || "Color";
 
-      var PAD = 232, STRIP = 22, RES = 116;
+      // The pad bitmap is drawScaledBitmap'ed up to PAD px, so a modest
+      // resolution is invisible after scaling and 3x cheaper to rebuild
+      // while dragging the hue strip.
+      var PAD = 232, STRIP = 22, RES = 64;
 
       // --- saturation/value pad (bitmap cached per hue) -------------------
-      this.svBitmap = null;
+      this.svBitmap = new Bitmap( RES, RES );
       this.svBitmapHue = -1;
       this.rebuildSv = function()
       {
          var hq = Math.round( self.hue );
-         if ( self.svBitmap !== null && self.svBitmapHue === hq )
+         if ( self.svBitmapHue === hq )
             return;
-         var bm = new Bitmap( RES, RES );
          for ( var y = 0; y < RES; ++y )
          {
             var v = 1 - y/( RES - 1 );
             for ( var x = 0; x < RES; ++x )
-               bm.setPixel( x, y, siHsvToRgb( hq, x/( RES - 1 ), v ) );
+               self.svBitmap.setPixel( x, y, siHsvToRgb( hq, x/( RES - 1 ), v ) );
          }
-         self.svBitmap = bm;
          self.svBitmapHue = hq;
+      };
+
+      // Single entry point for external color changes (presets, hex field).
+      this.setColor = function( argb2 )
+      {
+         self.color = argb2 | 0xff000000;
+         var hv = siRgbToHsv( self.color );
+         self.hue = hv.h;
+         self.sat = hv.s;
+         self.val = hv.v;
+         syncFromHsv();
       };
 
       function syncFromHsv()
       {
          self.color = siHsvToRgb( self.hue, self.sat, self.val );
-         self.hexEdit.text = siArgbToHex( self.color );
+         self.hexEdit.text = SIRender.argbToHex( self.color );
          self.svPad.repaint();
          self.huePad.repaint();
          self.preview.repaint();
-      }
-
-      function siArgbToHex( a )
-      {
-         var s = ( a & 0xffffff ).toString( 16 ).toUpperCase();
-         while ( s.length < 6 )
-            s = "0" + s;
-         return "#" + s;
       }
 
       this.svPad = new Control( this );
@@ -2338,7 +2406,7 @@ class SIColorDialog extends Dialog
       };
 
       // --- preset swatches -------------------------------------------------
-      var PRESETS = [ 0xff9fd8d2, 0xff7fd1ff, 0xff8ff0cf, 0xffe8d44d,
+      var PRESETS = [ SIRender.hexToArgb( SI_DEFAULT_ACCENT ), 0xff7fd1ff, 0xff8ff0cf, 0xffe8d44d,
                       0xffffb86c, 0xffe39bff, 0xffff6e6e, 0xfff2f2f2 ];
       this.presetSizer = new HorizontalSizer;
       this.presetSizer.spacing = 6;
@@ -2363,10 +2431,7 @@ class SIColorDialog extends Dialog
          };
          sw.onMousePress = function()
          {
-            self.color = this.presetColor;
-            var hv = siRgbToHsv( self.color );
-            self.hue = hv.h; self.sat = hv.s; self.val = hv.v;
-            syncFromHsv();
+            self.setColor( this.presetColor );
          };
          this.presetControls.push( sw );
          this.presetSizer.add( sw );
@@ -2390,19 +2455,14 @@ class SIColorDialog extends Dialog
       };
       this.hexEdit = new Edit( this );
       this.hexEdit.setFixedWidth( 96 );
-      this.hexEdit.text = siArgbToHex( this.color );
+      this.hexEdit.text = SIRender.argbToHex( this.color );
       this.hexEdit.onEditCompleted = function()
       {
          var m = String( this.text ).replace( /^\s*#?/, "" );
          if ( /^[0-9a-fA-F]{6}$/.test( m ) )
-         {
-            self.color = 0xff000000 | parseInt( m, 16 );
-            var hv2 = siRgbToHsv( self.color );
-            self.hue = hv2.h; self.sat = hv2.s; self.val = hv2.v;
-            syncFromHsv();
-         }
+            self.setColor( parseInt( m, 16 ) );
          else
-            this.text = siArgbToHex( self.color );
+            this.text = SIRender.argbToHex( self.color );
       };
       this.hexSizer = new HorizontalSizer;
       this.hexSizer.spacing = 8;
@@ -2606,7 +2666,6 @@ class SkyIntrudersDialog extends Dialog
       this.params = params;
       this.files = [];
       this.lastResult = null;
-      this.sessionFrames = null;   // raw frames of the last Night-trails run
       this.windowTitle = SKYINTRUDERS_TITLE;
 
       var self = this;
@@ -2746,16 +2805,7 @@ class SkyIntrudersDialog extends Dialog
       // dialog. The swatch icon is just a bitmap filled with the color.
       function accentToArgb( hex )
       {
-         var h = String( hex || "#9FD8D2" ).replace( /^#/, "" );
-         var v = parseInt( h, 16 );
-         return isFinite( v ) ? ( 0xff000000 | v ) : 0xff9fd8d2;
-      }
-      function argbToAccent( argb )
-      {
-         var s = ( argb & 0xffffff ).toString( 16 ).toUpperCase();
-         while ( s.length < 6 )
-            s = "0" + s;
-         return "#" + s;
+         return SIRender.hexToArgb( hex || SI_DEFAULT_ACCENT );
       }
       this.accentLabel = new Label( this );
       this.accentLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
@@ -2779,7 +2829,7 @@ class SkyIntrudersDialog extends Dialog
                                         uiT( self.params.lang, "accentColor" ).replace( /\s*:\s*$/, "" ) );
             if ( cd.execute() )
             {
-               self.params.treasureAccent = argbToAccent( cd.color );
+               self.params.treasureAccent = SIRender.argbToHex( cd.color );
                self.updateAccentSwatch();
             }
          }
@@ -3140,7 +3190,7 @@ class SkyIntrudersDialog extends Dialog
    {
       if ( this.files.length == 0 )
       {
-         ( new MessageBox( "Add some light frames first.", SKYINTRUDERS_TITLE,
+         ( new MessageBox( uiT( this.params.lang, "needFrames" ), SKYINTRUDERS_TITLE,
                            StdIcon.Information, StdButton.Ok ) ).execute();
          return;
       }
@@ -3151,7 +3201,6 @@ class SkyIntrudersDialog extends Dialog
       try
       {
          this.lastResult = runAnalysis( this.files, this.params );
-         this.sessionFrames = this.lastResult.frames;
          console.writeln( "" );
          console.writeln( this.lastResult.report.markdown );
          var dir = File.extractDrive( this.files[ 0 ] ) + File.extractDirectory( this.files[ 0 ] );
@@ -3286,8 +3335,8 @@ function siConstructTest()
       var hd = new HtmlResultDialog( "t", rich, "<html></html>", "x.html", File.systemTempDirectory );
       out.htmlDialogOk = ( typeof hd.openButton !== "undefined" );
 
-      var cdlg = new SIColorDialog( 0xff9fd8d2, "t" );
-      out.colorDialogOk = ( cdlg.color === ( 0xff9fd8d2 | 0 ) );
+      var cdlg = new SIColorDialog( SIRender.hexToArgb( SI_DEFAULT_ACCENT ), "t" );
+      out.colorDialogOk = ( SIRender.argbToHex( cdlg.color ) === SI_DEFAULT_ACCENT );
    }
    catch ( e )
    {

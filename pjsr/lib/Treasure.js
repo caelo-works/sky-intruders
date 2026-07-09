@@ -13,6 +13,13 @@ var SITreasure = ( function()
 {
    var Cosmo = ( typeof SICosmology !== "undefined" ) ? SICosmology : null;
 
+   // Capture-scoring contract, shared by apertureDetection, captureVerdict
+   // and the entry script's decoy sampler: base thresholds, the margins a
+   // target must keep over the best decoy, and the minimum decoy count for
+   // the verdict to mean anything.
+   var CAPTURE = { SNR_MIN: 4, FRAC_MIN: 0.30, SNR_MARGIN: 1.3, FRAC_MARGIN: 2,
+                   MIN_DECOYS: 6 };
+
    function toList( objectsByType )
    {
       // Accept either a flat array of typed rows or a { type: rows[] } map.
@@ -51,9 +58,7 @@ var SITreasure = ( function()
    {
       if ( !a || a.length === 0 )
          return null;
-      var s = a.slice().sort( function( x, y ) { return x - y; } );
-      var m = s.length >> 1;
-      return ( s.length & 1 ) ? s[ m ] : ( s[ m - 1 ] + s[ m ] )/2;
+      return SIStats.arrayMedian( a );
    }
 
    /*
@@ -69,7 +74,10 @@ var SITreasure = ( function()
                   fracAbove: null, captured: false };
       if ( !apVals || apVals.length === 0 || !bgVals || bgVals.length < 8 )
          return out;
-      var bg = medianOf( bgVals );
+      // One sort serves both the median and the upper percentile.
+      var srt = bgVals.slice().sort( function( a, b ) { return a - b; } );
+      var m = srt.length >> 1;
+      var bg = ( srt.length & 1 ) ? srt[ m ] : ( srt[ m - 1 ] + srt[ m ] )/2;
       var dev = [];
       for ( var i = 0; i < bgVals.length; ++i )
          dev.push( Math.abs( bgVals[ i ] - bg ) );
@@ -79,7 +87,6 @@ var SITreasure = ( function()
       // every rim pixel becomes a fake 10-sigma "detection". Widen sigma to
       // the upper-percentile spread of the annulus, so the aperture peak has
       // to beat what the LOCAL structure already does on its own.
-      var srt = bgVals.slice().sort( function( a, b ) { return a - b; } );
       var p90 = srt[ Math.min( srt.length - 1, Math.floor( srt.length*0.90 ) ) ];
       var structSigma = ( p90 - bg )/1.2816; // z(0.90) for a Gaussian
       if ( structSigma > sigma )
@@ -99,7 +106,7 @@ var SITreasure = ( function()
          return out; // flat/clipped annulus: cannot claim a detection
       out.snr = ( peak - bg )/sigma;
       out.fracAbove = above/apVals.length;
-      out.captured = ( out.snr >= 4 ) || ( out.fracAbove >= 0.30 );
+      out.captured = ( out.snr >= CAPTURE.SNR_MIN ) || ( out.fracAbove >= CAPTURE.FRAC_MIN );
       return out;
    }
 
@@ -115,7 +122,7 @@ var SITreasure = ( function()
    {
       if ( !target || !target.captured )
          return false;
-      if ( !decoys || decoys.length < 6 )
+      if ( !decoys || decoys.length < CAPTURE.MIN_DECOYS )
          return true;
       var maxSnr = 0, maxFrac = 0;
       for ( var i = 0; i < decoys.length; ++i )
@@ -129,9 +136,9 @@ var SITreasure = ( function()
             maxFrac = d.fracAbove;
       }
       var snrOk = ( typeof target.snr === "number" ) &&
-                  target.snr >= Math.max( 4, 1.3*maxSnr );
+                  target.snr >= Math.max( CAPTURE.SNR_MIN, CAPTURE.SNR_MARGIN*maxSnr );
       var fracOk = ( typeof target.fracAbove === "number" ) &&
-                   target.fracAbove >= Math.max( 0.30, 2*maxFrac );
+                   target.fracAbove >= Math.max( CAPTURE.FRAC_MIN, CAPTURE.FRAC_MARGIN*maxFrac );
       return snrOk || fracOk;
    }
 
@@ -488,6 +495,7 @@ var SITreasure = ( function()
    }
 
    return {
+      CAPTURE: CAPTURE,
       notability: notability,
       crossMatch: crossMatch,
       narrate: narrate,

@@ -32,15 +32,11 @@ function listMasters( dir )
 {
    var out = [];
    var ff = new FileFind;
-   if ( ff.begin( dir + "/*" ) )
+   if ( ff.begin( dir + "/*.xisf" ) )
       do
       {
          if ( ff.isFile )
-         {
-            var l = String( ff.name ).toLowerCase();
-            if ( l.length > 5 && l.substring( l.length - 5 ) === ".xisf" )
-               out.push( dir + "/" + ff.name );
-         }
+            out.push( dir + "/" + ff.name );
       }
       while ( ff.next() );
    out.sort();
@@ -78,7 +74,7 @@ function runTreasureTestset()
             var meta0 = SIFrameMeta.read( window, files[ i ] );
             entry.object = meta0.keywords[ "OBJECT" ] || null;
             entry.wcsBefore = meta0.wcs.kind;
-            if ( !( meta0.wcs.kind === "solution" || meta0.wcs.kind === "tan" ) )
+            if ( !hasUsableWcs( meta0.wcs.kind ) )
                throw new Error( "no astrometric solution — run tests/solve-masters.js first" );
 
             var res = runTreasureHunt( window, files[ i ], params, null );

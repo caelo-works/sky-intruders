@@ -147,14 +147,21 @@ var SITreasureReport = ( function()
          fieldLine = esc( field.target ) + " · " + fieldLine;
       H.push( "<p class=\"field\">" + fieldLine + "</p>" );
 
+      // One kind -> localized-noun table drives both the outage note and the
+      // counts chips below.
+      var KINDS = [ [ "galaxy", T.galaxies ], [ "quasar", T.quasars ],
+                    [ "pne", T.pne ], [ "asteroid", T.asteroids ] ];
+      var KIND_NAME = {};
+      for ( var kn0 = 0; kn0 < KINDS.length; ++kn0 )
+         KIND_NAME[ KINDS[ kn0 ][ 0 ] ] = KINDS[ kn0 ][ 1 ];
+
       // Catalog outages: an empty count must not read as "really zero".
       var issues = opts.issues || [];
       if ( issues.length > 0 )
       {
          var names = [];
          for ( var iw = 0; iw < issues.length; ++iw )
-            names.push( { galaxy: T.galaxies, quasar: T.quasars, pne: T.pne,
-                          asteroid: T.asteroids }[ issues[ iw ] ] || issues[ iw ] );
+            names.push( KIND_NAME[ issues[ iw ] ] || issues[ iw ] );
          H.push( "<p class=\"issues\">\u26a0 " + esc( T.issues ) + esc( names.join( ", " ) ) + "</p>" );
       }
 
@@ -168,11 +175,9 @@ var SITreasureReport = ( function()
       if ( summary && summary.counts )
       {
          H.push( "<ul class=\"counts\">" );
-         var kinds = [ [ "galaxy", T.galaxies ], [ "quasar", T.quasars ],
-                       [ "pne", T.pne ], [ "asteroid", T.asteroids ] ];
-         for ( var kc = 0; kc < kinds.length; ++kc )
+         for ( var kc = 0; kc < KINDS.length; ++kc )
          {
-            var kk = kinds[ kc ][ 0 ], kn = kinds[ kc ][ 1 ];
+            var kk = KINDS[ kc ][ 0 ], kn = KINDS[ kc ][ 1 ];
             var tot = summary.counts[ kk ] || 0;
             var cap = ( summary.captured && summary.captured[ kk ] !== undefined )
                ? summary.captured[ kk ] : tot;

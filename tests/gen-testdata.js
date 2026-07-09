@@ -10,8 +10,7 @@
  *
  * Note: the injected trails are synthetic, so Night trails will classify them
  * as meteor / uncataloged-satellite candidates (they cannot match a real
- * satellite pass). Detection, classification, the night report and all of
- * works fully.
+ * satellite pass). Detection, classification and the night report work fully.
  */
 
 /* beautify ignore:start */
