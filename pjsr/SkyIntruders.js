@@ -1866,7 +1866,17 @@ function runTreasureHunt( window, filePath, params, onProgress )
    if ( meta.exposureSec > 0 )
       dataLines.push( ( fr ? "EXPOSITION : " : "EXPOSURE: " ) + Math.round( meta.exposureSec ) + " s" );
    if ( meta.dateObs )
-      dataLines.push( ( fr ? "DATE : " : "DATE: " ) + meta.dateObs.toISOString().substring( 0, 10 ) );
+   {
+      var MONTHS = fr
+         ? [ "Janvier", "F\u00e9vrier", "Mars", "Avril", "Mai", "Juin", "Juillet",
+             "Ao\u00fbt", "Septembre", "Octobre", "Novembre", "D\u00e9cembre" ]
+         : [ "January", "February", "March", "April", "May", "June", "July",
+             "August", "September", "October", "November", "December" ];
+      var dd = meta.dateObs.getUTCDate(), mo = MONTHS[ meta.dateObs.getUTCMonth() ],
+          yy = meta.dateObs.getUTCFullYear();
+      dataLines.push( fr ? ( "DATE : " + dd + " " + mo + " " + yy )
+                         : ( "DATE: " + mo + " " + dd + ", " + yy ) );
+   }
 
    var mapBmp = SIRender.chartField( base, {
       items: items,

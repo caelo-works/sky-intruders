@@ -618,10 +618,10 @@ var SIRender = ( function()
                continue; // nowhere reasonable: keep the marker, skip the label
 
             var hEnd = ( sxDir > 0 ) ? lx - fontSize*0.25 : lx + blockW + fontSize*0.25;
-            g.pen = new Pen( halo, thin*3 );
+            g.pen = new Pen( halo, thin*4 );
             g.drawLine( rimX, rimY, ex, ey );
             g.drawLine( ex, ey, hEnd, ey );
-            g.pen = new Pen( accent, thin );
+            g.pen = new Pen( accent, thin*2 ); // same weight as the marker strokes
             g.drawLine( rimX, rimY, ex, ey );
             g.drawLine( ex, ey, hEnd, ey );
 
@@ -659,15 +659,32 @@ var SIRender = ( function()
             try { g.brush = new Brush( 0x00000000 ); } catch ( e3 ) {}
          }
 
-         function cardLines( x, y, lines, firstBig )
+         function lineHeights( lines, firstBig )
          {
-            var yy = y;
+            var hs = [];
+            for ( var li = 0; li < lines.length; ++li )
+               hs.push( ( firstBig && li === 0 ) ? Math.round( fontSize*1.3 )
+                                                 : Math.round( subSize*1.45 ) );
+            return hs;
+         }
+
+         // Text blocks are centered vertically inside their card: start at
+         // (cardH - textH)/2 from the top and put each BASELINE at ~80% of
+         // its line box.
+         function cardLines( rect, lines, firstBig )
+         {
+            var hs = lineHeights( lines, firstBig );
+            var textH = 0;
+            for ( var hi = 0; hi < hs.length; ++hi )
+               textH += hs[ hi ];
+            var top = rect.y + ( rect.h - textH )/2;
             for ( var li = 0; li < lines.length; ++li )
             {
-               var big = ( firstBig && li === 0 );
-               yy += big ? Math.round( fontSize*1.3 ) : Math.round( subSize*1.45 );
-               textHalo( g, big ? titleFont : subFont, x, yy, String( lines[ li ] ),
+               var baseline = top + hs[ li ]*0.8;
+               textHalo( g, ( firstBig && li === 0 ) ? titleFont : subFont,
+                         rect.x + pad, baseline, String( lines[ li ] ),
                          new Pen( accent, 1 ) );
+               top += hs[ li ];
             }
          }
 
@@ -676,21 +693,24 @@ var SIRender = ( function()
             var rect = cardRects[ cdr ];
             drawCard( rect.x, rect.y, rect.w, rect.h );
             if ( rect.id === "title" )
-               cardLines( rect.x + pad, rect.y + pad*0.3, cards.title, true );
+               cardLines( rect, cards.title, true );
             else if ( rect.id === "data" )
-               cardLines( rect.x + pad, rect.y + pad*0.3, cards.data, true );
+               cardLines( rect, cards.data, true );
             else if ( rect.id === "legend" )
             {
                var gw = Math.round( fontSize*1.6 );
-               var yy2 = rect.y + pad*0.3;
+               var rowH = Math.round( subSize*1.45 );
+               var top2 = rect.y + ( rect.h - rowH*cards.legend.length )/2;
                for ( var lr = 0; lr < cards.legend.length; ++lr )
                {
-                  yy2 += Math.round( subSize*1.45 );
+                  var baseline2 = top2 + rowH*0.8;
                   chartGlyph( g, cards.legend[ lr ].kind,
-                              rect.x + pad + gw*0.35, yy2 - subSize*0.35,
+                              rect.x + pad + gw*0.35, baseline2 - subSize*0.35,
                               Math.round( subSize*0.45 ) );
-                  textHalo( g, subFont, rect.x + pad + gw, yy2, String( cards.legend[ lr ].label ),
+                  textHalo( g, subFont, rect.x + pad + gw, baseline2,
+                            String( cards.legend[ lr ].label ),
                             new Pen( accent, 1 ) );
+                  top2 += rowH;
                }
             }
          }
