@@ -66,23 +66,45 @@ function analyzeSet( files )
       gc();
    }
    var w = binnedList[ 0 ].width, h = binnedList[ 0 ].height;
-   var arrays = [];
-   for ( var i = 0; i < binnedList.length; ++i )
-      arrays.push( binnedList[ i ].data );
-   var minCover = Math.max( 3, arrays.length - 1 );
-   var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
-   var normalized = [];
-   for ( var i = 0; i < arrays.length; ++i )
-   {
-      var lf = SITrailCore.linearFitToModel( arrays[ i ], stack0.model, stack0.valid );
-      normalized.push( SITrailCore.applyLinear( arrays[ i ], lf.a, lf.b ) );
-   }
-   var stack = SITrailCore.medianStackMasked( normalized, 1e-6, minCover );
-   var mask = SITrailCore.erodeMask( stack.valid, w, h, 6 );
 
-   var frames = [];
-   for ( var fi = 0; fi < files.length; ++fi )
-      frames.push( analyzeFrameDiff( files[ fi ], normalized[ fi ], stack, mask, w, h, fi ) );
+   // production parity: one model per FILTER group (token in the filename)
+   var groups = {};
+   for ( var i = 0; i < files.length; ++i )
+   {
+      var m = /_([A-Za-z]+)_-?[0-9]/.exec( files[ i ].split( "/" ).pop() );
+      var key = m ? m[ 1 ] : "?";
+      if ( !groups[ key ] )
+         groups[ key ] = [];
+      groups[ key ].push( i );
+   }
+
+   var frames = new Array( files.length );
+   for ( var gk in groups )
+   {
+      var idx = groups[ gk ];
+      if ( idx.length < 3 )
+      {
+         for ( var s0 = 0; s0 < idx.length; ++s0 )
+            frames[ idx[ s0 ] ] = { file: files[ idx[ s0 ] ].split( "/" ).pop(),
+                                    skipped: "group " + gk + " < 3 frames" };
+         continue;
+      }
+      var arrays = [];
+      for ( var a0 = 0; a0 < idx.length; ++a0 )
+         arrays.push( binnedList[ idx[ a0 ] ].data );
+      var minCover = Math.max( 3, arrays.length - 1 );
+      var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
+      for ( var a1 = 0; a1 < idx.length; ++a1 )
+      {
+         var lf = SITrailCore.linearFitToModel( arrays[ a1 ], stack0.model, stack0.valid );
+         SITrailCore.applyLinear( arrays[ a1 ], lf.a, lf.b );
+      }
+      var stack = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
+      var mask = SITrailCore.erodeMask( stack.valid, w, h, 6 );
+      for ( var p0 = 0; p0 < idx.length; ++p0 )
+         frames[ idx[ p0 ] ] = analyzeFrameDiff( files[ idx[ p0 ] ], arrays[ p0 ],
+                                                 stack, mask, w, h, idx[ p0 ] );
+   }
    return { frames: frames };
 }
 

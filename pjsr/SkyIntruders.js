@@ -466,31 +466,32 @@ function analyzeNightSet( files, params )
    // transparency varies with airmass and the nebula would otherwise leak
    // structured residuals into every difference), and the model is rebuilt
    // from the normalized frames.
-   var arrays = [];
-   for ( var i = 0; i < entries.length; ++i )
-      arrays.push( entries[ i ].binned.data );
-   var minCover = Math.max( 3, entries.length - 1 );
-   SIProf.start( "model: median + normalize" );
-   var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
-   var normalized = [];
+   // The frames are grouped BY FILTER: the Veil in OIII and the Veil in
+   // H-alpha are different objects as far as a median sky model is
+   // concerned, and a mixed model leaks whichever structure the linear fit
+   // cannot reconcile into every difference (measured on a real mixed
+   // session: every OIII frame lost its trails and some H-alpha ones too).
+   // Registration and everything downstream stay common — only the model
+   // and the detection run per group.
+   var groups = {};
    for ( var i = 0; i < entries.length; ++i )
    {
-      var lf = SITrailCore.linearFitToModel( arrays[ i ], stack0.model, stack0.valid );
-      normalized.push( SITrailCore.applyLinear( arrays[ i ], lf.a, lf.b ) );
-      entries[ i ].binned.data = normalized[ i ];
-      processEvents();
+      var filt = String( ( entries[ i ].meta.keywords[ "FILTER" ] || "" ) ).replace( /'/g, "" ).trim() || "?";
+      if ( !groups[ filt ] )
+         groups[ filt ] = [];
+      groups[ filt ].push( i );
    }
-   var stack = SITrailCore.medianStackMasked( normalized, 1e-6, minCover );
-   var model = stack.model;
-   // Trust the model only where 3+ frames overlap, minus a safety ring for
-   // binning smear and resampling edges.
-   // 6 px: past the Lanczos ringing at every resampled frame's coverage
-   // boundary, spread a few px by the intra-night dither.
-   var mask = SITrailCore.erodeMask( stack.valid, entries[ 0 ].binned.width,
-                                     entries[ 0 ].binned.height, 6 );
-   SIProf.end( "model: median + normalize" );
+   var groupNames = [];
+   for ( var gk in groups )
+      groupNames.push( gk );
+   if ( groupNames.length > 1 )
+   {
+      var gDesc = [];
+      for ( var gi0 = 0; gi0 < groupNames.length; ++gi0 )
+         gDesc.push( groupNames[ gi0 ] + ":" + groups[ groupNames[ gi0 ] ].length );
+      console.writeln( "Filter groups: " + gDesc.join( ", " ) + " — one sky model per group." );
+   }
 
-   // Pass B: transient detection per frame against the model.
    var refMeta = entries[ 0 ].meta;
    var refW = entries[ 0 ].binned.srcW, refH = entries[ 0 ].binned.srcH;
    var margin = Math.max( 8, Math.round( 0.03 * Math.max( refW, refH ) ) );
@@ -499,120 +500,167 @@ function analyzeNightSet( files, params )
       return x <= margin || y <= margin || x >= refW - margin || y >= refH - margin;
    }
 
-   var frames = [];
+   var results = new Array( entries.length );
    var detProfile = {};
-   for ( var i = 0; i < entries.length; ++i )
+
+   for ( var gi = 0; gi < groupNames.length; ++gi )
    {
-      var e = entries[ i ];
-      SIProf.start( "pass B: reopen frames" );
-      var wins2 = ImageWindow.open( e.regPath );
-      SIProf.end( "pass B: reopen frames" );
-      if ( wins2.length == 0 )
+      var idx = groups[ groupNames[ gi ] ];
+      if ( idx.length < 3 )
+      {
+         console.warningln( format( "   filter group '%s' has only %d frame(s) — " +
+                                    "3+ are needed for difference detection; skipped.",
+                                    groupNames[ gi ], idx.length ) );
+         for ( var s0 = 0; s0 < idx.length; ++s0 )
+            results[ idx[ s0 ] ] = { trails: [], stats: {}, planeGroups: [] };
          continue;
-      var win2 = wins2[ 0 ];
-      for ( var k3 = 1; k3 < wins2.length; ++k3 )
-         wins2[ k3 ].forceClose();
-      // Per-frame mask: the global coverage mask AND the frame's OWN
-      // coverage eroded — Lanczos ringing at a resampled frame's boundary
-      // lives a few nonzero pixels INSIDE its coverage, invisible to the
-      // global mask and strong enough to pose as an edge-hugging trail.
-      var fv = new Uint8Array( e.binned.data.length );
-      for ( var m2 = 0; m2 < fv.length; ++m2 )
-         fv[ m2 ] = ( e.binned.data[ m2 ] > 1e-6 ) ? 1 : 0;
-      fv = SITrailCore.erodeMask( fv, e.binned.width, e.binned.height, 6 );
-      var frameMask = new Uint8Array( fv.length );
-      for ( var m3 = 0; m3 < fv.length; ++m3 )
-         frameMask[ m3 ] = ( mask[ m3 ] && fv[ m3 ] ) ? 1 : 0;
+      }
 
-      var diffParams = JSON.parse( JSON.stringify( params ) );
-      diffParams.profile = detProfile;
-      if ( params.diffKSigma > 0 )
-         diffParams.kSigma = params.diffKSigma;
-      // A satellite train alone can leave 10+ parallel streaks in one sub —
-      // never let a bundle exhaust the slots and mask a lone trail.
-      diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
-      SIProf.start( "pass B: detection (diff)" );
-      var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, frameMask );
-      SIProf.end( "pass B: detection (diff)" );
-      SIProf.start( "pass B: frame quality (binned peaks)" );
-      e.quality = { peaks: countBinnedPeaks( e.binned.data, e.binned.width, e.binned.height ),
-                    skyBgAdu: e.binned.skyBg };
-      SIProf.end( "pass B: frame quality (binned peaks)" );
-
-      var trails = [];
-      for ( var t = 0; t < det.trails.length; ++t )
+      var arrays = [];
+      for ( var a0 = 0; a0 < idx.length; ++a0 )
+         arrays.push( entries[ idx[ a0 ] ].binned.data );
+      var minCover = Math.max( 3, idx.length - 1 );
+      SIProf.start( "model: median + normalize" );
+      var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
+      for ( var a1 = 0; a1 < idx.length; ++a1 )
       {
-         var tr = det.trails[ t ];
-         // Width veto: a real streak is a thin line; residual cloud bands
-         // and stacking artifacts that survive the median are broad.
-         if ( tr.widthPx > 12 )
+         var lf = SITrailCore.linearFitToModel( arrays[ a1 ], stack0.model, stack0.valid );
+         SITrailCore.applyLinear( arrays[ a1 ], lf.a, lf.b );
+         processEvents();
+      }
+      var stack = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
+      var model = stack.model;
+      // 6 px: past the Lanczos ringing at every resampled frame's coverage
+      // boundary, spread a few px by the intra-night dither.
+      var mask = SITrailCore.erodeMask( stack.valid, entries[ idx[ 0 ] ].binned.width,
+                                        entries[ idx[ 0 ] ].binned.height, 6 );
+      SIProf.end( "model: median + normalize" );
+
+      for ( var p0 = 0; p0 < idx.length; ++p0 )
+      {
+         var e = entries[ idx[ p0 ] ];
+         SIProf.start( "pass B: reopen frames" );
+         var wins2 = ImageWindow.open( e.regPath );
+         SIProf.end( "pass B: reopen frames" );
+         if ( wins2.length == 0 )
+         {
+            results[ idx[ p0 ] ] = { trails: [], stats: {}, planeGroups: [] };
             continue;
-         tr.index = trails.length;
-         tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
-         if ( hasUsableWcs( refMeta.wcs.kind ) )
-         {
-            tr.p1 = refMeta.wcs.imageToCelestial( tr.x1, tr.y1 );
-            tr.p2 = refMeta.wcs.imageToCelestial( tr.x2, tr.y2 );
          }
-         else
+         var win2 = wins2[ 0 ];
+         for ( var k3 = 1; k3 < wins2.length; ++k3 )
+            wins2[ k3 ].forceClose();
+
+         // Per-frame mask: the global coverage mask AND the frame's OWN
+         // coverage eroded — Lanczos ringing at a resampled frame's boundary
+         // lives a few nonzero pixels INSIDE its coverage, invisible to the
+         // global mask and strong enough to pose as an edge-hugging trail.
+         var fv = new Uint8Array( e.binned.data.length );
+         for ( var m2 = 0; m2 < fv.length; ++m2 )
+            fv[ m2 ] = ( e.binned.data[ m2 ] > 1e-6 ) ? 1 : 0;
+         fv = SITrailCore.erodeMask( fv, e.binned.width, e.binned.height, 6 );
+         var frameMask = new Uint8Array( fv.length );
+         for ( var m3 = 0; m3 < fv.length; ++m3 )
+            frameMask[ m3 ] = ( mask[ m3 ] && fv[ m3 ] ) ? 1 : 0;
+
+         var diffParams = JSON.parse( JSON.stringify( params ) );
+         diffParams.profile = detProfile;
+         if ( params.diffKSigma > 0 )
+            diffParams.kSigma = params.diffKSigma;
+         // A satellite train alone can leave 10+ parallel streaks in one sub —
+         // never let a bundle exhaust the slots and mask a lone trail.
+         diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
+         SIProf.start( "pass B: detection (diff)" );
+         var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, frameMask );
+         SIProf.end( "pass B: detection (diff)" );
+         SIProf.start( "pass B: frame quality (binned peaks)" );
+         e.quality = { peaks: countBinnedPeaks( e.binned.data, e.binned.width, e.binned.height ),
+                       skyBgAdu: e.binned.skyBg };
+         SIProf.end( "pass B: frame quality (binned peaks)" );
+
+         var trails = [];
+         for ( var t = 0; t < det.trails.length; ++t )
          {
-            tr.p1 = null;
-            tr.p2 = null;
+            var tr = det.trails[ t ];
+            // Width veto: a real streak is a thin line; residual cloud bands
+            // and stacking artifacts that survive the median are broad.
+            if ( tr.widthPx > 12 )
+               continue;
+            tr.index = trails.length;
+            tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
+            if ( hasUsableWcs( refMeta.wcs.kind ) )
+            {
+               tr.p1 = refMeta.wcs.imageToCelestial( tr.x1, tr.y1 );
+               tr.p2 = refMeta.wcs.imageToCelestial( tr.x2, tr.y2 );
+            }
+            else
+            {
+               tr.p1 = null;
+               tr.p2 = null;
+            }
+            trails.push( tr );
          }
-         trails.push( tr );
+
+         // Movers need trustworthy astrometry — see runAnalysis: registered
+         // sets without a real WCS skip the asteroid search entirely.
+         var blobs = [];
+         if ( params.detectAsteroids && hasUsableWcs( refMeta.wcs.kind ) )
+         {
+            var pix = extractPixelSources( win2.mainView.image, params.maxSources );
+            for ( var s = 0; s < pix.length; ++s )
+            {
+               var sky = refMeta.wcs.imageToCelestial( pix[ s ].x, pix[ s ].y );
+               if ( sky != null )
+                  blobs.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
+                                fluxAdu: pix[ s ].fluxAdu, x: pix[ s ].x, y: pix[ s ].y } );
+            }
+         }
+
+         win2.forceClose();
+         e.binned.data = null; // release the big array, keep the metadata
+
+         // Parallel bundles: several near-parallel segments in ONE frame are a
+         // single object — an airplane (strobing lights: strong brightness
+         // variation along the marks) or a satellite train (fresh launch, not
+         // yet cataloged: steady parallel streaks). Grouped before matching so
+         // they never get individual satellite names.
+         var planeGroups = SIMeteors.groupPlanes( trails );
+         for ( var g = 0; g < planeGroups.length; ++g )
+         {
+            var pg = planeGroups[ g ];
+            var vars = [];
+            for ( var gi2 = 0; gi2 < pg.indices.length; ++gi2 )
+            {
+               trails[ pg.indices[ gi2 ] ].planeGroup = g;
+               var bv = trails[ pg.indices[ gi2 ] ].brightnessVariation;
+               if ( bv != null )
+                  vars.push( bv );
+            }
+            vars.sort( function( a, b ) { return a - b; } );
+            var medVar = ( vars.length > 0 ) ? vars[ vars.length >> 1 ] : 0;
+            pg.kind = ( medVar > 0.3 ) ? "plane" : "train";
+         }
+
+         results[ idx[ p0 ] ] = { trails: trails, stats: det.stats, blobs: blobs,
+                                  planeGroups: planeGroups };
+         if ( trails.length > 0 )
+            console.writeln( format( "   %s: %d transient trail(s)%s", e.meta.id, trails.length,
+                                     planeGroups.length > 0
+                                        ? format( " — %d bundle(s)", planeGroups.length )
+                                        : "" ) );
+         processEvents();
+         gc();
       }
-
-      // Movers need trustworthy astrometry — see runAnalysis: registered
-      // sets without a real WCS skip the asteroid search entirely.
-      var blobs = [];
-      if ( params.detectAsteroids && hasUsableWcs( refMeta.wcs.kind ) )
-      {
-         var pix = extractPixelSources( win2.mainView.image, params.maxSources );
-         for ( var s = 0; s < pix.length; ++s )
-         {
-            var sky = refMeta.wcs.imageToCelestial( pix[ s ].x, pix[ s ].y );
-            if ( sky != null )
-               blobs.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
-                             fluxAdu: pix[ s ].fluxAdu, x: pix[ s ].x, y: pix[ s ].y } );
-         }
-      }
-
-      win2.forceClose();
-      e.binned = null; // release
-
-      // Parallel bundles: several near-parallel segments in ONE frame are a
-      // single object — an airplane (strobing lights: strong brightness
-      // variation along the marks) or a satellite train (fresh launch, not
-      // yet cataloged: steady parallel streaks). Grouped before matching so
-      // they never get individual satellite names.
-      var planeGroups = SIMeteors.groupPlanes( trails );
-      for ( var g = 0; g < planeGroups.length; ++g )
-      {
-         var pg = planeGroups[ g ];
-         var vars = [];
-         for ( var gi = 0; gi < pg.indices.length; ++gi )
-         {
-            trails[ pg.indices[ gi ] ].planeGroup = g;
-            var bv = trails[ pg.indices[ gi ] ].brightnessVariation;
-            if ( bv != null )
-               vars.push( bv );
-         }
-         vars.sort( function( a, b ) { return a - b; } );
-         var medVar = ( vars.length > 0 ) ? vars[ vars.length >> 1 ] : 0;
-         pg.kind = ( medVar > 0.3 ) ? "plane" : "train";
-      }
-
-      frames.push( { meta: e.meta, trails: trails, stats: det.stats, blobs: blobs,
-                     planeGroups: planeGroups, srcW: refW, srcH: refH } );
-      if ( trails.length > 0 )
-         console.writeln( format( "   %s: %d transient trail(s)%s", e.meta.id, trails.length,
-                                  planeGroups.length > 0
-                                     ? format( " — %d bundle(s)", planeGroups.length )
-                                     : "" ) );
-      processEvents();
-      gc();
    }
 
+   var frames = [];
+   for ( var fi2 = 0; fi2 < entries.length; ++fi2 )
+   {
+      var r0 = results[ fi2 ] || { trails: [], stats: {}, planeGroups: [] };
+      frames.push( { meta: entries[ fi2 ].meta, trails: r0.trails, stats: r0.stats,
+                     blobs: r0.blobs || [], planeGroups: r0.planeGroups,
+                     srcW: refW, srcH: refH } );
+   }
    var regPaths = [];
    for ( var i = 0; i < entries.length; ++i )
       regPaths.push( entries[ i ].regPath );
