@@ -1,6 +1,6 @@
 /*
  * Render.js — SIRender: the shared PixInsight rendering library for the
- * Treasure Hunt and Trash-to-Art modes (and any future consumer).
+ * Treasure Hunt mode (and any future consumer).
  *
  * This is PI-facing (Bitmap, Graphics, Image, ImageWindow, File) and is NOT
  * exercised by the Node harness. The single pure helper, hexToArgb, is kept
@@ -1074,18 +1074,6 @@ var SIRender = ( function()
       }
    }
 
-   function registerFrames( framePaths, outDir )
-   {
-      var m = registerFramesMapped( framePaths, outDir );
-      if ( m === null )
-         return framePaths ? framePaths.slice() : null;
-      var out = [];
-      for ( var i = 0; i < m.paths.length; ++i )
-         if ( m.paths[ i ] !== null )
-            out.push( m.paths[ i ] );
-      return out;
-   }
-
    function maxCombine( items )
    {
       var acc = null;
@@ -1174,7 +1162,6 @@ var SIRender = ( function()
       drawTrails: drawTrails,
       scaleBitmap: scaleBitmap,
       cropThumbnail: cropThumbnail,
-      registerFrames: registerFrames,
       registerFramesMapped: registerFramesMapped,
       maxCombine: maxCombine,
       showBitmap: showBitmap,

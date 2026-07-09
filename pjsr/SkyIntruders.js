@@ -32,7 +32,6 @@
 #include "lib/Catalogs.js"
 #include "lib/Treasure.js"
 #include "lib/TreasureReport.js"
-#include "lib/TrashArt.js"
 #include "lib/Render.js"
 
 #define SKYINTRUDERS_TITLE "Sky Intruders"
@@ -92,7 +91,7 @@ var DEFAULT_PARAMS = {
    observerLatDeg: null,   // fallbacks when FITS headers lack the site
    observerLonDeg: null,
    observerAltM: 0,
-   // Mode selector: "night" (trails), "treasure" (hunt), "trash" (to art).
+   // Mode selector: "night" (trails), "treasure" (hunt).
    mode: "night",
    // Treasure Hunt: cap catalog rows fetched per cone search.
    treasureMaxRows: 400,
@@ -100,12 +99,7 @@ var DEFAULT_PARAMS = {
    treasureQuasars: true,
    treasurePne: true,
    treasureAsteroids: true,
-   treasureAccent: "#9FD8D2",
-   // Trash to Art options.
-   trashScheme: "type",       // "type" | "operator" | "time"
-   trashChoreography: true,
-   trashStarTrails: true,
-   trashPoster: true
+   treasureAccent: "#9FD8D2"
 };
 
 function configDir()
@@ -1963,275 +1957,12 @@ function runTreasureHunt( window, filePath, params, onProgress )
             html: html, mapWindow: mapWindow, queryFailures: queryFailures };
 }
 
-// ---------------------------------------------------------------------------
-// Trash to Art mode — your rejects have talent.
-
-// Detect trails on one reject frame and pull a couple of intruder thumbnails
-// while the frame is still open. Returns the shape the art pipeline consumes.
-function analyzeTrashFrame( filePath, params )
-{
-   var windows = ImageWindow.open( filePath );
-   if ( windows.length == 0 )
-      throw new Error( "cannot open " + filePath );
-   var window = windows[ 0 ];
-   try
-   {
-      for ( var i = 1; i < windows.length; ++i )
-         windows[ i ].forceClose();
-
-      var meta = SIFrameMeta.read( window, filePath );
-      var image = window.mainView.image;
-      var det = SITrailDetect.detect( image, params );
-
-      var w = image.width, h = image.height;
-      var margin = Math.max( 8, Math.round( 0.03*Math.max( w, h ) ) );
-      function nearEdge( x, y )
-      {
-         return x <= margin || y <= margin || x >= w - margin || y >= h - margin;
-      }
-
-      var base = null, thumbs = [];
-      for ( var t = 0; t < det.trails.length; ++t )
-      {
-         var tr = det.trails[ t ];
-         tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
-         tr.p1 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x1, tr.y1 ) : null;
-         tr.p2 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x2, tr.y2 ) : null;
-         var cls = SIMeteors.classifyTrail( tr, meta.dateObs );
-         tr.klass = cls.klass;
-         // One thumbnail per frame, centered on its first trail's midpoint.
-         if ( t === 0 )
-            try
-            {
-               if ( base === null )
-                  base = SIRender.stretchedBitmap( image );
-               var cx = 0.5*( tr.x1 + tr.x2 ), cy = 0.5*( tr.y1 + tr.y2 );
-               var boxPx = Math.max( 48, Math.round( 0.10*Math.max( w, h ) ) );
-               var crop = SIRender.cropThumbnail( base, cx, cy, boxPx, 120 );
-               thumbs.push( { pngBase64: SIRender.bitmapToBase64Png( crop ),
-                              caption: meta.id } );
-            }
-            catch ( e ) {}
-      }
-
-      return { meta: meta, trails: det.trails, srcW: w, srcH: h, thumbs: thumbs };
-   }
-   finally
-   {
-      window.forceClose();
-   }
-}
-
-// Turn a set of analyzed frames (session rejects or freshly detected folder
-// frames) into the trail list the art pipeline draws.
-function collectTrashTrails( frames )
-{
-   var trails = [];
-   for ( var i = 0; i < frames.length; ++i )
-   {
-      var f = frames[ i ];
-      var timeUtc = f.meta && f.meta.dateObs ? f.meta.dateObs : null;
-      for ( var t = 0; t < f.trails.length; ++t )
-      {
-         var tr = f.trails[ t ];
-         var klass = tr.klass;
-         if ( klass == null )
-         {
-            // Session-reuse frames carry raw trails: classify them now.
-            try { klass = SIMeteors.classifyTrail( tr, timeUtc ).klass; }
-            catch ( e ) { klass = "unknown"; }
-         }
-         var operator = tr.operator || ( tr.name ? SIReport.classifyOperator( tr.name ) : null );
-         trails.push( { x1: tr.x1, y1: tr.y1, x2: tr.x2, y2: tr.y2,
-                        p1: tr.p1 || null, p2: tr.p2 || null,
-                        frameIndex: i, klass: klass, operator: operator, timeUtc: timeUtc } );
-      }
-   }
-   return trails;
-}
-
-function trashSummaryFromTrails( trails, dateLabel )
-{
-   var s = { date: dateLabel, satellites: 0, starlink: 0, meteors: 0,
-             satCandidates: 0, unknowns: 0, movers: 0 };
-   for ( var i = 0; i < trails.length; ++i )
-   {
-      var k = trails[ i ].klass;
-      if ( k === "satellite" )
-      {
-         s.satellites++;
-         if ( trails[ i ].operator === "Starlink" )
-            s.starlink++;
-      }
-      else if ( k === "satellite-candidate" ) s.satCandidates++;
-      else if ( k === "meteor" ) s.meteors++;
-      else if ( k === "asteroid" ) s.movers++;
-      else s.unknowns++;
-   }
-   return s;
-}
 
 // Align trail endpoints across dithered/rotated frames by projecting their sky
 // coordinates onto one reference frame's pixel grid (via its WCS). Without
 // registration, dithering leaves every frame on a different pixel grid and the
 // superposition is misaligned. Frames lacking sky coordinates keep their own
 // pixel coordinates (best effort). Returns { trails, refW, refH, method,
-// projected, total }.
-function alignTrailsByWcs( trails, frames )
-{
-   var refIdx = -1;
-   for ( var i = 0; i < frames.length; ++i )
-   {
-      var wcs = frames[ i ].meta ? frames[ i ].meta.wcs : null;
-      if ( wcs && ( wcs.kind === "solution" || wcs.kind === "tan" ) &&
-           typeof wcs.celestialToImage === "function" )
-      {
-         refIdx = i;
-         break;
-      }
-   }
-   if ( refIdx < 0 )
-      return { trails: trails, refW: frames[ 0 ].srcW || 1600, refH: frames[ 0 ].srcH || 1600,
-               method: "none", projected: 0, total: trails.length };
-
-   var ref = frames[ refIdx ].meta.wcs;
-   var refW = frames[ refIdx ].srcW, refH = frames[ refIdx ].srcH;
-   var out = [], projected = 0;
-   for ( var t = 0; t < trails.length; ++t )
-   {
-      var tr = trails[ t ];
-      var a = tr.p1 ? ref.celestialToImage( tr.p1.raDeg, tr.p1.decDeg ) : null;
-      var b = tr.p2 ? ref.celestialToImage( tr.p2.raDeg, tr.p2.decDeg ) : null;
-      var o = {};
-      for ( var k in tr ) o[ k ] = tr[ k ];
-      if ( a != null && b != null )
-      {
-         o.x1 = a.x; o.y1 = a.y; o.x2 = b.x; o.y2 = b.y;
-         ++projected;
-      }
-      out.push( o );
-   }
-   return { trails: out, refW: refW, refH: refH, method: "wcs",
-            projected: projected, total: trails.length };
-}
-
-function runTrashToArt( frames, framePaths, params, onProgress )
-{
-   function progress( msg )
-   {
-      console.writeln( msg );
-      if ( typeof onProgress == "function" ) onProgress( msg );
-      processEvents();
-   }
-
-   var rawTrails = collectTrashTrails( frames );
-   progress( rawTrails.length + " trail(s) across " + frames.length + " frame(s)." );
-
-   // Register trails onto a common grid so dithering/rotation don't scatter the
-   // superposition.
-   var aligned = alignTrailsByWcs( rawTrails, frames );
-   var trails = aligned.trails;
-   if ( aligned.method === "wcs" )
-      progress( "Aligned " + aligned.projected + "/" + aligned.total +
-                " trail(s) via WCS onto a common grid." );
-   else
-      progress( "No astrometric solution found — trails drawn in native pixels " +
-                "(dithering may misalign the superposition)." );
-
-   // Canvas: reference frame dimensions, capped to a 1600px long side.
-   var srcW = aligned.refW || 1600, srcH = aligned.refH || 1600;
-   var longSide = Math.max( srcW, srcH );
-   var scale = ( longSide > 1600 ) ? 1600/longSide : 1;
-   var dstW = Math.max( 1, Math.round( srcW*scale ) );
-   var dstH = Math.max( 1, Math.round( srcH*scale ) );
-
-   var dateLabel = nightLabel( frames );
-   var summary = trashSummaryFromTrails( trails, dateLabel );
-
-   var result = { choreographyWindow: null, starTrailsWindow: null,
-                  posterHtml: null, choreographyPng: null, summary: summary };
-
-   var colored = SITrashArt.assignColors( trails, params.trashScheme );
-   var choreographyPng = null;
-   var posterThumbs = [];
-
-   // (a) Intruder choreography.
-   if ( params.trashChoreography || params.trashPoster )
-   {
-      progress( "Composing the intruder choreography…" );
-      var normalized = SITrashArt.normalizeEndpoints( colored, srcW, srcH, dstW, dstH );
-      var black = new Bitmap( dstW, dstH );
-      black.fill( 0xff05070d );
-      var choreoBmp = SIRender.drawTrails( black, normalized, { glow: true, lineWidth: 2 } );
-      choreographyPng = SIRender.bitmapToBase64Png( choreoBmp );
-      result.choreographyPng = choreographyPng;
-      if ( params.trashChoreography )
-         result.choreographyWindow = SIRender.showBitmap( choreoBmp, "Sky Intruders Choreography" );
-   }
-
-   // (b) Star-trail composite (max-combine).
-   if ( params.trashStarTrails )
-   {
-      if ( framePaths && framePaths.length > 0 )
-      {
-         if ( framePaths.length < 8 )
-            console.warningln( "Only " + framePaths.length +
-               " frame(s): the star-trail composite will be sparse." );
-         // Register first so dithering/rotation don't smear the max-combine.
-         progress( "Registering " + framePaths.length + " frame(s)…" );
-         var regDir = File.systemTempDirectory + "/si-trash-reg-" + ( new Date ).getTime();
-         var aligned = SIRender.registerFrames( framePaths, regDir );
-         if ( aligned == null || aligned.length < framePaths.length )
-            console.warningln( "Registration " + ( aligned == null ? "unavailable" :
-               "aligned " + aligned.length + "/" + framePaths.length ) +
-               " — combining what is available." );
-         var combineList = ( aligned != null && aligned.length > 0 ) ? aligned : framePaths;
-         progress( "Max-combining " + combineList.length + " frame(s) into a composite…" );
-         var composite = SIRender.maxCombine( combineList );
-         if ( composite !== null )
-         {
-            var compBmp = SIRender.stretchedBitmap( composite );
-            result.starTrailsWindow = SIRender.showBitmap( compBmp, "Sky Intruders Star Trails" );
-         }
-         else
-            console.warningln( "Star-trail composite produced no image." );
-
-         // Drop the registered temp frames.
-         try
-         {
-            if ( File.directoryExists( regDir ) )
-            {
-               var ff = new FileFind;
-               if ( ff.begin( regDir + "/*" ) )
-                  do { if ( !ff.isDirectory ) File.remove( regDir + "/" + ff.name ); } while ( ff.next() );
-               File.removeDirectory( regDir );
-            }
-         }
-         catch ( e ) {}
-      }
-      else
-         console.warningln( "Star-trail composite needs the frame files (session " +
-            "rejects are already closed) — skipped." );
-   }
-
-   // (c) Designed poster.
-   if ( params.trashPoster )
-   {
-      progress( "Laying out the poster…" );
-      for ( var i = 0; i < frames.length && posterThumbs.length < 6; ++i )
-         if ( frames[ i ].thumbs )
-            for ( var j = 0; j < frames[ i ].thumbs.length && posterThumbs.length < 6; ++j )
-               posterThumbs.push( frames[ i ].thumbs[ j ] );
-
-      var model = SITrashArt.posterModel( summary, {
-         scheme: params.trashScheme, frameCount: frames.length,
-         dateLabel: dateLabel, lang: params.lang, legend: colored.legend } );
-      result.posterHtml = SITrashArt.buildPosterHtml( model, choreographyPng, posterThumbs, params.lang );
-   }
-
-   return result;
-}
-
 // ---------------------------------------------------------------------------
 // UI helpers.
 
@@ -2335,27 +2066,16 @@ function buildTreasureRich( res, lang )
    return h;
 }
 
-// ---------------------------------------------------------------------------
-// UI.
-
-
-// ---------------------------------------------------------------------------
-// UI strings — the language selector switches the WHOLE interface, not just
-// the report. Console/log messages stay English (developer-facing).
-
 var SI_UI = {
    en: {
-      tabNight: "Night trails", tabTreasure: "Treasure Hunt", tabTrash: "Trash to Art",
+      tabNight: "Night trails", tabTreasure: "Treasure Hunt",
       tagNight: "\ud83d\udef0  <i>Who crossed your photo last night?</i>",
       tagTreasure: "\ud83d\udc8e  <i>What you photographed without knowing.</i>",
-      tagTrash: "\ud83c\udfa8  <i>Your rejects have talent.</i>",
       hintNight: "Identify satellite, meteor and asteroid trails across a night of " +
                  "light frames, then get a night log and a ready-to-post report.",
       hintTreasure: "Point at a <b>plate-solved</b> image (uses the active window if the list " +
                     "is empty) and discover the galaxies, quasars, nebulae and passing " +
                     "asteroids hiding in your field.",
-      hintTrash: "Recycle rejected frames into art — from this session's rejects or any " +
-                 "folder of discards.",
       kSigma: "Detection threshold (\u03c3):",
       kSigmaTip: "Trail pixels must exceed the frame background by this many " +
                  "robust sigmas. Lower catches fainter trails but risks noise.",
@@ -2372,27 +2092,16 @@ var SI_UI = {
       treasureRows: "Max catalog rows / type:",
       treasureRowsTip: "Upper bound on objects fetched per catalog (galaxies, quasars, " +
                        "nebulae, asteroids) around your field.",
-      colorBy: "Color by:",
-      scheme0: "type (satellite / meteor / \u2026)",
-      scheme1: "operator (Starlink / OneWeb / \u2026)",
-      scheme2: "time (dusk \u2192 dawn gradient)",
-      choreo: "Intruder choreography",
-      choreoTip: "Every detected trail drawn on one canvas, color-coded.",
-      starTrails: "Star-trail composite",
-      starTrailsTip: "Classic lighten/maximum combine of the frames.",
-      poster: "Designed poster (HTML)",
-      posterTip: "A shareable poster: choreography + thumbnails + stats.",
-      outputs: "Outputs", input: "Input",
+      input: "Input",
       addFiles: "Add files\u2026", addFolder: "Add folder\u2026", clear: "Clear",
       language: "Language:", languageTip: "Interface and report language.",
-      analyzeNight: "Analyze night", analyzeTreasure: "Hunt treasures", analyzeTrash: "Make art",
+      analyzeNight: "Analyze night", analyzeTreasure: "Hunt treasures",
       close: "Close",
       statusNone: "<i>No frames added yet.</i>",
       statusOne: " frame ready.", statusMany: " frames ready.",
       working: "<i>Working\u2026</i>",
       treeNight: "Light frames",
       treeTreasure: "Plate-solved image — active window used if empty",
-      treeTrash: "Reject frames — or add a folder of rejects",
       saveReport: "Save report\u2026", saveReportCaption: "Save night report",
       openImage: "Open image", openHtml: "Open HTML",
       openHtmlTip: "Open the illustrated report in your web browser.",
@@ -2409,17 +2118,14 @@ var SI_UI = {
       needSolve: "This image has no astrometric solution (WCS). Plate-solve it first (ImageSolver), then run Treasure Hunt."
    },
    fr: {
-      tabNight: "Tra\u00een\u00e9es de nuit", tabTreasure: "Chasse au tr\u00e9sor", tabTrash: "Rejets en art",
+      tabNight: "Tra\u00een\u00e9es de nuit", tabTreasure: "Chasse au tr\u00e9sor",
       tagNight: "\ud83d\udef0  <i>Qui a travers\u00e9 ta photo cette nuit ?</i>",
       tagTreasure: "\ud83d\udc8e  <i>Ce que tu as photographi\u00e9 sans le savoir.</i>",
-      tagTrash: "\ud83c\udfa8  <i>Tes rejets ont du talent.</i>",
       hintNight: "Identifie les tra\u00een\u00e9es de satellites, m\u00e9t\u00e9ores et ast\u00e9ro\u00efdes sur une " +
                  "nuit de brutes, puis obtiens un journal de nuit et un rapport pr\u00eat \u00e0 publier.",
       hintTreasure: "Pointe une image <b>r\u00e9solue astrom\u00e9triquement</b> (fen\u00eatre active si la " +
                     "liste est vide) et d\u00e9couvre les galaxies, quasars, n\u00e9buleuses et " +
                     "ast\u00e9ro\u00efdes de passage cach\u00e9s dans ton champ.",
-      hintTrash: "Recycle les brutes rejet\u00e9es en art — rejets de la session ou n'importe " +
-                 "quel dossier d'\u00e9cart\u00e9es.",
       kSigma: "Seuil de d\u00e9tection (\u03c3) :",
       kSigmaTip: "Les pixels d'une tra\u00een\u00e9e doivent d\u00e9passer le fond de ce nombre de " +
                  "sigmas robustes. Plus bas = tra\u00een\u00e9es plus faibles, mais risque de bruit.",
@@ -2436,27 +2142,16 @@ var SI_UI = {
       treasureRows: "Objets max / type de catalogue :",
       treasureRowsTip: "Plafond d'objets r\u00e9cup\u00e9r\u00e9s par catalogue (galaxies, quasars, " +
                        "n\u00e9buleuses, ast\u00e9ro\u00efdes) autour du champ.",
-      colorBy: "Couleur par :",
-      scheme0: "type (satellite / m\u00e9t\u00e9ore / \u2026)",
-      scheme1: "op\u00e9rateur (Starlink / OneWeb / \u2026)",
-      scheme2: "heure (d\u00e9grad\u00e9 cr\u00e9puscule \u2192 aube)",
-      choreo: "Chor\u00e9graphie des intrus",
-      choreoTip: "Toutes les tra\u00een\u00e9es d\u00e9tect\u00e9es sur un seul canevas, en couleurs.",
-      starTrails: "Composite star-trails",
-      starTrailsTip: "Empilement classique par \u00e9claircissement (maximum).",
-      poster: "Poster design\u00e9 (HTML)",
-      posterTip: "Un poster partageable : chor\u00e9graphie + vignettes + stats.",
-      outputs: "Sorties", input: "Entr\u00e9e",
+      input: "Entr\u00e9e",
       addFiles: "Ajouter des fichiers\u2026", addFolder: "Ajouter un dossier\u2026", clear: "Vider",
       language: "Langue :", languageTip: "Langue de l'interface et du rapport.",
-      analyzeNight: "Analyser la nuit", analyzeTreasure: "Chasser les tr\u00e9sors", analyzeTrash: "Cr\u00e9er l'art",
+      analyzeNight: "Analyser la nuit", analyzeTreasure: "Chasser les tr\u00e9sors",
       close: "Fermer",
       statusNone: "<i>Aucune brute ajout\u00e9e.</i>",
       statusOne: " brute pr\u00eate.", statusMany: " brutes pr\u00eates.",
       working: "<i>Travail en cours\u2026</i>",
       treeNight: "Brutes (lights)",
       treeTreasure: "Image r\u00e9solue — fen\u00eatre active si la liste est vide",
-      treeTrash: "Brutes rejet\u00e9es — ou ajoute un dossier de rejets",
       saveReport: "Enregistrer le rapport\u2026", saveReportCaption: "Enregistrer le journal de nuit",
       openImage: "Ouvrir l'image", openHtml: "Ouvrir le HTML",
       openHtmlTip: "Ouvre le rapport illustr\u00e9 dans ton navigateur.",
@@ -2824,7 +2519,7 @@ class ReportDialog extends Dialog
    }
 }
 
-// The illustrated-result dialog (Treasure Hunt and Trash-to-Art): shows a fancy
+// The illustrated-result dialog (Treasure Hunt): shows a fancy
 // rich-text summary of the find (not the raw HTML source), and lets you open the
 // standalone .html in a browser or save it.
 class HtmlResultDialog extends Dialog
@@ -2954,7 +2649,9 @@ class SkyIntrudersDialog extends Dialog
       this.headerSizer.addStretch();
 
       // --- mode tabs ---------------------------------------------------------
-      var MODES = [ "night", "treasure", "trash" ];
+      var MODES = [ "night", "treasure" ];
+      if ( MODES.indexOf( params.mode ) < 0 ) // settings may restore a removed mode
+         params.mode = "night";
 
       // Night page: detection threshold + observer site.
       this.kSigmaControl = new NumericControl( this );
@@ -3107,63 +2804,9 @@ class SkyIntrudersDialog extends Dialog
          this.accentRow
       ] );
 
-      // Trash page: color scheme + output toggles.
-      var SCHEMES = [ "type", "operator", "time" ];
-      this.schemeLabel = new Label( this );
-      this.schemeLabel.text = "Color by:";
-      this.schemeLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
-      this.schemeCombo = new ComboBox( this );
-      this.schemeCombo.addItem( "type (satellite / meteor / …)" );
-      this.schemeCombo.addItem( "operator (Starlink / OneWeb / …)" );
-      this.schemeCombo.addItem( "time (dusk → dawn gradient)" );
-      var si = SCHEMES.indexOf( params.trashScheme );
-      this.schemeCombo.currentItem = ( si >= 0 ) ? si : 0;
-      this.schemeCombo.onItemSelected = ( i ) => { self.params.trashScheme = SCHEMES[ i ] || "type"; };
-      this.schemeSizer = new HorizontalSizer;
-      this.schemeSizer.spacing = 6;
-      this.schemeSizer.add( this.schemeLabel );
-      this.schemeSizer.add( this.schemeCombo, 100 );
-
-      this.choreoCheck = new CheckBox( this );
-      this.choreoCheck.text = "Intruder choreography";
-      this.choreoCheck.toolTip = "Every detected trail drawn on one canvas, color-coded.";
-      this.choreoCheck.checked = params.trashChoreography;
-      this.choreoCheck.onCheck = ( c ) => { self.params.trashChoreography = c; };
-
-      this.starTrailsCheck = new CheckBox( this );
-      this.starTrailsCheck.text = "Star-trail composite";
-      this.starTrailsCheck.toolTip = "Classic lighten/maximum combine of the frames.";
-      this.starTrailsCheck.checked = params.trashStarTrails;
-      this.starTrailsCheck.onCheck = ( c ) => { self.params.trashStarTrails = c; };
-
-      this.posterCheck = new CheckBox( this );
-      this.posterCheck.text = "Designed poster (HTML)";
-      this.posterCheck.toolTip = "A shareable poster: choreography + thumbnails + stats.";
-      this.posterCheck.checked = params.trashPoster;
-      this.posterCheck.onCheck = ( c ) => { self.params.trashPoster = c; };
-
-      this.outputsSizer = new VerticalSizer;
-      this.outputsSizer.spacing = 4;
-      this.outputsSizer.add( this.choreoCheck );
-      this.outputsSizer.add( this.starTrailsCheck );
-      this.outputsSizer.add( this.posterCheck );
-      this.outputsGroup = new GroupBox( this );
-      this.outputsGroup.title = "Outputs";
-      this.outputsGroup.sizer = new VerticalSizer;
-      this.outputsGroup.sizer.margin = 8;
-      this.outputsGroup.sizer.add( this.outputsSizer );
-
-      this.trashHint = this.pageHint( "" );
-      this.trashPage = this.makePage( [
-         this.trashHint,
-         this.schemeSizer,
-         this.outputsGroup
-      ] );
-
       this.tabBox = new TabBox( this );
       this.tabBox.addPage( this.nightPage, "Night trails" );
       this.tabBox.addPage( this.treasurePage, "Treasure Hunt" );
-      this.tabBox.addPage( this.trashPage, "Trash to Art" );
       var mi = MODES.indexOf( params.mode );
       this.tabBox.currentPageIndex = ( mi >= 0 ) ? mi : 0;
       this.tabBox.onPageSelected = ( i ) =>
@@ -3343,7 +2986,6 @@ class SkyIntrudersDialog extends Dialog
       this.langLabel.text = uiT( L, "language" );
       this.nightHint.text = uiT( L, "hintNight" );
       this.treasureHint.text = uiT( L, "hintTreasure" );
-      this.trashHint.text = uiT( L, "hintTrash" );
       this.kSigmaControl.label.text = uiT( L, "kSigma" );
       this.kSigmaControl.toolTip = uiT( L, "kSigmaTip" );
       this.predictedCheck.text = uiT( L, "predicted" );
@@ -3364,20 +3006,6 @@ class SkyIntrudersDialog extends Dialog
       this.huntRow.toolTip = uiT( L, "huntForTip" );
       this.accentLabel.text = uiT( L, "accentColor" );
       this.accentButton.toolTip = uiT( L, "accentColorTip" );
-      this.schemeLabel.text = uiT( L, "colorBy" );
-      var schemeIdx = this.schemeCombo.currentItem;
-      this.schemeCombo.clear();
-      this.schemeCombo.addItem( uiT( L, "scheme0" ) );
-      this.schemeCombo.addItem( uiT( L, "scheme1" ) );
-      this.schemeCombo.addItem( uiT( L, "scheme2" ) );
-      this.schemeCombo.currentItem = ( schemeIdx >= 0 ) ? schemeIdx : 0;
-      this.choreoCheck.text = uiT( L, "choreo" );
-      this.choreoCheck.toolTip = uiT( L, "choreoTip" );
-      this.starTrailsCheck.text = uiT( L, "starTrails" );
-      this.starTrailsCheck.toolTip = uiT( L, "starTrailsTip" );
-      this.posterCheck.text = uiT( L, "poster" );
-      this.posterCheck.toolTip = uiT( L, "posterTip" );
-      this.outputsGroup.title = uiT( L, "outputs" );
       this.inputGroup.title = uiT( L, "input" );
       this.addFilesButton.text = uiT( L, "addFiles" );
       this.addDirButton.text = uiT( L, "addFolder" );
@@ -3389,7 +3017,6 @@ class SkyIntrudersDialog extends Dialog
          {
             this.tabBox.setPageLabel( 0, uiT( L, "tabNight" ) );
             this.tabBox.setPageLabel( 1, uiT( L, "tabTreasure" ) );
-            this.tabBox.setPageLabel( 2, uiT( L, "tabTrash" ) );
          }
       }
       catch ( e ) {}
@@ -3426,8 +3053,7 @@ class SkyIntrudersDialog extends Dialog
       var L = this.params.lang;
       var taglines = {
          night: uiT( L, "tagNight" ),
-         treasure: uiT( L, "tagTreasure" ),
-         trash: uiT( L, "tagTrash" )
+         treasure: uiT( L, "tagTreasure" )
       };
       this.taglineLabel.text = taglines[ mode ] || taglines.night;
 
@@ -3435,11 +3061,6 @@ class SkyIntrudersDialog extends Dialog
       {
          this.analyzeButton.text = uiT( L, "analyzeTreasure" );
          this.fileTree.setHeaderText( 0, uiT( L, "treeTreasure" ) );
-      }
-      else if ( mode === "trash" )
-      {
-         this.analyzeButton.text = uiT( L, "analyzeTrash" );
-         this.fileTree.setHeaderText( 0, uiT( L, "treeTrash" ) );
       }
       else
       {
@@ -3511,8 +3132,6 @@ class SkyIntrudersDialog extends Dialog
    {
       if ( this.params.mode === "treasure" )
          this.runTreasure();
-      else if ( this.params.mode === "trash" )
-         this.runTrash();
       else
          this.runNight();
    }
@@ -3615,104 +3234,6 @@ class SkyIntrudersDialog extends Dialog
       }
    }
 
-   runTrash()
-   {
-      var reuse = false;
-      if ( this.sessionFrames != null && this.sessionFrames.length > 0 )
-      {
-         var mb = new MessageBox(
-            "Reuse the " + this.sessionFrames.length + " frame(s) from this session's " +
-            "Night-trails run?\n\nYes — recycle the frames just analyzed.\n" +
-            "No — use the frames in the list instead.",
-            SKYINTRUDERS_TITLE, StdIcon.Question, StdButton.Yes, StdButton.No );
-         reuse = ( mb.execute() == StdButton.Yes );
-      }
-
-      if ( !reuse && this.files.length == 0 )
-      {
-         ( new MessageBox( "Add reject frames (or a folder of rejects) first.",
-                           SKYINTRUDERS_TITLE, StdIcon.Information, StdButton.Ok ) ).execute();
-         return;
-      }
-
-      saveParams( this.params );
-      this.setBusy( true );
-      console.show();
-      console.writeln( "<b>" + SKYINTRUDERS_TITLE + "</b> — Trash to Art…" );
-      try
-      {
-         var frames = [], framePaths = null;
-         if ( reuse )
-         {
-            // Session frames carry meta + raw trails + srcW/srcH; they were
-            // already closed, so re-collect their paths for the star-trail
-            // composite (thumbnails are regenerated from those files there).
-            frames = this.sessionFrames;
-            framePaths = [];
-            for ( var p = 0; p < frames.length; ++p )
-               if ( frames[ p ].meta && frames[ p ].meta.path )
-                  framePaths.push( frames[ p ].meta.path );
-         }
-         else
-         {
-            for ( var f = 0; f < this.files.length; ++f )
-            {
-               console.writeln( format( "<b>[%d/%d]</b> ", f + 1, this.files.length ) + this.files[ f ] );
-               try
-               {
-                  frames.push( analyzeTrashFrame( this.files[ f ], this.params ) );
-               }
-               catch ( e )
-               {
-                  console.warningln( "   skipped: " + e.message );
-               }
-               processEvents();
-            }
-            framePaths = this.files.slice();
-         }
-         if ( frames.length == 0 )
-            throw new Error( "no frame could be analyzed" );
-
-         var res = runTrashToArt( frames, framePaths, this.params, null );
-         if ( res.posterHtml != null )
-         {
-            var dir = ( framePaths && framePaths.length > 0 )
-               ? ( File.extractDrive( framePaths[ 0 ] ) + File.extractDirectory( framePaths[ 0 ] ) )
-               : File.homeDirectory;
-            var fr = ( this.params.lang === "fr" );
-            var bodyRich =
-               "<p><font size=\"5\"><b>" + siEscapeHtml( res.summary.date ) + "</b></font></p>" +
-               "<table cellpadding=\"5\" cellspacing=\"6\"><tr>" +
-               "<td bgcolor=\"#25324a\"><font color=\"#9fc3ff\">&nbsp;<b>" + res.summary.satellites +
-                  "</b> " + ( fr ? "satellites" : "satellites" ) + "&nbsp;</font></td>" +
-               ( res.summary.starlink ? "<td bgcolor=\"#1f2b3d\"><font color=\"#7fd1ff\">&nbsp;<b>" +
-                  res.summary.starlink + "</b> Starlink&nbsp;</font></td>" : "" ) +
-               "<td bgcolor=\"#3a2a18\"><font color=\"#ffd38f\">&nbsp;<b>" + res.summary.meteors +
-                  "</b> " + ( fr ? "météores" : "meteors" ) + "&nbsp;</font></td>" +
-               "<td bgcolor=\"#2a2233\"><font color=\"#c9b8ff\">&nbsp;<b>" + res.summary.unknowns +
-                  "</b> " + ( fr ? "non identifiés" : "unidentified" ) + "&nbsp;</font></td>" +
-               "</tr></table>" +
-               "<p><font color=\"#9fb0c6\">" +
-               ( fr ? "Œuvres générées — ouvre le poster pour la version complète."
-                    : "Artwork generated — open the poster for the full version." ) + "</font></p>";
-            ( new HtmlResultDialog( SKYINTRUDERS_TITLE + " — Trash to Art",
-                                    bodyRich,
-                                    res.posterHtml, "SkyIntruders-Poster.html", dir,
-                                    this.params.lang ) ).execute();
-         }
-         else
-            console.writeln( SKYINTRUDERS_TITLE + ": image windows produced (no poster requested)." );
-      }
-      catch ( e )
-      {
-         console.criticalln( SKYINTRUDERS_TITLE + ": " + e.message );
-         ( new MessageBox( e.message, SKYINTRUDERS_TITLE, StdIcon.Error, StdButton.Ok ) ).execute();
-      }
-      finally
-      {
-         this.setBusy( false );
-      }
-   }
 }
 
 // ---------------------------------------------------------------------------
@@ -3742,8 +3263,8 @@ function siConstructTest()
       // Live language switch must relabel the whole UI, both directions.
       // The saved settings may restore any mode, so compare against the key
       // for the mode actually active.
-      var modeKey = { night: "analyzeNight", treasure: "analyzeTreasure",
-                      trash: "analyzeTrash" }[ d.params.mode ] || "analyzeNight";
+      var modeKey = { night: "analyzeNight", treasure: "analyzeTreasure" }[ d.params.mode ] ||
+                    "analyzeNight";
       d.params.lang = "fr";
       d.applyLanguage();
       out.frAnalyze = d.analyzeButton.text;

@@ -1,6 +1,6 @@
 /*
  * gen-testdata.js — generate a synthetic night of light frames for hand-testing
- * Night trails and Trash to Art without hunting for real data.
+ * Night trails without hunting for real data.
  *
  * Writes ~8 FITS frames (starfield + injected trails) with full headers
  * (DATE-OBS, EXPTIME, SITELAT/SITELONG/SITEELEV, a TAN WCS, OBJECT) into
@@ -11,7 +11,7 @@
  * Note: the injected trails are synthetic, so Night trails will classify them
  * as meteor / uncataloged-satellite candidates (they cannot match a real
  * satellite pass). Detection, classification, the night report and all of
- * Trash to Art work fully.
+ * works fully.
  */
 
 /* beautify ignore:start */
@@ -167,7 +167,7 @@ function main()
 
    File.writeTextFile( outDir + "/README.txt",
       "Sky Intruders — synthetic test frames.\n" +
-      "Load these in Night trails, or point Trash to Art at this folder.\n" +
+      "Load these in Night trails.\n" +
       "Trails are synthetic (no real satellite match): expect meteor / uncataloged\n" +
       "satellite candidates. Detection, classification, report and art all work.\n" );
 

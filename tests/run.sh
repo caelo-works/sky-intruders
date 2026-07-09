@@ -31,7 +31,6 @@ LIBS=(
    "$ROOT/pjsr/lib/SatMatch.js"
    "$ROOT/pjsr/lib/Meteors.js"
    "$ROOT/pjsr/lib/Report.js"
-   "$ROOT/pjsr/lib/TrashArt.js"
    "$ROOT/pjsr/lib/Cosmology.js"
    "$ROOT/pjsr/lib/Catalogs.js"
    "$ROOT/pjsr/lib/Treasure.js"
@@ -78,7 +77,6 @@ module.exports = {
    SISatMatch: SISatMatch,
    SIMeteors: SIMeteors,
    SIReport: SIReport,
-   SITrashArt: SITrashArt,
    SICosmology: SICosmology,
    SICatalogs: SICatalogs,
    SITreasure: SITreasure,

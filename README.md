@@ -1,11 +1,10 @@
 # Sky Intruders
 
-**The hidden and discarded life of your astrophotos.**
+**The hidden life of your astrophotos.**
 
 Sky Intruders is a [PixInsight](https://pixinsight.com) script — a small suite of
-three modes that surface what you photographed but never noticed, and turn what you
-threw away into art. Everything runs inside PixInsight; there is no native helper to
-install or trust.
+two modes that surface what you photographed but never noticed. Everything runs
+inside PixInsight; there is no native helper to install or trust.
 
 ## 🛰️ Night trails — *who crossed your photo last night?*
 
@@ -30,16 +29,9 @@ everything hiding in your field: PGC galaxies down to mag ~17, quasars with thei
 redshift, asteroids that drifted through at the moment of capture, tiny planetary
 nebulae. Then it tells the story — *"this 4-pixel smudge is a quasar at z = 2.3: its
 light left 11 billion years ago, before the Sun existed. You captured 47 galaxies
-without knowing."* — as an interactive annotated overlay in PixInsight and a
-standalone illustrated HTML post ready for a forum.
-
-## 🎨 Trash to Art — *your rejects have talent*
-
-Recycles the frames the analyzers set aside (satellite trails, wind gusts, clouds)
-into art instead of the bin: an intruder-choreography poster of the night's passes
-(color-coded by time, type or operator), a classic star-trail composite, or a
-designed *"the 47 intruders of my night"* poster. Works on the current session's
-rejects or any folder of discarded frames. *Your trash, we make it art.*
+without knowing."* — as a star-chart overlay in PixInsight (context stars and
+deep-sky neighbors included) and a standalone illustrated HTML post ready for a
+forum.
 
 ## Requirements
 
@@ -69,11 +61,11 @@ All computation is native PJSR: robust background statistics, a Hough transform 
 contiguity validation for trail detection; SGP4 orbital propagation (via the bundled
 MIT-licensed [satellite.js](https://github.com/shashwatak/satellite-js)) for
 satellite identification; VizieR and SkyBoT cone searches for the deep catalogs;
-Bitmap/Graphics rendering for the overlays, posters and thumbnails. Networking uses
+Bitmap/Graphics rendering for the overlays and thumbnails. Networking uses
 PixInsight's own `NetworkTransfer` — nothing leaves the application.
 
 Design docs: [Night trails](docs/ARCHITECTURE.md) ·
-[Treasure Hunt](docs/TREASURE-HUNT.md) · [Trash to Art](docs/TRASH-TO-ART.md).
+[Treasure Hunt](docs/TREASURE-HUNT.md).
 
 ## License
 

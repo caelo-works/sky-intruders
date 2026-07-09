@@ -1,11 +1,11 @@
 /*
- * selftest-integration.js — headless validation of the Treasure Hunt and
- * Trash-to-Art ENGINE paths on the real PixInsight v8 runtime.
+ * selftest-integration.js — headless validation of the Treasure Hunt
+ * ENGINE path on the real PixInsight v8 runtime.
  *
  * The Node harness (tests/run.sh) covers pure math; selftest-pi.js covers the
  * include chain and networking. This exercises what only PixInsight can run:
- * the data -> render -> bitmap -> base64 -> html -> window pipeline of the two
- * new modes, on synthetic images (no GUI, no modal dialogs).
+ * the data -> render -> bitmap -> base64 -> html -> window pipeline, on
+ * synthetic images (no GUI, no modal dialogs).
  *
  * Run:
  *   <PI-exe> -n --automation-mode --force-exit -r=/abs/path/tests/selftest-integration.js
@@ -26,7 +26,6 @@
 #include "../pjsr/lib/Catalogs.js"
 #include "../pjsr/lib/Treasure.js"
 #include "../pjsr/lib/TreasureReport.js"
-#include "../pjsr/lib/TrashArt.js"
 #include "../pjsr/lib/Render.js"
 /* beautify ignore:end */
 
@@ -143,7 +142,7 @@ function main()
    check( "namespaces loaded", function()
    {
       var need = [ "SIRender", "SICosmology", "SICatalogs", "SITreasure",
-                   "SITreasureReport", "SITrashArt" ];
+                   "SITreasureReport" ];
       for ( var i = 0; i < need.length; ++i )
          if ( typeof eval( need[ i ] ) != "object" && typeof eval( need[ i ] ) != "function" )
             throw new Error( need[ i ] + " missing" );
@@ -279,35 +278,7 @@ function main()
       return html.length + " chars, embeds PNG";
    } );
 
-   // 6) Trash-to-Art engine path.
-   check( "TrashArt assignColors + drawTrails", function()
-   {
-      var trails = [
-         { x1: 40,  y1: 60,  x2: 470, y2: 300, klass: "satellite", operator: "Starlink",
-           timeUtc: new Date( "2026-05-01T22:40:00Z" ) },
-         { x1: 100, y1: 480, x2: 420, y2: 90,  klass: "meteor", operator: null,
-           timeUtc: new Date( "2026-05-01T23:10:00Z" ) },
-         { x1: 20,  y1: 250, x2: 500, y2: 260, klass: "unknown", operator: null,
-           timeUtc: new Date( "2026-05-02T01:05:00Z" ) }
-      ];
-      var colored = SITrashArt.assignColors( trails, "type" );
-      if ( !colored[ 0 ].color )
-         throw new Error( "no color assigned" );
-      var norm = SITrashArt.normalizeEndpoints( colored, 512, 512, 800, 800 );
-      var black = new Bitmap( 800, 800 );
-      black.fill( 0xff05070d );
-      var bmp = SIRender.drawTrails( black, norm, { glow: true, lineWidth: 2 } );
-      if ( !( bmp.width === 800 && bmp.height === 800 ) )
-         throw new Error( "choreography bitmap wrong size" );
-      var png = SIRender.bitmapToBase64Png( bmp );
-      if ( png.indexOf( "iVBORw0KGgoA" ) !== 0 )
-         throw new Error( "choreography png malformed" );
-      out.notes.choreographyChars = png.length;
-      out.notes.choreographyPng = png;
-      out.notes.legendEntries = colored.legend.length;
-      return "3 trails, legend " + colored.legend.length + ", png " + png.length + " chars";
-   } );
-
+   // 6) Render maxCombine (used by the night composite's "max" mode).
    check( "Render maxCombine", function()
    {
       var f1 = buildTrailedImage( [ 20, 20 ], [ 490, 300 ] );
@@ -325,23 +296,6 @@ function main()
       return "512x512 composite, center sample " + v.toFixed( 3 );
    } );
 
-   check( "TrashArt poster html", function()
-   {
-      var ps = { date: "2026-05-01", satellites: 1, starlink: 1, meteors: 1,
-                 satCandidates: 0, unknowns: 1, movers: 0 };
-      var model = SITrashArt.posterModel( ps, { scheme: "type", frameCount: 3,
-                                                dateLabel: "2026-05-01", lang: "en",
-                                                legend: [ { label: "satellite", color: "#22d3ee" } ] } );
-      var html = SITrashArt.buildPosterHtml( model, out.notes.choreographyPng, [], "en" );
-      if ( html.indexOf( "data:image/png" ) < 0 )
-         throw new Error( "poster html missing embedded choreography" );
-      if ( html.indexOf( "3 intruders" ) < 0 )
-         throw new Error( "poster title wrong: " + model.title );
-      out.notes.posterHtmlChars = html.length;
-      // Do not keep the big base64 in the marker.
-      delete out.notes.choreographyPng;
-      return html.length + " chars, title '" + model.title + "'";
-   } );
 
    // Clean up the synthetic image window and temp file.
    try { if ( syn && syn.window ) syn.window.forceClose(); } catch ( e ) {}
