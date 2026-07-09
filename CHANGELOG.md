@@ -6,7 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-09
+
 Every release entry states its VALIDATION evidence (which run, which gates).
+
+**Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-07-09:
+GUI construction smoke test (both languages, color picker); Night trails on the
+13-frame reference night — output matches the baseline exactly (12 trails, 8
+satellites named, 4 honestly uncataloged, zero false positives); Treasure Hunt
+on three plate-solved masters (M 16, NGC 6888, NGC 6992) — no errors, capture
+scoring matches the baseline (one credible capture on M 16, the mag-19 quasar
+correctly reported below the noise); Node pure-logic harness: all suites green.
 
 ### Added
 - **Night trails mode** — detect trails in light frames and identify them:

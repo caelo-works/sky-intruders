@@ -58,6 +58,29 @@ deep-sky neighbors for context — plus a standalone illustrated HTML post.
 | 🌐 **Online catalogs, cached** | CelesTrak, VizieR (HyperLEDA, Milliquas, MASH, Hipparcos) and SkyBoT through PixInsight's own networking — responses cached on disk, outages reported instead of read as "zero finds" |
 | 🌍 **Bilingual UI** | English and French, switchable live — interface, night log, chart and HTML report alike; settings remembered across sessions |
 
+## Screenshots
+
+<div align="center">
+
+![Sky Intruders — Night trails: annotated composite of a night on the Veil Nebula, twelve trails detected, eight satellites identified by name with country flag, altitude, angular speed and UT time; unidentified trails honestly left orange](https://pixinsight-scripts.caelo.works/assets/scripts/sky-intruders-3-night.webp)
+
+*The **Night trails** result — a night on the Veil: twelve trails detected, eight satellites named with flag, altitude, angular speed and UT time; the uncataloged ones honestly left orange.*
+
+![Sky Intruders — Treasure Hunt: star chart of the Crescent Nebula (NGC 6888) circled at its catalog size, with the Wolf-Rayet star HD 192163 at its heart, Star chart and Observation data cards](https://pixinsight-scripts.caelo.works/assets/scripts/sky-intruders-4-treasure-crescent.webp)
+
+*A **Treasure Hunt** star chart — the Crescent circled at its catalog size, the Wolf-Rayet star HD 192163 at its heart, and the field's principal stars with magnitude and spectral type.*
+
+![Sky Intruders — Treasure Hunt on the Veil: three NGC objects circled, eight stars labeled, and a Gaia quasar at z = 2.2 marked below the noise — in the field, but under this image's noise floor](https://pixinsight-scripts.caelo.works/assets/scripts/sky-intruders-5-treasure-veil.webp)
+
+*Honest captures — a Gaia quasar at z = 2.2 sits in the Veil field, and the chart says so: "below the noise", not "captured".*
+
+![Sky Intruders — the Night trails tab: detection threshold in sigma, optional predicted-crosser overlay, fallback observer site, and the frame list](https://pixinsight-scripts.caelo.works/assets/scripts/sky-intruders-1-ui-night.webp)
+![Sky Intruders — the Treasure Hunt tab: catalog row cap, per-type hunt checkboxes, chart accent color, and the plate-solved input image](https://pixinsight-scripts.caelo.works/assets/scripts/sky-intruders-2-ui-treasure.webp)
+
+*The two tabs — bilingual, live-switchable, every setting remembered.*
+
+</div>
+
 ## Installation
 
 ### From the CaeloWorks update repository (recommended)
