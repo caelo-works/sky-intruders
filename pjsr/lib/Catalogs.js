@@ -258,7 +258,8 @@ var SICatalogs = ( function()
    function typeAsteroidRow( r )
    {
       return { type: "asteroid", name: r.name, raDeg: r.raDeg, decDeg: r.decDeg,
-               klass: r.klass, magV: r.magV, num: r.num };
+               klass: r.klass, magV: r.magV, num: r.num,
+               errArcsec: r.errArcsec };
    }
 
    // ------------------------------------------------------------------------
@@ -381,7 +382,7 @@ var SICatalogs = ( function()
       // includes the epoch, so a hit is effectively immutable.
       opts = opts || {};
       var maxAge = ( opts.maxAgeHours > 0 ) ? opts.maxAgeHours : 720;
-      var key = cacheKey( [ "asteroid", round3( raDeg ), round3( decDeg ),
+      var key = cacheKey( [ "asteroid-v2", round3( raDeg ), round3( decDeg ),
                             round3( radiusDeg ), String( epochIso ) ] );
       if ( opts.useCache !== false )
       {

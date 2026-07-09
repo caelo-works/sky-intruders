@@ -96,6 +96,10 @@ var DEFAULT_PARAMS = {
    mode: "night",
    // Treasure Hunt: cap catalog rows fetched per cone search.
    treasureMaxRows: 400,
+   treasureGalaxies: true,
+   treasureQuasars: true,
+   treasurePne: true,
+   treasureAsteroids: true,
    // Trash to Art options.
    trashScheme: "type",       // "type" | "operator" | "time"
    trashChoreography: true,
@@ -1461,6 +1465,66 @@ var TREASURE_STYLE = {
    asteroid: { color: "#ffd38f", glyph: "circle" }
 };
 
+/*
+ * Sample an aperture + background annulus around a projected catalog
+ * position and ask SITreasure.apertureDetection whether there is real
+ * signal there. The aperture follows the object's catalog size (bounded);
+ * point sources get a small default.
+ */
+function measureCaptureAt( image, x0, y0, apR )
+{
+   var annIn = apR + 3;
+   var annOut = annIn + Math.max( 4, apR );
+   var apVals = [], bgVals = [];
+   var w = image.width, h = image.height;
+   for ( var dy = -annOut; dy <= annOut; ++dy )
+   {
+      var yy = y0 + dy;
+      if ( yy < 0 || yy >= h )
+         continue;
+      for ( var dx = -annOut; dx <= annOut; ++dx )
+      {
+         var xx = x0 + dx;
+         if ( xx < 0 || xx >= w )
+            continue;
+         var rr = dx*dx + dy*dy;
+         if ( rr <= apR*apR )
+            apVals.push( image.sample( xx, yy, 0 ) );
+         else if ( rr >= annIn*annIn && rr <= annOut*annOut )
+            bgVals.push( image.sample( xx, yy, 0 ) );
+      }
+   }
+   return SITreasure.apertureDetection( apVals, bgVals );
+}
+
+function measureCapture( image, t )
+{
+   var apR = 4;
+   if ( typeof t.pxDiam === "number" && isFinite( t.pxDiam ) && t.pxDiam > 0 )
+      apR = Math.max( 3, Math.min( 40, Math.round( t.pxDiam/2 ) ) );
+   var x0 = Math.round( t.x ), y0 = Math.round( t.y );
+   var det = SITreasure.apertureDetection ? measureCaptureAt( image, x0, y0, apR ) : null;
+   if ( !det || !det.captured )
+      return det || { captured: false, snr: null };
+
+   // The aperture says "signal": make it beat 12 decoy apertures on a ring
+   // around the position before claiming a capture (chance field stars set
+   // the local false-alarm floor; see SITreasure.captureVerdict).
+   var ringR = ( apR + 3 + Math.max( 4, apR ) ) + apR + 4;
+   var decoys = [];
+   for ( var k = 0; k < 12; ++k )
+   {
+      var a = 2*Math.PI*k/12;
+      var dxk = Math.round( x0 + ringR*Math.cos( a ) );
+      var dyk = Math.round( y0 + ringR*Math.sin( a ) );
+      if ( dxk < 0 || dyk < 0 || dxk >= image.width || dyk >= image.height )
+         continue;
+      decoys.push( measureCaptureAt( image, dxk, dyk, apR ) );
+   }
+   det.captured = SITreasure.captureVerdict( det, decoys );
+   return det;
+}
+
 function runTreasureHunt( window, filePath, params, onProgress )
 {
    function progress( msg )
@@ -1490,26 +1554,41 @@ function runTreasureHunt( window, filePath, params, onProgress )
    var maxRows = ( params.treasureMaxRows > 0 ) ? params.treasureMaxRows : 400;
    var qopts = { max: maxRows };
 
-   function safeQuery( label, fn )
+   var queryFailures = [];
+   function safeQuery( kind, label, fn )
    {
       try
       {
          var rows = fn();
+         if ( rows === null || rows === undefined )
+         {
+            queryFailures.push( kind );
+            return [];
+         }
          progress( "   " + label + ": " + rows.length + " row(s)" );
-         return rows || [];
+         return rows;
       }
       catch ( e )
       {
          console.warningln( "   " + label + " unavailable: " + e.message );
+         queryFailures.push( kind );
          return [];
       }
    }
 
    progress( "Querying deep catalogs…" );
-   var galaxies  = safeQuery( "galaxies",  function() { return SICatalogs.queryGalaxies( raDeg, decDeg, radiusDeg, qopts ); } );
-   var quasars   = safeQuery( "quasars",   function() { return SICatalogs.queryQuasars( raDeg, decDeg, radiusDeg, qopts ); } );
-   var pne       = safeQuery( "nebulae",   function() { return SICatalogs.queryPne( raDeg, decDeg, radiusDeg, qopts ); } );
-   var asteroids = safeQuery( "asteroids", function() { return SICatalogs.queryAsteroids( raDeg, decDeg, radiusDeg, epochIso, qopts ); } );
+   var galaxies = ( params.treasureGalaxies !== false )
+      ? safeQuery( "galaxy", "galaxies", function() { return SICatalogs.queryGalaxies( raDeg, decDeg, radiusDeg, qopts ); } )
+      : [];
+   var quasars = ( params.treasureQuasars !== false )
+      ? safeQuery( "quasar", "quasars", function() { return SICatalogs.queryQuasars( raDeg, decDeg, radiusDeg, qopts ); } )
+      : [];
+   var pne = ( params.treasurePne !== false )
+      ? safeQuery( "pne", "nebulae", function() { return SICatalogs.queryPne( raDeg, decDeg, radiusDeg, qopts ); } )
+      : [];
+   var asteroids = ( params.treasureAsteroids !== false )
+      ? safeQuery( "asteroid", "asteroids", function() { return SICatalogs.queryAsteroids( raDeg, decDeg, radiusDeg, epochIso, qopts ); } )
+      : [];
 
    var flat = galaxies.concat( quasars ).concat( pne ).concat( asteroids );
    var treasures = SITreasure.crossMatch( flat, meta.wcs.celestialToImage, width, height );
@@ -1524,6 +1603,46 @@ function runTreasureHunt( window, filePath, params, onProgress )
             t.pxDiam = t.diamArcmin*60/meta.pixScaleArcsec;
       }
 
+   // Measure a local detection at each position: aperture peak/fill vs an
+   // annulus background. This is what separates "captured" from "in the
+   // field, below your noise" — a mag-20 asteroid lands in every frame but
+   // shows in none, and the report must not oversell it.
+   var capturedCount = 0;
+   for ( var ci = 0; ci < treasures.length; ++ci )
+   {
+      var ct = treasures[ ci ];
+      var det = measureCapture( image, ct );
+      ct.captured = det.captured;
+      if ( det.snr !== null )
+         ct.snr = Math.round( det.snr*10 )/10;
+      // A predicted position looser than the aperture cannot attribute the
+      // flux to the object (poorly observed asteroids have arcminute errors).
+      if ( ct.captured && typeof ct.errArcsec === "number" && meta.pixScaleArcsec > 0 )
+      {
+         var apArcsec = Math.max( 3, Math.min( 40, ( ct.pxDiam > 0 ) ? ct.pxDiam/2 : 4 ) )*meta.pixScaleArcsec;
+         if ( ct.errArcsec > apArcsec )
+            ct.captured = false;
+      }
+   }
+   // Cross-object sanity: an object far fainter than the typical honest
+   // non-detection of its own type is a chance star, not a capture.
+   SITreasure.applyMagConsistency( treasures );
+   for ( var cc = 0; cc < treasures.length; ++cc )
+      if ( treasures[ cc ].captured )
+         capturedCount++;
+   progress( capturedCount + " of " + treasures.length + " show signal above the local noise." );
+
+   // Captured objects lead the list (and the thumbnails); the below-noise
+   // ones keep their notability order after them.
+   var ordered = [];
+   for ( var oc = 0; oc < treasures.length; ++oc )
+      if ( treasures[ oc ].captured )
+         ordered.push( treasures[ oc ] );
+   for ( var on = 0; on < treasures.length; ++on )
+      if ( !treasures[ on ].captured )
+         ordered.push( treasures[ on ] );
+   treasures = ordered;
+
    var summary = SITreasure.summarize( treasures, params.lang );
 
    // Render: stretched base, annotated overlay window + embedded PNG.
@@ -1535,8 +1654,12 @@ function runTreasureHunt( window, filePath, params, onProgress )
    {
       var o = treasures[ m ];
       var style = TREASURE_STYLE[ o.type ] || TREASURE_STYLE.galaxy;
+      var dn = SITreasure.displayName( o, params.lang );
       marks.push( { x: o.x, y: o.y, color: style.color, glyph: style.glyph,
-                    label: ( m < labelCap ) ? o.name : null, labelColor: style.color } );
+                    label: ( m < labelCap ) ? dn.main : null,
+                    sub: ( m < labelCap ) ? dn.sub : null,
+                    dim: ( o.captured === false ),
+                    labelColor: style.color } );
    }
    var mapBmp = SIRender.annotateField( base, marks ); // sizes scale with the image
    var mapWindow = SIRender.showBitmap( mapBmp, "Sky Intruders Treasure Map" );
@@ -1582,13 +1705,13 @@ function runTreasureHunt( window, filePath, params, onProgress )
 
    var html = SITreasureReport.buildHtml( {
       treasures: displayTreasures, narratives: narratives, summary: summary,
-      mapPng: mapPng, thumbs: thumbs,
+      mapPng: mapPng, thumbs: thumbs, issues: queryFailures,
       fieldInfo: { raDeg: raDeg, decDeg: decDeg, radiusDeg: radiusDeg,
                    target: meta.keywords[ "OBJECT" ] || null },
       lang: params.lang } );
 
    return { meta: meta, treasures: treasures, summary: summary,
-            html: html, mapWindow: mapWindow };
+            html: html, mapWindow: mapWindow, queryFailures: queryFailures };
 }
 
 // ---------------------------------------------------------------------------
@@ -1921,9 +2044,12 @@ function buildTreasureRich( res, lang )
    for ( var i = 0; i < order.length; ++i )
    {
       var k = order[ i ], n = ( s.counts && s.counts[ k ] ) || 0;
+      var nc = ( s.captured && s.captured[ k ] !== undefined ) ? s.captured[ k ] : n;
       if ( n > 0 )
          h += "<td bgcolor=\"" + TYPE[ k ].bg + "\"><font color=\"" + TYPE[ k ].c +
-              "\">&nbsp;<b>" + n + "</b> " + TYPE[ k ].n + "&nbsp;</font></td>";
+              "\">&nbsp;<b>" + nc + "</b> " + TYPE[ k ].n +
+              ( ( n > nc ) ? " <i>(+" + ( n - nc ) + ( fr ? " sous le bruit" : " below noise" ) + ")</i>" : "" ) +
+              "&nbsp;</font></td>";
    }
    h += "</tr></table>";
 
@@ -1943,7 +2069,9 @@ function buildTreasureRich( res, lang )
          var col = ( TYPE[ o.type ] ? TYPE[ o.type ].name : "#334155" );
          var story = "";
          try { story = SITreasure.narrate( o, lang ); } catch ( e ) { story = ""; }
-         h += "<li><font color=\"" + col + "\"><b>" + siEscapeHtml( o.name || o.type ) +
+         var dName = o.name || o.type;
+         try { dName = SITreasure.displayName( o, lang ).main; } catch ( e ) {}
+         h += "<li><font color=\"" + col + "\"><b>" + siEscapeHtml( dName ) +
               "</b></font> — " + siEscapeHtml( story ) + "</li>";
       }
       h += "</ul>";
@@ -2020,7 +2148,14 @@ var SI_UI = {
       openImage: "Open image", openHtml: "Open HTML",
       openHtmlTip: "Open the illustrated report in your web browser.",
       saveHtml: "Save HTML\u2026", saveHtmlCaption: "Save illustrated report",
-      selectFrames: "Select frames", selectFolder: "Select a folder of frames"
+      selectFrames: "Select frames", selectFolder: "Select a folder of frames",
+      huntFor: "Hunt for:",
+      huntForTip: "Which deep-catalog object types to search in the field.",
+      huntGalaxies: "Galaxies", huntQuasars: "Quasars",
+      huntPne: "Planetary nebulae", huntAsteroids: "Asteroids",
+      cannotOpen: "Cannot open",
+      needImage: "Add one plate-solved image, or open one in PixInsight first.",
+      needSolve: "This image has no astrometric solution (WCS). Plate-solve it first (ImageSolver), then run Treasure Hunt."
    },
    fr: {
       tabNight: "Tra\u00een\u00e9es de nuit", tabTreasure: "Chasse au tr\u00e9sor", tabTrash: "Rejets en art",
@@ -2075,7 +2210,14 @@ var SI_UI = {
       openImage: "Ouvrir l'image", openHtml: "Ouvrir le HTML",
       openHtmlTip: "Ouvre le rapport illustr\u00e9 dans ton navigateur.",
       saveHtml: "Enregistrer le HTML\u2026", saveHtmlCaption: "Enregistrer le rapport illustr\u00e9",
-      selectFrames: "S\u00e9lectionner des brutes", selectFolder: "S\u00e9lectionner un dossier de brutes"
+      selectFrames: "S\u00e9lectionner des brutes", selectFolder: "S\u00e9lectionner un dossier de brutes",
+      huntFor: "Chercher :",
+      huntForTip: "Types d'objets \u00e0 chasser dans les catalogues profonds.",
+      huntGalaxies: "Galaxies", huntQuasars: "Quasars",
+      huntPne: "N\u00e9buleuses plan\u00e9taires", huntAsteroids: "Ast\u00e9ro\u00efdes",
+      cannotOpen: "Impossible d'ouvrir",
+      needImage: "Ajoute une image r\u00e9solue (plate-solve), ou ouvre-la d'abord dans PixInsight.",
+      needSolve: "Cette image n'a pas de solution astrom\u00e9trique (WCS). R\u00e9sous-la d'abord (ImageSolver), puis relance la chasse au tr\u00e9sor."
    }
 };
 
@@ -2357,10 +2499,37 @@ class SkyIntrudersDialog extends Dialog
                                   "nebulae, asteroids) around your field.";
       this.treasureRows.onValueUpdated = ( v ) => { self.params.treasureMaxRows = Math.round( v ); };
 
+      // Which catalog types to hunt. All on by default; texts come from
+      // applyLanguage.
+      this.huntLabel = new Label( this );
+      this.huntLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
+      function huntCheck( paramKey )
+      {
+         var cb = new CheckBox( self );
+         cb.checked = ( params[ paramKey ] !== false );
+         cb.onCheck = ( checked ) => { self.params[ paramKey ] = checked; };
+         return cb;
+      }
+      this.huntGalaxiesCheck = huntCheck( "treasureGalaxies" );
+      this.huntQuasarsCheck = huntCheck( "treasureQuasars" );
+      this.huntPneCheck = huntCheck( "treasurePne" );
+      this.huntAsteroidsCheck = huntCheck( "treasureAsteroids" );
+      this.huntSizer = new HorizontalSizer;
+      this.huntSizer.spacing = 12;
+      this.huntSizer.add( this.huntLabel );
+      this.huntSizer.add( this.huntGalaxiesCheck );
+      this.huntSizer.add( this.huntQuasarsCheck );
+      this.huntSizer.add( this.huntPneCheck );
+      this.huntSizer.add( this.huntAsteroidsCheck );
+      this.huntSizer.addStretch();
+      this.huntRow = new Control( this );
+      this.huntRow.sizer = this.huntSizer;
+
       this.treasureHint = this.pageHint( "" );
       this.treasurePage = this.makePage( [
          this.treasureHint,
-         this.treasureRows
+         this.treasureRows,
+         this.huntRow
       ] );
 
       // Trash page: color scheme + output toggles.
@@ -2612,6 +2781,12 @@ class SkyIntrudersDialog extends Dialog
       this.altEdit.label.text = uiT( L, "alt" );
       this.treasureRows.label.text = uiT( L, "treasureRows" );
       this.treasureRows.toolTip = uiT( L, "treasureRowsTip" );
+      this.huntLabel.text = uiT( L, "huntFor" );
+      this.huntGalaxiesCheck.text = uiT( L, "huntGalaxies" );
+      this.huntQuasarsCheck.text = uiT( L, "huntQuasars" );
+      this.huntPneCheck.text = uiT( L, "huntPne" );
+      this.huntAsteroidsCheck.text = uiT( L, "huntAsteroids" );
+      this.huntRow.toolTip = uiT( L, "huntForTip" );
       this.schemeLabel.text = uiT( L, "colorBy" );
       var schemeIdx = this.schemeCombo.currentItem;
       this.schemeCombo.clear();
@@ -2806,8 +2981,8 @@ class SkyIntrudersDialog extends Dialog
          var wins = ImageWindow.open( this.files[ 0 ] );
          if ( wins.length == 0 )
          {
-            ( new MessageBox( "Cannot open " + this.files[ 0 ], SKYINTRUDERS_TITLE,
-                              StdIcon.Error, StdButton.Ok ) ).execute();
+            ( new MessageBox( uiT( this.params.lang, "cannotOpen" ) + " " + this.files[ 0 ],
+                              SKYINTRUDERS_TITLE, StdIcon.Error, StdButton.Ok ) ).execute();
             return;
          }
          for ( var i = 1; i < wins.length; ++i )
@@ -2821,7 +2996,7 @@ class SkyIntrudersDialog extends Dialog
          window = ImageWindow.activeWindow;
          if ( window == null || window.isNull )
          {
-            ( new MessageBox( "Add one plate-solved image, or open one in PixInsight first.",
+            ( new MessageBox( uiT( this.params.lang, "needImage" ),
                               SKYINTRUDERS_TITLE, StdIcon.Information, StdButton.Ok ) ).execute();
             return;
          }
@@ -2838,8 +3013,7 @@ class SkyIntrudersDialog extends Dialog
          var res = runTreasureHunt( window, filePath, this.params, null );
          if ( res.needsSolve )
          {
-            ( new MessageBox( "This image has no astrometric solution (WCS). " +
-                              "Plate-solve it first (ImageSolver), then run Treasure Hunt.",
+            ( new MessageBox( uiT( this.params.lang, "needSolve" ),
                               SKYINTRUDERS_TITLE, StdIcon.Warning, StdButton.Ok ) ).execute();
             return;
          }
@@ -2989,6 +3163,10 @@ function siConstructTest()
       out.modes = [ d.tabBox.numberOfPages, d.tabBox.currentPageIndex ];
 
       // Live language switch must relabel the whole UI, both directions.
+      // The saved settings may restore any mode, so compare against the key
+      // for the mode actually active.
+      var modeKey = { night: "analyzeNight", treasure: "analyzeTreasure",
+                      trash: "analyzeTrash" }[ d.params.mode ] || "analyzeNight";
       d.params.lang = "fr";
       d.applyLanguage();
       out.frAnalyze = d.analyzeButton.text;
@@ -2996,8 +3174,8 @@ function siConstructTest()
       d.applyLanguage();
       out.enAnalyze = d.analyzeButton.text;
       out.langSwitchOk = ( out.frAnalyze !== out.enAnalyze ) &&
-                         ( out.frAnalyze === uiT( "fr", "analyzeNight" ) ) &&
-                         ( out.enAnalyze === uiT( "en", "analyzeNight" ) );
+                         ( out.frAnalyze === uiT( "fr", modeKey ) ) &&
+                         ( out.enAnalyze === uiT( "en", modeKey ) );
 
       // Exercise the result dialogs too (they are built on demand at runtime).
       var res = { summary: { counts: { galaxy: 2, quasar: 1, pne: 0, asteroid: 1 },

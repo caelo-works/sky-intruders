@@ -265,17 +265,47 @@ var SIRender = ( function()
       var longSide = Math.max( bmp.width, bmp.height );
       var r = ( opts.radius > 0 ) ? opts.radius : Math.max( 10, Math.round( longSide/110 ) );
       var pw = ( opts.penWidth > 0 ) ? opts.penWidth : Math.max( 2, Math.round( longSide/900 ) );
-      var fontSize = ( opts.fontSize > 0 ) ? opts.fontSize : Math.max( 12, Math.round( longSide/90 ) );
-      var ldx = ( typeof opts.labelDx === "number" ) ? opts.labelDx : ( r + Math.round( r*0.4 ) );
-      var ldy = ( typeof opts.labelDy === "number" ) ? opts.labelDy : -Math.round( r*0.4 );
+      var fontSize = ( opts.fontSize > 0 ) ? opts.fontSize : Math.max( 12, Math.round( longSide/114 ) );
       var halo = hexToArgb( "#000000", 0xb8 ); // ~72% opaque dark outline
       var haloW = Math.max( 3, pw + Math.round( fontSize/5 ) );
+
+      var font = null, subFont = null;
+      var subFontSize = Math.max( 9, Math.round( fontSize*0.75 ) );
+      try { font = new Font( "SansSerif", fontSize ); } catch ( e ) {}
+      try { subFont = new Font( "SansSerif", subFontSize ); } catch ( e ) {}
+      function widthOf( f, s, sz )
+      {
+         try
+         {
+            if ( f && typeof f.width === "function" )
+               return f.width( s );
+         }
+         catch ( e ) {}
+         return s.length*sz*0.62; // fallback estimate
+      }
+
+      // Collision avoidance, same idea as annotateTrails: labels keep out of
+      // each other's boxes by trying anchors all around their marker, then a
+      // wider ring; the whole measured box is clamped inside the frame.
+      var placedBoxes = [];
+      function intersects( b )
+      {
+         for ( var pb = 0; pb < placedBoxes.length; ++pb )
+         {
+            var q = placedBoxes[ pb ];
+            if ( b.x < q.x + q.w && b.x + b.w > q.x &&
+                 b.y < q.y + q.h && b.y + b.h > q.y )
+               return true;
+         }
+         return false;
+      }
 
       var g = new Graphics( bmp );
       try
       {
          g.antialiasing = true;
-         try { g.font = new Font( "SansSerif", fontSize ); } catch ( e ) {}
+         if ( font )
+            try { g.font = font; } catch ( e ) {}
 
          marks = marks || [];
          for ( var i = 0; i < marks.length; ++i )
@@ -284,6 +314,9 @@ var SIRender = ( function()
             if ( m === null || m === undefined )
                continue;
             var col = hexToArgb( m.color || "#ffffff" );
+            // Below-noise objects keep their marker but step back visually.
+            if ( m.dim )
+               col = withAlpha( col, 0x90 );
 
             // Dark outline behind the glyph, then the bright glyph on top —
             // readable over both empty sky and bright nebulosity.
@@ -294,16 +327,67 @@ var SIRender = ( function()
 
             if ( m.label )
             {
-               var lx = m.x + ldx, ly = m.y + ldy;
                var s = String( m.label );
+               var s2 = m.sub ? String( m.sub ) : null;
+               var boxW = Math.max( widthOf( font, s, fontSize ),
+                                    s2 ? widthOf( subFont, s2, subFontSize ) : 0 );
+               var boxH = s2 ? fontSize*2.2 : fontSize*1.4;
+               var margin = Math.round( fontSize*0.6 );
+
+               // Candidate anchors: right, left, below, above, diagonals —
+               // then the same ring further out. (lx, ly) is the BASELINE of
+               // the main line.
+               var d1 = r*1.5, cands = [];
+               var rings = [ d1, d1*2.2 ];
+               for ( var ri = 0; ri < rings.length; ++ri )
+               {
+                  var d = rings[ ri ];
+                  cands.push( { ax: m.x + d, ay: m.y + fontSize*0.4 } );
+                  cands.push( { ax: m.x - d - boxW, ay: m.y + fontSize*0.4 } );
+                  cands.push( { ax: m.x - boxW/2, ay: m.y + d + fontSize } );
+                  cands.push( { ax: m.x - boxW/2, ay: m.y - d - ( s2 ? fontSize*1.2 : fontSize*0.3 ) } );
+                  cands.push( { ax: m.x + d*0.8, ay: m.y - d*0.8 } );
+                  cands.push( { ax: m.x - d*0.8 - boxW, ay: m.y - d*0.8 } );
+                  cands.push( { ax: m.x + d*0.8, ay: m.y + d*0.8 + fontSize*0.8 } );
+                  cands.push( { ax: m.x - d*0.8 - boxW, ay: m.y + d*0.8 + fontSize*0.8 } );
+               }
+               var lx = 0, ly = 0, placed = false;
+               for ( var ci = 0; ci < cands.length && !placed; ++ci )
+               {
+                  lx = Math.max( margin, Math.min( bmp.width - boxW - margin, cands[ ci ].ax ) );
+                  ly = Math.max( margin + fontSize*1.1,
+                                 Math.min( bmp.height - margin - boxH + fontSize*1.1, cands[ ci ].ay ) );
+                  if ( !intersects( { x: lx, y: ly - fontSize*1.1, w: boxW, h: boxH + fontSize*0.3 } ) )
+                     placed = true;
+               }
+               placedBoxes.push( { x: lx, y: ly - fontSize*1.1, w: boxW, h: boxH + fontSize*0.3 } );
+
                // Halo: the label drawn in dark at 8 offsets, then bright.
+               var labelCol = hexToArgb( m.labelColor || m.color || "#e6ebf2" );
+               if ( m.dim )
+                  labelCol = withAlpha( labelCol, 0xa8 );
                g.pen = new Pen( halo, 1 );
                var o = Math.max( 1, Math.round( fontSize/12 ) );
                var offs = [ [-o,-o],[o,-o],[-o,o],[o,o],[0,-o],[0,o],[-o,0],[o,0] ];
                for ( var k = 0; k < offs.length; ++k )
                   g.drawText( lx + offs[ k ][ 0 ], ly + offs[ k ][ 1 ], s );
-               g.pen = new Pen( hexToArgb( m.labelColor || m.color || "#e6ebf2" ), 1 );
+               g.pen = new Pen( labelCol, 1 );
                g.drawText( lx, ly, s );
+
+               if ( s2 )
+               {
+                  // Catalog-name line, 25% finer, aligned with the main line.
+                  var ly2 = ly + Math.round( fontSize*1.0 );
+                  if ( subFont )
+                     try { g.font = subFont; } catch ( e ) {}
+                  g.pen = new Pen( halo, 1 );
+                  for ( var k2 = 0; k2 < offs.length; ++k2 )
+                     g.drawText( lx + offs[ k2 ][ 0 ], ly2 + offs[ k2 ][ 1 ], s2 );
+                  g.pen = new Pen( withAlpha( labelCol, 0xd8 ), 1 );
+                  g.drawText( lx, ly2, s2 );
+                  if ( font )
+                     try { g.font = font; } catch ( e ) {}
+               }
             }
          }
       }

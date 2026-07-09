@@ -86,8 +86,10 @@ function runTreasureTestset()
                throw new Error( "runTreasureHunt still needsSolve after solving" );
 
             entry.counts = res.summary ? res.summary.counts : null;
+            entry.captured = res.summary ? res.summary.captured : null;
             entry.total = res.summary ? res.summary.total : null;
             entry.headlines = res.summary ? res.summary.headlines : null;
+            entry.queryFailures = res.queryFailures || [];
             entry.top = [];
             var topN = Math.min( res.treasures.length, 12 );
             for ( var t = 0; t < topN; ++t )
@@ -95,9 +97,10 @@ function runTreasureTestset()
                var o = res.treasures[ t ];
                entry.top.push( { name: o.name, type: o.type,
                                  x: Math.round( o.x ), y: Math.round( o.y ),
-                                 mag: round2( o.mag ), z: ( o.z !== undefined ) ? o.z : null,
+                                 mag: round2( ( o.magV !== undefined && o.magV !== null ) ? o.magV : o.Rmag ),
+                                 z: ( o.z !== undefined ) ? o.z : null,
                                  diamArcmin: round2( o.diamArcmin ),
-                                 score: round2( o.score ),
+                                 score: round2( o.score ), snr: ( o.snr !== undefined ) ? o.snr : null,
                                  captured: ( o.captured !== undefined ) ? o.captured : null } );
             }
 
