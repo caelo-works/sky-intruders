@@ -223,21 +223,23 @@ var SITleNet = ( function()
       return null;
    }
 
-   function parseSatcatOwners( csvText )
+   function parseSatcatInfo( csvText )
    {
-      // NORAD id -> OWNER code map from the SATCAT CSV. Pure string work:
-      // locate the two columns from the header, split the rows (the fields
-      // used never contain quoted commas).
+      // NORAD id -> { owner, ops } from the SATCAT CSV. Pure string work:
+      // locate the columns from the header, split the rows (the fields used
+      // never contain quoted commas). ops is the OPS_STATUS_CODE: '+', 'P',
+      // 'B', 'S', 'X' are flavors of alive; '-' is out of service.
       var out = {};
       var lines = String( csvText ).split( "\n" );
       if ( lines.length < 2 )
          return out;
       var header = lines[ 0 ].replace( /\r$/, "" ).split( "," );
-      var idCol = -1, ownerCol = -1;
+      var idCol = -1, ownerCol = -1, opsCol = -1;
       for ( var i = 0; i < header.length; ++i )
       {
          if ( header[ i ] == "NORAD_CAT_ID" ) idCol = i;
          if ( header[ i ] == "OWNER" ) ownerCol = i;
+         if ( header[ i ] == "OPS_STATUS_CODE" ) opsCol = i;
       }
       if ( idCol < 0 || ownerCol < 0 )
          return out;
@@ -247,15 +249,27 @@ var SITleNet = ( function()
          if ( f.length <= Math.max( idCol, ownerCol ) )
             continue;
          var id = parseInt( f[ idCol ], 10 );
-         if ( isFinite( id ) && f[ ownerCol ] )
-            out[ id ] = f[ ownerCol ].replace( /\r$/, "" ).trim();
+         if ( isFinite( id ) )
+            out[ id ] = { owner: ( f[ ownerCol ] || "" ).replace( /\r$/, "" ).trim(),
+                          ops: ( opsCol >= 0 && f[ opsCol ] !== undefined )
+                                  ? f[ opsCol ].replace( /\r$/, "" ).trim() : "" };
       }
+      return out;
+   }
+
+   function parseSatcatOwners( csvText )
+   {
+      var info = parseSatcatInfo( csvText );
+      var out = {};
+      for ( var id in info )
+         out[ id ] = info[ id ].owner;
       return out;
    }
 
    return {
       fetchTle: fetchTle,
       fetchSatcat: fetchSatcat,
+      parseSatcatInfo: parseSatcatInfo,
       parseSatcatOwners: parseSatcatOwners,
       countTlePairs: countTlePairs,
       DEFAULT_BASE: DEFAULT_BASE,

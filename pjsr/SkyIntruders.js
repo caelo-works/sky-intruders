@@ -803,18 +803,47 @@ function runAnalysis( files, params )
       LUXE: "lu", SES: "lu", O3B: "lu", GLOB: "us", IRID: "us", ORB: "us"
    };
 
-   function loadSatcatOwners()
+   function loadSatcatInfo()
    {
-      // NORAD id -> OWNER map from the (cached) SATCAT; empty on failure —
-      // the name heuristic then covers the flags.
+      // NORAD id -> { owner, ops } from the (cached) SATCAT; empty on
+      // failure — the name heuristic then covers the flags and the
+      // telemetry line simply omits the service status.
       try
       {
          var info = SITleNet.fetchSatcat( configDir() + "/tle", 24*7 );
          if ( info != null )
-            return SITleNet.parseSatcatOwners( File.readTextFile( info.path ) );
+            return SITleNet.parseSatcatInfo( File.readTextFile( info.path ) );
       }
       catch ( e ) {}
       return {};
+   }
+
+   // Second label line on the result image: distance, angular rate, launch
+   // year (from the COSPAR designator), service status (SATCAT).
+   function satTelemetryLine( crossing, satcat, lang )
+   {
+      var fr = ( lang == "fr" );
+      var parts = [];
+      if ( crossing.rangeKm > 0 )
+         parts.push( Math.round( crossing.rangeKm ) + "\u2009km" );
+      if ( crossing.angularRateDegPerSec > 0 )
+      {
+         var r = crossing.angularRateDegPerSec.toFixed( 2 );
+         parts.push( ( fr ? r.replace( ".", "," ) : r ) + "\u00b0/s" );
+      }
+      var des = String( crossing.intlDes || "" );
+      var m = /^(\d{4})-/.exec( des );
+      if ( m )
+         parts.push( m[ 1 ] );
+      var rec = satcat[ crossing.noradId ];
+      if ( rec && rec.ops )
+      {
+         if ( "+PBSX".indexOf( rec.ops ) >= 0 )
+            parts.push( fr ? "en service" : "in service" );
+         else if ( rec.ops == "-" )
+            parts.push( fr ? "hors service" : "out of service" );
+      }
+      return parts.join( " \u00b7 " );
    }
 
    function flagAssetsDir()
@@ -846,7 +875,7 @@ function runAnalysis( files, params )
    };
    var langLabels = FALLBACK_LABEL[ params.lang ] || FALLBACK_LABEL.en;
    var labeledTrails = [];
-   var satcatOwners = loadSatcatOwners();
+   var satcatInfo = loadSatcatInfo();
 
    var cleanFrames = 0, totalExposureSec = 0;
    var predicted = [];
@@ -887,8 +916,9 @@ function runAnalysis( files, params )
                labeledTrails.push( { frameIndex: i,
                                      x1: tr0.x1, y1: tr0.y1, x2: tr0.x2, y2: tr0.y2,
                                      color: TRAIL_STYLE.satellite,
-                                     flag: OWNER_FLAG[ satcatOwners[ crossings[ c ].noradId ] ] ||
+                                     flag: OWNER_FLAG[ ( satcatInfo[ crossings[ c ].noradId ] || {} ).owner ] ||
                                            satCountryCode( crossings[ c ].name ),
+                                     sub: satTelemetryLine( crossings[ c ], satcatInfo, params.lang ),
                                      label: ( crossings[ c ].name || ( "NORAD " + crossings[ c ].noradId ) ) +
                                             ( crossings[ c ].matchConfidence === "medium" ? " ?" : "" ) +
                                             ( crossings[ c ].entryUtc

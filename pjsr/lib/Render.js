@@ -398,7 +398,15 @@ var SIRender = ( function()
                var s = String( t.label );
                var flag = flagBitmap( t.flag );
                var flagAdvance = ( flag !== null ) ? flagSize + Math.round( fontSize*0.35 ) : 0;
-               var boxW = flagAdvance + textWidth( s );
+               var subFontSize = Math.max( 9, Math.round( fontSize*0.75 ) );
+               var subFont = null;
+               if ( t.sub )
+                  try { subFont = new Font( "SansSerif", subFontSize ); } catch ( e ) {}
+               var subW = 0;
+               if ( t.sub )
+                  try { subW = subFont ? subFont.width( String( t.sub ) ) : String( t.sub ).length*subFontSize*0.62; }
+                  catch ( e ) { subW = String( t.sub ).length*subFontSize*0.62; }
+               var boxW = Math.max( flagAdvance + textWidth( s ), flagAdvance + subW );
                var margin = Math.round( fontSize*0.6 );
 
                var mx = ( t.x1 + t.x2 )/2, my = ( t.y1 + t.y2 )/2;
@@ -424,6 +432,22 @@ var SIRender = ( function()
                   g.drawText( tx + offs[ k ][ 0 ], ly + offs[ k ][ 1 ], s );
                g.pen = new Pen( col, 1 );
                g.drawText( tx, ly, s );
+
+               if ( t.sub )
+               {
+                  // Telemetry line, 25% finer, aligned with the name.
+                  var s2 = String( t.sub );
+                  var ly2 = ly + Math.round( fontSize*1.0 );
+                  if ( subFont )
+                     try { g.font = subFont; } catch ( e ) {}
+                  g.pen = new Pen( halo, 1 );
+                  for ( var k2 = 0; k2 < offs.length; ++k2 )
+                     g.drawText( tx + offs[ k2 ][ 0 ], ly2 + offs[ k2 ][ 1 ], s2 );
+                  g.pen = new Pen( withAlpha( col, 0xd8 ), 1 );
+                  g.drawText( tx, ly2, s2 );
+                  if ( font )
+                     try { g.font = font; } catch ( e ) {}
+               }
             }
          }
       }
