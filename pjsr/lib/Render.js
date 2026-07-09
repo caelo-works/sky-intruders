@@ -330,28 +330,30 @@ var SIRender = ( function()
       var fontSize = ( opts.fontSize > 0 ) ? opts.fontSize : Math.max( 12, Math.round( longSide/114 ) );
       var halo = hexToArgb( "#000000", 0xb8 );
 
-      // Country flags (circle-flags SVGs) rendered at text height, cached
-      // per code. opts.flagDir points at the assets/flags directory.
-      var flagSize = Math.round( fontSize*1.15 );
+      // Country flags (circle-flags SVGs), cached per code and size.
+      // opts.flagDir points at the assets/flags directory. A one-line label
+      // gets a text-height flag; a label with a telemetry line gets a flag
+      // spanning both lines.
       var flagCache = {};
-      function flagBitmap( code )
+      function flagBitmap( code, size )
       {
          if ( !opts.flagDir || !code )
             return null;
-         if ( flagCache[ code ] !== undefined )
-            return flagCache[ code ];
+         var key = code + "_" + size;
+         if ( flagCache[ key ] !== undefined )
+            return flagCache[ key ];
          var out = null;
          try
          {
             var p = opts.flagDir + "/" + code + ".svg";
             if ( File.exists( p ) )
-               out = scaleBitmap( new Bitmap( p ), flagSize, flagSize );
+               out = scaleBitmap( new Bitmap( p ), size, size );
          }
          catch ( e )
          {
             out = null;
          }
-         flagCache[ code ] = out;
+         flagCache[ key ] = out;
          return out;
       }
 
@@ -396,7 +398,8 @@ var SIRender = ( function()
                // perpendicular; the WHOLE box (flag + text, measured) is
                // clamped inside the frame.
                var s = String( t.label );
-               var flag = flagBitmap( t.flag );
+               var flagSize = t.sub ? Math.round( fontSize*2.05 ) : Math.round( fontSize*1.15 );
+               var flag = flagBitmap( t.flag, flagSize );
                var flagAdvance = ( flag !== null ) ? flagSize + Math.round( fontSize*0.35 ) : 0;
                var subFontSize = Math.max( 9, Math.round( fontSize*0.75 ) );
                var subFont = null;
@@ -418,11 +421,16 @@ var SIRender = ( function()
                ly = Math.max( fontSize*1.5, Math.min( bmp.height - fontSize, ly ) );
 
                if ( flag !== null )
-                  // drawText's y is the BASELINE; center the flag on the
-                  // lowercase body of the text.
-                  g.drawBitmap( Math.round( lx ),
-                                Math.round( ly - fontSize*0.82 - ( flagSize - fontSize )/2 ),
-                                flag );
+               {
+                  // drawText's y is the BASELINE. Two-line labels get the
+                  // flag spanning from the name's cap height down to the
+                  // telemetry line's descent; one-liners center it on the
+                  // text body.
+                  var fy = t.sub
+                     ? ly - fontSize*0.82
+                     : ly - fontSize*0.82 - ( flagSize - fontSize )/2;
+                  g.drawBitmap( Math.round( lx ), Math.round( fy ), flag );
+               }
 
                var tx = lx + flagAdvance;
                g.pen = new Pen( halo, 1 );
