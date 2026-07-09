@@ -330,11 +330,50 @@ var SIRender = ( function()
       var fontSize = ( opts.fontSize > 0 ) ? opts.fontSize : Math.max( 12, Math.round( longSide/80 ) );
       var halo = hexToArgb( "#000000", 0xb8 );
 
+      // Country flags (circle-flags SVGs) rendered at text height, cached
+      // per code. opts.flagDir points at the assets/flags directory.
+      var flagSize = Math.round( fontSize*1.15 );
+      var flagCache = {};
+      function flagBitmap( code )
+      {
+         if ( !opts.flagDir || !code )
+            return null;
+         if ( flagCache[ code ] !== undefined )
+            return flagCache[ code ];
+         var out = null;
+         try
+         {
+            var p = opts.flagDir + "/" + code + ".svg";
+            if ( File.exists( p ) )
+               out = scaleBitmap( new Bitmap( p ), flagSize, flagSize );
+         }
+         catch ( e )
+         {
+            out = null;
+         }
+         flagCache[ code ] = out;
+         return out;
+      }
+
+      var font = null;
+      try { font = new Font( "SansSerif", fontSize ); } catch ( e ) {}
+      function textWidth( s )
+      {
+         try
+         {
+            if ( font && typeof font.width === "function" )
+               return font.width( s );
+         }
+         catch ( e ) {}
+         return s.length*fontSize*0.62; // fallback estimate
+      }
+
       var g = new Graphics( bmp );
       try
       {
          g.antialiasing = true;
-         try { g.font = new Font( "SansSerif", fontSize ); } catch ( e ) {}
+         if ( font )
+            try { g.font = font; } catch ( e ) {}
 
          items = items || [];
          for ( var i = 0; i < items.length; ++i )
@@ -354,22 +393,37 @@ var SIRender = ( function()
             if ( t.label )
             {
                // Label at the midpoint, pushed off the line along the
-               // perpendicular, clamped inside the frame.
+               // perpendicular; the WHOLE box (flag + text, measured) is
+               // clamped inside the frame.
+               var s = String( t.label );
+               var flag = flagBitmap( t.flag );
+               var flagAdvance = ( flag !== null ) ? flagSize + Math.round( fontSize*0.35 ) : 0;
+               var boxW = flagAdvance + textWidth( s );
+               var margin = Math.round( fontSize*0.6 );
+
                var mx = ( t.x1 + t.x2 )/2, my = ( t.y1 + t.y2 )/2;
                var dx = t.x2 - t.x1, dy = t.y2 - t.y1;
                var len = Math.max( 1e-6, Math.sqrt( dx*dx + dy*dy ) );
                var off = fontSize*1.4;
                var lx = mx + ( -dy/len )*off, ly = my + ( dx/len )*off;
-               lx = Math.max( fontSize, Math.min( bmp.width - fontSize*8, lx ) );
+               lx = Math.max( margin, Math.min( bmp.width - boxW - margin, lx ) );
                ly = Math.max( fontSize*1.5, Math.min( bmp.height - fontSize, ly ) );
-               var s = String( t.label );
+
+               if ( flag !== null )
+                  // drawText's y is the BASELINE; center the flag on the
+                  // lowercase body of the text.
+                  g.drawBitmap( Math.round( lx ),
+                                Math.round( ly - fontSize*0.82 - ( flagSize - fontSize )/2 ),
+                                flag );
+
+               var tx = lx + flagAdvance;
                g.pen = new Pen( halo, 1 );
                var o = Math.max( 1, Math.round( fontSize/12 ) );
                var offs = [ [-o,-o],[o,-o],[-o,o],[o,o],[0,-o],[0,o],[-o,0],[o,0] ];
                for ( var k = 0; k < offs.length; ++k )
-                  g.drawText( lx + offs[ k ][ 0 ], ly + offs[ k ][ 1 ], s );
+                  g.drawText( tx + offs[ k ][ 0 ], ly + offs[ k ][ 1 ], s );
                g.pen = new Pen( col, 1 );
-               g.drawText( lx, ly, s );
+               g.drawText( tx, ly, s );
             }
          }
       }

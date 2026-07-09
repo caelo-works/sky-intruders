@@ -745,6 +745,35 @@ function runAnalysis( files, params )
       }
    }
 
+   // Operator country for the flag chip on the result image, from the
+   // catalog name. Coarse by design; unknown stays a neutral placeholder.
+   function satCountryCode( name )
+   {
+      var n = ( name || "" ).toUpperCase();
+      if ( /STARLINK|IRIDIUM|GLOBALSTAR|NAVSTAR|GPS |FLOCK|SKYSAT|LEMUR|KUIPER|USA |NOSS|LACROSSE|IMAGE|GOES|TERRA|AQUA|LANDSAT/.test( n ) ) return "us";
+      if ( /QIANFAN|G60|HULIANWANG|CHUANGXIN|TIANGONG|^CSS|CZ-|YAOGAN|FENGYUN|SHIYAN|JILIN|GAOFEN|BEIDOU|CHINASAT|SHENZHOU/.test( n ) ) return "cn";
+      if ( /COSMOS|GLONASS|SOYUZ|PROGRESS|METEOR-|RESURS/.test( n ) ) return "ru";
+      if ( /ONEWEB/.test( n ) ) return "gb";
+      if ( /GALILEO|SENTINEL|METEOSAT|ARIANE/.test( n ) ) return "eu";
+      if ( /HIMAWARI|ALOS|QZS/.test( n ) ) return "jp";
+      if ( /IRNSS|CARTOSAT|GSAT|RISAT/.test( n ) ) return "in";
+      if ( /SPOT |PLEIADES|ELISA|CERES/.test( n ) ) return "fr";
+      return "xx";
+   }
+
+   function flagAssetsDir()
+   {
+      try
+      {
+         return File.extractDrive( #__FILE__ ) + File.extractDirectory( #__FILE__ ) +
+                "/assets/flags";
+      }
+      catch ( e )
+      {
+         return null;
+      }
+   }
+
    var TRAIL_STYLE = {
       satellite: "#22d3ee",
       "satellite-candidate": "#ffa05f",
@@ -801,6 +830,7 @@ function runAnalysis( files, params )
                labeledTrails.push( { frameIndex: i,
                                      x1: tr0.x1, y1: tr0.y1, x2: tr0.x2, y2: tr0.y2,
                                      color: TRAIL_STYLE.satellite,
+                                     flag: satCountryCode( crossings[ c ].name ),
                                      label: ( crossings[ c ].name || ( "NORAD " + crossings[ c ].noradId ) ) +
                                             ( crossings[ c ].matchConfidence === "medium" ? " ?" : "" ) +
                                             ( crossings[ c ].entryUtc
@@ -904,7 +934,7 @@ function runAnalysis( files, params )
          if ( comp != null )
          {
             var bmp = SIRender.stretchedBitmap( comp );
-            bmp = SIRender.annotateTrails( bmp, labeledTrails );
+            bmp = SIRender.annotateTrails( bmp, labeledTrails, { flagDir: flagAssetsDir() } );
             resultImagePath = File.systemTempDirectory + "/SkyIntruders-night-result.png";
             bmp.save( resultImagePath );
             try
@@ -938,7 +968,7 @@ function runAnalysis( files, params )
             for ( var lt = 0; lt < labeledTrails.length; ++lt )
                if ( labeledTrails[ lt ].frameIndex === i )
                   mine.push( labeledTrails[ lt ] );
-            fbmp = SIRender.annotateTrails( fbmp, mine );
+            fbmp = SIRender.annotateTrails( fbmp, mine, { flagDir: flagAssetsDir() } );
             fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + i + ".png" );
             wins3[ 0 ].forceClose();
             gc();
