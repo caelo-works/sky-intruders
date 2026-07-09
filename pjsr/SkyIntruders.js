@@ -83,6 +83,9 @@ var DEFAULT_PARAMS = {
    matchMaxAngleDiffDeg: 12,
    stepSec: 1.0,
    detectAsteroids: true,
+   // Draw the predicted-but-unmatched sunlit crossers as ghost lines on the
+   // result image (with flag and telemetry, in a distinct pale color).
+   nightShowPredicted: false,
    maxSources: 600,
    lang: "en",
    observerLatDeg: null,   // fallbacks when FITS headers lack the site
@@ -1298,6 +1301,33 @@ function runAnalysis( files, params )
    // Night result image: the registered set max-combined (every streak of
    // the night on one star field), stretched, with each trail highlighted
    // and named. Only meaningful when the frames share one pixel grid.
+   // Optional ghost layer for the composite: sunlit predicted crossers
+   // that matched no trail, with flag and telemetry like the real ones.
+   var predictedItems = [];
+   if ( params.nightShowPredicted && fitTanForOverlay != null )
+      for ( var pf = 0; pf < frames.length; ++pf )
+      {
+         var crsP = crossingsByFrame[ frames[ pf ].meta.id ] || [];
+         for ( var pc = 0; pc < crsP.length; ++pc )
+         {
+            var cp = crsP[ pc ];
+            if ( !cp.sunlit || cp.matchedTrailIndex != null )
+               continue;
+            var g1 = tanInvertForOverlay( fitTanForOverlay, cp.path.p1 );
+            var g2 = tanInvertForOverlay( fitTanForOverlay, cp.path.p2 );
+            if ( g1 == null || g2 == null )
+               continue;
+            predictedItems.push( { x1: g1.x, y1: g1.y, x2: g2.x, y2: g2.y,
+                                   color: "#e8d44d",
+                                   flag: OWNER_FLAG[ ( satcatInfo[ cp.noradId ] || {} ).owner ] ||
+                                         satCountryCode( cp.name ),
+                                   label: ( cp.name || ( "NORAD " + cp.noradId ) ) +
+                                          ( cp.entryUtc ? " \u00b7 " +
+                                            String( cp.entryUtc ).substring( 11, 16 ) + " UT" : "" ),
+                                   sub: satTelemetryLine( cp, satcatInfo, params.lang ) } );
+         }
+      }
+
    var resultImagePath = null;
    if ( set != null && params.nightResultImage !== false )
       try
@@ -1329,7 +1359,8 @@ function runAnalysis( files, params )
          }
          if ( bmp != null )
          {
-            bmp = SIRender.annotateTrails( bmp, labeledTrails, { flagDir: flagAssetsDir() } );
+            bmp = SIRender.annotateTrails( bmp, labeledTrails.concat( predictedItems ),
+                                           { flagDir: flagAssetsDir() } );
             resultImagePath = File.systemTempDirectory + "/SkyIntruders-night-result.png";
             bmp.save( resultImagePath );
 
@@ -2153,10 +2184,19 @@ class SkyIntrudersDialog extends Dialog
       this.observerGroup.sizer.margin = 8;
       this.observerGroup.sizer.add( this.observerRow );
 
+      this.predictedCheck = new CheckBox( this );
+      this.predictedCheck.text = "Draw predicted crossers on the result image";
+      this.predictedCheck.checked = !!params.nightShowPredicted;
+      this.predictedCheck.toolTip = "Satellites the orbit propagation puts inside your field " +
+                                    "during an exposure but that no detected trail matched — " +
+                                    "drawn as pale ghost lines with their flag and telemetry.";
+      this.predictedCheck.onCheck = ( checked ) => { self.params.nightShowPredicted = checked; };
+
       this.nightPage = this.makePage( [
          this.pageHint( "Identify satellite, meteor and asteroid trails across a night of " +
                         "light frames, then get a night log and a ready-to-post report." ),
          this.kSigmaControl,
+         this.predictedCheck,
          this.observerGroup
       ] );
 

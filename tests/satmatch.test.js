@@ -257,12 +257,21 @@ console.log("satmatch: 7 propagation steps within tolerance; match replay == Go 
    SISatMatch.core.assignTrailsLoose(crs, { trails: [alongTrail] }, {});
    assert.strictEqual(crs[0].matchedTrailIndex, 0, "along-track offset matches");
 
-   // cross-track 1.0 deg: beyond even the lone-pair rescue gate -> no match
+   // cross-track 1.0 deg with a near-exact angle: the angle-dominant lone
+   // rescue claims it (maneuvering-constellation TLEs land that far out)
    const crossTrail = { index: 0, p1: { raDeg: 100 - 0.8, decDeg: 31.0 },
                         p2: { raDeg: 100 + 0.8, decDeg: 31.0 } };
    crs = [crossing(mk(0, 0, 0), 2)];
    SISatMatch.core.assignTrailsLoose(crs, { trails: [crossTrail] }, {});
-   assert.strictEqual(crs[0].matchedTrailIndex, null, "large cross-track offset rejected");
+   assert.strictEqual(crs[0].matchedTrailIndex, 0, "aligned sideways offset rescued");
+   assert.strictEqual(crs[0].matchConfidence, "medium", "sideways rescue is medium");
+
+   // cross-track 2.0 deg: beyond every gate -> no match
+   const farTrail = { index: 0, p1: { raDeg: 100 - 0.8, decDeg: 32.0 },
+                      p2: { raDeg: 100 + 0.8, decDeg: 32.0 } };
+   crs = [crossing(mk(0, 0, 0), 4)];
+   SISatMatch.core.assignTrailsLoose(crs, { trails: [farTrail] }, {});
+   assert.strictEqual(crs[0].matchedTrailIndex, null, "very large cross-track offset rejected");
 
    // wrong orientation (30 deg): must NOT match
    crs = [crossing(mk(0, 0, 30), 3)];
