@@ -362,7 +362,41 @@ var SITrailCore = ( function()
    {
       // The combined rule: reject only what is holey AND faint.
       var e = lineEmptiness( data, width, height, seg );
-      return e.zeroFrac > 0.38 && e.meanNonZero < 1.8*sigma;
+      // Bar at 1.35 sigma: clamped noise occupies at ~1.0-1.15 sigma; the
+      // dashes of a faint flasher sit at ~1.5+ and must survive.
+      return e.zeroFrac > 0.38 && e.meanNonZero < 1.35*sigma;
+   }
+
+   function lineEdgeAffinity( mask, width, height, seg, dist )
+   {
+      // Fraction of the segment that HUGS invalid territory: a sample
+      // counts when a pixel at +-dist across the line is masked or outside
+      // the image. Coverage-transition bands (where the frame sets of the
+      // two nights meet) leave photometric ridges exactly along the mask
+      // border; a real trail may CROSS a border but never runs along it.
+      var dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
+      var len = Math.sqrt( dx*dx + dy*dy );
+      if ( len < 1 )
+         return 1;
+      var ux = dx/len, uy = dy/len;
+      var hug = 0, n = 0;
+      for ( var t = 0; t <= Math.round( len ); t += 2 )
+      {
+         var x = seg.x1 + ux*t, y = seg.y1 + uy*t;
+         ++n;
+         var bad = false;
+         for ( var s = -1; s <= 1 && !bad; s += 2 )
+         {
+            var xi = Math.round( x - uy*dist*s );
+            var yi = Math.round( y + ux*dist*s );
+            if ( xi < 0 || yi < 0 || xi >= width || yi >= height ||
+                 ( mask && !mask[yi*width + xi] ) )
+               bad = true;
+         }
+         if ( bad )
+            ++hug;
+      }
+      return ( n > 0 ) ? hug/n : 1;
    }
 
    function corridorConcentration( data, width, height, seg, mu )
@@ -457,7 +491,7 @@ var SITrailCore = ( function()
       };
    }
 
-   function medianStackMasked( arrays, eps )
+   function medianStackMasked( arrays, eps, minCover )
    {
       // Per-pixel median across N same-length arrays IGNORING empty pixels
       // (registration borders are zero-filled, and a zero must never vote:
@@ -482,7 +516,7 @@ var SITrailCore = ( function()
             if ( x > eps )
                v[m++] = x;
          }
-         if ( m < 3 )
+         if ( m < ( ( minCover >= 3 ) ? minCover : 3 ) )
             continue;
          // insertion sort — m is at most the frame count (tiny)
          for ( var a2 = 1; a2 < m; ++a2 )
@@ -691,42 +725,66 @@ var SITrailCore = ( function()
       // remove) is flattened away — otherwise its Hough peaks span tens of
       // degrees and exhaust the faint-pass candidate budget before any real
       // trail is even proposed.
-      var tmp = new Float32Array( data.length );
-      // horizontal running mean: window [x-r, x+r] clamped to the row
+      // Validity-aware box mean: exact zeros are masked/empty pixels and
+      // must not vote, or the mean sags near every mask border and
+      // data - mean grows a positive halo along all edges — which then
+      // exhausts the faint-pass candidate budget on edge-hugging lines.
+      var sumH = new Float64Array( data.length );
+      var cntH = new Int32Array( data.length );
       for ( var y = 0; y < height; ++y )
       {
          var row = y*width;
-         var sum = 0;
+         var s = 0, m = 0;
          for ( var x0 = 0; x0 <= Math.min( radius, width - 1 ); ++x0 )
-            sum += data[row + x0];
+         {
+            var v0 = data[row + x0];
+            if ( v0 !== 0 ) { s += v0; ++m; }
+         }
          for ( var x = 0; x < width; ++x )
          {
-            var lo = Math.max( 0, x - radius ), hi = Math.min( width - 1, x + radius );
-            tmp[row + x] = sum/( hi - lo + 1 );
+            sumH[row + x] = s;
+            cntH[row + x] = m;
             var hiN = x + 1 + radius;
             if ( hiN <= width - 1 )
-               sum += data[row + hiN];
+            {
+               var vA = data[row + hiN];
+               if ( vA !== 0 ) { s += vA; ++m; }
+            }
             if ( x - radius >= 0 )
-               sum -= data[row + x - radius];
+            {
+               var vR = data[row + x - radius];
+               if ( vR !== 0 ) { s -= vR; --m; }
+            }
          }
       }
-      // vertical running mean of tmp, then subtract from the original
       var out = new Float32Array( data.length );
       for ( var xc = 0; xc < width; ++xc )
       {
-         var sum2 = 0;
+         var s2 = 0, m2 = 0;
          for ( var y0 = 0; y0 <= Math.min( radius, height - 1 ); ++y0 )
-            sum2 += tmp[y0*width + xc];
+         {
+            s2 += sumH[y0*width + xc];
+            m2 += cntH[y0*width + xc];
+         }
          for ( var yy = 0; yy < height; ++yy )
          {
-            var lo2 = Math.max( 0, yy - radius ), hi2 = Math.min( height - 1, yy + radius );
-            var v = data[yy*width + xc] - sum2/( hi2 - lo2 + 1 );
-            out[yy*width + xc] = ( v > 0 ) ? v : 0;
+            var d = data[yy*width + xc];
+            if ( d !== 0 && m2 > 0 )
+            {
+               var v = d - s2/m2;
+               out[yy*width + xc] = ( v > 0 ) ? v : 0;
+            }
             var hiN2 = yy + 1 + radius;
             if ( hiN2 <= height - 1 )
-               sum2 += tmp[hiN2*width + xc];
+            {
+               s2 += sumH[hiN2*width + xc];
+               m2 += cntH[hiN2*width + xc];
+            }
             if ( yy - radius >= 0 )
-               sum2 -= tmp[( yy - radius )*width + xc];
+            {
+               s2 -= sumH[( yy - radius )*width + xc];
+               m2 -= cntH[( yy - radius )*width + xc];
+            }
          }
       }
       return out;
@@ -1096,6 +1154,16 @@ var SITrailCore = ( function()
             var tSa = ext.t0 + run.start, tSb = ext.t0 + run.end;
             var runSeg = { x1: refRho*ext.ct - tSa*ext.st, y1: refRho*ext.st + tSa*ext.ct,
                            x2: refRho*ext.ct - tSb*ext.st, y2: refRho*ext.st + tSb*ext.ct };
+            if ( params && params.mask )
+            {
+               var hug = lineEdgeAffinity( params.mask, width, height, runSeg, 8 );
+               if ( hug > 0.35 )
+               {
+                  tr( peak, "edge-line", Math.round( hug*100 )/100 );
+                  suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
+                  continue;
+               }
+            }
             var conc = corridorConcentration( z, width, height, runSeg, muZ );
             if ( conc < 0.45 )
             {
@@ -1250,6 +1318,7 @@ var SITrailCore = ( function()
       corridorConcentration: corridorConcentration,
       boxBlurSubtract: boxBlurSubtract,
       lineEmptiness: lineEmptiness,
+      lineEdgeAffinity: lineEdgeAffinity,
       lineLengthTable: lineLengthTable,
       normalizeToSignificance: normalizeToSignificance,
       isNoiseLine: isNoiseLine,
@@ -1444,9 +1513,12 @@ var SITrailDetect = ( function()
          return SITrailCore.corridorConcentration( diff, binnedSelf.width, binnedSelf.height,
                                                    run, muDiff ) >= 0.45 &&
                 !SITrailCore.isNoiseLine( diff, binnedSelf.width, binnedSelf.height,
-                                          run, sigmaDiff );
+                                          run, sigmaDiff ) &&
+                ( !mask || SITrailCore.lineEdgeAffinity( mask, binnedSelf.width,
+                                                         binnedSelf.height, run, 8 ) <= 0.35 );
       };
       params.noiseOverride = { median: 0, sigma: sigmaDiff };
+      params.mask = mask;
       var core = SITrailCore.detectCore( diff, binnedSelf.width, binnedSelf.height, params, thinOnly );
 
       for ( var i = 0; i < core.trails.length; ++i )

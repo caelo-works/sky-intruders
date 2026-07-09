@@ -69,15 +69,16 @@ function analyzeSet( files )
    var arrays = [];
    for ( var i = 0; i < binnedList.length; ++i )
       arrays.push( binnedList[ i ].data );
-   var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6 );
+   var minCover = Math.max( 3, arrays.length - 1 );
+   var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
    var normalized = [];
    for ( var i = 0; i < arrays.length; ++i )
    {
       var lf = SITrailCore.linearFitToModel( arrays[ i ], stack0.model, stack0.valid );
       normalized.push( SITrailCore.applyLinear( arrays[ i ], lf.a, lf.b ) );
    }
-   var stack = SITrailCore.medianStackMasked( normalized, 1e-6 );
-   var mask = SITrailCore.erodeMask( stack.valid, w, h, 3 );
+   var stack = SITrailCore.medianStackMasked( normalized, 1e-6, minCover );
+   var mask = SITrailCore.erodeMask( stack.valid, w, h, 6 );
 
    var frames = [];
    for ( var fi = 0; fi < files.length; ++fi )
@@ -87,7 +88,16 @@ function analyzeSet( files )
 
 function analyzeFrameDiff( path, norm, stack, mask, w, h, fi )
 {
-   var diff = SITrailCore.subtractModel( norm, stack.model, mask );
+   var fv = new Uint8Array( norm.length );
+   for ( var m2 = 0; m2 < fv.length; ++m2 )
+      fv[ m2 ] = ( norm[ m2 ] > 1e-6 ) ? 1 : 0;
+   fv = SITrailCore.erodeMask( fv, w, h, 6 );
+   var frameMask = new Uint8Array( fv.length );
+   for ( var m3 = 0; m3 < fv.length; ++m3 )
+      frameMask[ m3 ] = ( mask[ m3 ] && fv[ m3 ] ) ? 1 : 0;
+   mask = frameMask;
+   var signed = SITrailCore.subtractSigned( norm, stack.model, mask );
+   var diff = SITrailCore.boxBlurSubtract( signed, w, h, 7 );
    var sigma = SITrailCore.noiseSigmaFromPositives( diff );
    var muDiff = 0;
    for ( var d = 0; d < diff.length; ++d )
@@ -118,7 +128,7 @@ function analyzeFrameDiff( path, norm, stack, mask, w, h, fi )
          }
    }
    var trace = [];
-   var faint = SITrailCore.detectFaintCore( diff2, w, h, { trace: trace } );
+   var faint = SITrailCore.detectFaintCore( diff2, w, h, { trace: trace, mask: mask } );
 
    var out = { file: path.split( "/" ).pop(), sigmaAdu: sigma*65535,
                bright: [], faint: [], trace: trace.slice( 0, 40 ) };

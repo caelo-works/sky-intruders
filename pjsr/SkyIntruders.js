@@ -345,7 +345,8 @@ function analyzeNightSet( files, params )
    var arrays = [];
    for ( var i = 0; i < entries.length; ++i )
       arrays.push( entries[ i ].binned.data );
-   var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6 );
+   var minCover = Math.max( 3, entries.length - 1 );
+   var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
    var normalized = [];
    for ( var i = 0; i < entries.length; ++i )
    {
@@ -354,12 +355,14 @@ function analyzeNightSet( files, params )
       entries[ i ].binned.data = normalized[ i ];
       processEvents();
    }
-   var stack = SITrailCore.medianStackMasked( normalized, 1e-6 );
+   var stack = SITrailCore.medianStackMasked( normalized, 1e-6, minCover );
    var model = stack.model;
    // Trust the model only where 3+ frames overlap, minus a safety ring for
    // binning smear and resampling edges.
+   // 6 px: past the Lanczos ringing at every resampled frame's coverage
+   // boundary, spread a few px by the intra-night dither.
    var mask = SITrailCore.erodeMask( stack.valid, entries[ 0 ].binned.width,
-                                     entries[ 0 ].binned.height, 3 );
+                                     entries[ 0 ].binned.height, 6 );
 
    // Pass B: transient detection per frame against the model.
    var refMeta = entries[ 0 ].meta;
@@ -380,13 +383,25 @@ function analyzeNightSet( files, params )
       var win2 = wins2[ 0 ];
       for ( var k3 = 1; k3 < wins2.length; ++k3 )
          wins2[ k3 ].forceClose();
+      // Per-frame mask: the global coverage mask AND the frame's OWN
+      // coverage eroded — Lanczos ringing at a resampled frame's boundary
+      // lives a few nonzero pixels INSIDE its coverage, invisible to the
+      // global mask and strong enough to pose as an edge-hugging trail.
+      var fv = new Uint8Array( e.binned.data.length );
+      for ( var m2 = 0; m2 < fv.length; ++m2 )
+         fv[ m2 ] = ( e.binned.data[ m2 ] > 1e-6 ) ? 1 : 0;
+      fv = SITrailCore.erodeMask( fv, e.binned.width, e.binned.height, 6 );
+      var frameMask = new Uint8Array( fv.length );
+      for ( var m3 = 0; m3 < fv.length; ++m3 )
+         frameMask[ m3 ] = ( mask[ m3 ] && fv[ m3 ] ) ? 1 : 0;
+
       var diffParams = JSON.parse( JSON.stringify( params ) );
       if ( params.diffKSigma > 0 )
          diffParams.kSigma = params.diffKSigma;
       // A satellite train alone can leave 10+ parallel streaks in one sub —
       // never let a bundle exhaust the slots and mask a lone trail.
       diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
-      var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, mask );
+      var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, frameMask );
 
       var trails = [];
       for ( var t = 0; t < det.trails.length; ++t )
