@@ -24,7 +24,7 @@ mkdir -p "$DEST/lib"
 cp "$REPO/pjsr/SkyIntruders.js" "$DEST/"
 cp -R "$REPO/pjsr/lib/." "$DEST/lib/"
 mkdir -p "$DEST/assets"
-cp "$REPO/pjsr/assets/SkyIntruders.svg" "$DEST/assets/" 2>/dev/null || true
+cp -R "$REPO"/pjsr/assets/. "$DEST/assets/" 2>/dev/null || true
 
 # The build stamp is only substituted at packaging time; make it readable in dev.
 sed -i 's/__BUILD__/dev/g' "$DEST/SkyIntruders.js"

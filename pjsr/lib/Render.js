@@ -370,6 +370,22 @@ var SIRender = ( function()
          return s.length*fontSize*0.62; // fallback estimate
       }
 
+      // Collision avoidance: labels keep out of each other's boxes by
+      // trying the other side of their line, then larger perpendicular
+      // offsets, then slides along the line.
+      var placedBoxes = [];
+      function intersects( b )
+      {
+         for ( var pb = 0; pb < placedBoxes.length; ++pb )
+         {
+            var q = placedBoxes[ pb ];
+            if ( b.x < q.x + q.w && b.x + b.w > q.x &&
+                 b.y < q.y + q.h && b.y + b.h > q.y )
+               return true;
+         }
+         return false;
+      }
+
       var g = new Graphics( bmp );
       try
       {
@@ -415,10 +431,27 @@ var SIRender = ( function()
                var mx = ( t.x1 + t.x2 )/2, my = ( t.y1 + t.y2 )/2;
                var dx = t.x2 - t.x1, dy = t.y2 - t.y1;
                var len = Math.max( 1e-6, Math.sqrt( dx*dx + dy*dy ) );
-               var off = fontSize*1.4;
-               var lx = mx + ( -dy/len )*off, ly = my + ( dx/len )*off;
-               lx = Math.max( margin, Math.min( bmp.width - boxW - margin, lx ) );
-               ly = Math.max( fontSize*1.5, Math.min( bmp.height - fontSize, ly ) );
+               var boxH = t.sub ? fontSize*2.2 : fontSize*1.4;
+               // candidate anchors: both sides of the line, growing
+               // perpendicular offsets, then slides along the line
+               var cands = [];
+               var offs1 = [ 1.4, -1.4, 2.8, -2.8, 4.2, -4.2 ];
+               for ( var ci = 0; ci < offs1.length; ++ci )
+                  cands.push( { ax: mx + ( -dy/len )*fontSize*offs1[ ci ],
+                                ay: my + ( dx/len )*fontSize*offs1[ ci ] } );
+               var slides = [ 0.18, -0.18, 0.33, -0.33 ];
+               for ( var si = 0; si < slides.length; ++si )
+                  cands.push( { ax: mx + dx*slides[ si ] + ( -dy/len )*fontSize*1.4,
+                                ay: my + dy*slides[ si ] + ( dx/len )*fontSize*1.4 } );
+               var lx = 0, ly = 0, placed = false;
+               for ( var ci2 = 0; ci2 < cands.length && !placed; ++ci2 )
+               {
+                  lx = Math.max( margin, Math.min( bmp.width - boxW - margin, cands[ ci2 ].ax ) );
+                  ly = Math.max( fontSize*1.5, Math.min( bmp.height - boxH, cands[ ci2 ].ay ) );
+                  if ( !intersects( { x: lx, y: ly - fontSize*1.1, w: boxW, h: boxH + fontSize*0.3 } ) )
+                     placed = true;
+               }
+               placedBoxes.push( { x: lx, y: ly - fontSize*1.1, w: boxW, h: boxH + fontSize*0.3 } );
 
                if ( flag !== null )
                {
