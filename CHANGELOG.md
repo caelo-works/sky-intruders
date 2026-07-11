@@ -6,6 +6,36 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-11
+
+**Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-07-11:
+GUI construction smoke test in both languages, including a new assertion that
+the header emblem actually rasterized the icon; Night trails on the 13-frame
+reference night — output matches the 0.1.0 baseline exactly (12 trails, 8
+satellites named, 4 honestly uncataloged, zero false movers); update package
+rebuilt and inspected — the icon ships byte-identical at both install
+locations; Node pure-logic harness: all suites green. Console log clean (the
+only grep hits are PixInsight's usual headless GLES-fallback notices, present
+on every headless run).
+
+### Changed
+- New script icon (`SkyIntruders.svg`): the tile is the sky field itself — one
+  bold diagonal trail as the silhouette, the amber treasure star in the corner
+  the trail leaves free. Used everywhere the previous placeholder appeared:
+  Scripts menu and Feature Scripts (`#feature-icon`), dialog header emblem, and
+  both install locations in the update package.
+- The script now registers in the dedicated **CaeloWorks** menu category, with
+  a script identifier in `#feature-id` (`SkyIntruders : CaeloWorks > Sky
+  Intruders`) — the identifier is required by PixInsight to resolve the menu
+  icon and to code-sign the script.
+- The dialog header emblem follows the UI scaling of high-density displays
+  (rasterized at physical-pixel size, like every other control).
+
+### Fixed
+- The installed-layout icon lookup walked three directory levels up instead of
+  four, so the `rsc/icons/script/` fallback could never resolve; the emblem
+  only appeared thanks to the copy shipped next to the script.
+
 ## [0.1.0] - 2026-07-09
 
 Every release entry states its VALIDATION evidence (which run, which gates).

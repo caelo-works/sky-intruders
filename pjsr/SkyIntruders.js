@@ -11,7 +11,7 @@
 
 #engine v8
 
-#feature-id    Batch Processing > Sky Intruders
+#feature-id    SkyIntruders : CaeloWorks > Sky Intruders
 #feature-icon  @script_icons_dir/SkyIntruders.svg
 #feature-info  Detect and identify satellite, meteor and asteroid trails in your light frames.
 
@@ -2999,9 +2999,15 @@ class SkyIntrudersDialog extends Dialog
    makeEmblem()
    {
       var here = File.extractDrive( #__FILE__ ) + File.extractDirectory( #__FILE__ );
+      // Four levels up from src/scripts/CaeloWorks/SkyIntruders/ is the
+      // PixInsight installation root (the #feature-icon location).
       var candidates = [ here + "/assets/" + "SkyIntruders.svg",
                          here + "/" + "SkyIntruders.svg",
-                         here + "/../../../rsc/icons/script/SkyIntruders/SkyIntruders.svg" ];
+                         here + "/../../../../rsc/icons/script/SkyIntruders/SkyIntruders.svg" ];
+      // Emblem size in physical pixels, so the icon follows the UI scaling
+      // of high-density displays like every other control.
+      var px = ( typeof this.logicalPixelsToPhysical == "function" ) ?
+         this.logicalPixelsToPhysical( 44 ) : 44;
       var bmp = null;
       for ( var i = 0; i < candidates.length && bmp == null; ++i )
       {
@@ -3010,7 +3016,7 @@ class SkyIntrudersDialog extends Dialog
             if ( File.exists( candidates[ i ] ) )
             {
                var b = new Bitmap( candidates[ i ] );
-               bmp = ( typeof b.scaledTo == "function" ) ? b.scaledTo( 44, 44 ) : b;
+               bmp = ( typeof b.scaledTo == "function" ) ? b.scaledTo( px, px ) : b;
             }
          }
          catch ( e ) { bmp = null; }
@@ -3018,7 +3024,7 @@ class SkyIntrudersDialog extends Dialog
       if ( bmp == null )
          return null;
       var ctrl = new Control( this );
-      ctrl.setFixedSize( 44, 44 );
+      ctrl.setScaledFixedSize( 44, 44 );
       ctrl.__bmp = bmp;
       ctrl.onPaint = function()
       {
@@ -3308,6 +3314,10 @@ function siConstructTest()
    {
       var d = new SkyIntrudersDialog( loadParams() );
       out.modes = [ d.tabBox.numberOfPages, d.tabBox.currentPageIndex ];
+
+      // The header emblem must have found and rasterized the script icon
+      // (assets/SkyIntruders.svg in the dev/staged layouts).
+      out.emblemOk = ( d.emblem != null );
 
       // Live language switch must relabel the whole UI, both directions.
       // The saved settings may restore any mode, so compare against the key

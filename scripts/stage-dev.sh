@@ -14,7 +14,7 @@
 #      <dest>/SkyIntruders.js
 #
 # To make it appear in the Scripts menu instead: Script > Feature Scripts... ,
-# Add the <dest> directory, and it registers under Batch Processing.
+# Add the <dest> directory, and it registers under CaeloWorks.
 set -euo pipefail
 
 REPO="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
