@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- `docs/support-kb.md` — the complete support knowledge base: every control,
+  default, threshold, message, catalog, file path and failure mode, plus a
+  symptom-driven troubleshooting playbook. Keeping it 100% in sync with the
+  code is now a step of the release ritual (`docs/RELEASING.md`).
+
 ## [0.1.1] - 2026-07-11
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-07-11:
