@@ -7,10 +7,13 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
-- `docs/support-kb.md` — the complete support knowledge base: every control,
-  default, threshold, message, catalog, file path and failure mode, plus a
-  symptom-driven troubleshooting playbook. Keeping it 100% in sync with the
-  code is now a step of the release ritual (`docs/RELEASING.md`).
+- `docs/support-kb.md` — the knowledge base the Discord support agent answers
+  from: the facts card, install routes, every control in both languages with its
+  default, both modes end to end, the exact text of every message, the known bugs
+  to read *before* answering, a symptom → cause → answer table, and when to stop
+  and escalate. Structured for the KB importer (no section runs past the chunk
+  limit without subheadings, and each one stands on its own). Keeping it 100% in
+  sync with the code is a step of the release ritual (`docs/RELEASING.md`).
 
 ## [0.1.1] - 2026-07-11
 

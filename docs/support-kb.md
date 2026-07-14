@@ -1,735 +1,634 @@
 # Sky Intruders — support knowledge base
 
-**Applies to: v0.1.1** · PixInsight ≥ 1.9.4 · Windows, macOS, Linux
+Written for a **support agent**, not for a user. It is exhaustive on purpose: it
+states what every control does, what every message means, and what is actually
+broken today. Quote it, don't paraphrase it.
 
-This document is the reference for anyone answering user questions about Sky
-Intruders. It describes what the script actually does — not what it ought to
-do. Every threshold, message and file path below is taken from the shipping
-code of the version named above. When a behavior looks like a bug, it is
-labeled as such; when it looks like a bug but is deliberate, it is in
-[By design, not a bug](#12-by-design-not-a-bug).
+Three rules when you use it:
 
-> **Maintenance rule:** this KB is part of the release ritual. It must be
-> re-verified against the code and updated at **every** release — see
-> `docs/RELEASING.md`. A KB that lags the code is worse than no KB.
+- **The UI is bilingual.** A user describes *their* window, so they will say
+  « Chasse au trésor », not "Treasure Hunt". Every label below is given in both
+  languages.
+- **Never invent a figure, a path or a compatibility.** This script's whole pitch
+  is that it separates what it *measured* from what it merely *predicted* —
+  support has to hold the same line. If you don't know, say so and escalate.
+- **"I can't find it" and "it found nothing" are usually two different bugs.**
+  Read the Known bugs section before answering either one.
 
----
-
-## Table of contents
-
-1. [How to triage a report](#1-how-to-triage-a-report)
-2. [What the script is](#2-what-the-script-is)
-3. [Install, update, menu location](#3-install-update-menu-location)
-4. [The interface, control by control](#4-the-interface-control-by-control)
-5. [Night trails — how it works](#5-night-trails--how-it-works)
-6. [Treasure Hunt — how it works](#6-treasure-hunt--how-it-works)
-7. [Files on disk, and how to reset](#7-files-on-disk-and-how-to-reset)
-8. [Network, catalogs, caches](#8-network-catalogs-caches)
-9. [Troubleshooting playbook](#9-troubleshooting-playbook)
-10. [Message reference](#10-message-reference)
-11. [Defaults reference](#11-defaults-reference)
-12. [By design, not a bug](#12-by-design-not-a-bug)
-13. [Known limitations and rough edges](#13-known-limitations-and-rough-edges)
-14. [Escalation checklist](#14-escalation-checklist)
+Applies to **0.1.1**. To check a user's version: in the script window, hover the
+**"by CaeloWorks"** line just under the title — the tooltip ends with the build
+number. There is no other version display.
 
 ---
 
-## 1. How to triage a report
+## 1. The facts card
 
-Almost every question resolves to one of five root causes. Ask for these five
-things **before** theorizing:
-
-1. **The Process Console text**, in full. The script prints its whole decision
-   trail there, and several failures are *console-only* — they never reach a
-   dialog. A user who says "it found nothing" while a
-   `Treasure/Catalogs: galaxy query failed:` line sits in their console has a
-   network problem, not a catalog problem.
-2. **Which mode** — Night trails or Treasure Hunt. They share almost nothing.
-3. **How many frames**, and whether they are **plate-solved**.
-4. **The FITS headers** of one frame — specifically `DATE-OBS`, `EXPTIME`,
-   `SITELAT`, `SITELONG`, `FILTER`, and whether a WCS is present.
-5. **The script version**, from the update repository or the release zip.
-
-The five root causes, in rough order of frequency:
-
-| Root cause | Tell-tale |
+| | |
 |---|---|
-| No observer site | `no observer site (SITELAT/SITELONG headers or dialog fallback) — satellite identification disabled.` |
-| No plate solve | Treasure Hunt refuses outright; Night trails silently loses satellite names and the asteroid search |
-| Fewer than 3 frames (or fewer than 3 per filter) | `falling back to per-frame detection`, or `filter group '…' has only N frame(s)` |
-| A network/catalog failure that reads as "zero results" | `Treasure/Catalogs: … query failed:` **or** `(STALE — network unreachable)` |
-| A cached empty result being re-served | Nothing in the console at all, and the user "already fixed their internet" |
+| What it is | A PixInsight script that finds who crossed your light frames, and what hid in your image |
+| Version | 0.1.1 · GPL-3.0 · free and open source |
+| Requires | **PixInsight 1.9.4 or newer** — Windows, macOS, Linux |
+| Where it lives | **Script → CaeloWorks → Sky Intruders** |
+| Internet | Needed for satellite elements and deep-sky catalogs. Everything is cached; it degrades gracefully offline |
+| Repository | https://github.com/caelo-works/sky-intruders |
+| Product page | https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders |
+
+**Two modes, one dialog.** *Night trails* (the tab it opens on) scans a night of
+light frames and **names** the satellites that crossed them. *Treasure Hunt*
+takes one **plate-solved** image and finds the galaxies, quasars, planetary
+nebulae and asteroids hiding in the field.
+
+The two modes share almost nothing. Always establish which one the user is in
+before diagnosing anything.
 
 ---
 
-## 2. What the script is
+## 2. Installing it
 
-A PixInsight script (PJSR, pure — no native helper, no sidecar binary) with two
-independent modes.
+### Route A — the CaeloWorks update repository (recommended)
 
-**Night trails.** Point it at a night of light frames. It registers them
-internally, builds a static-sky model, and detects trails on the *difference*
-— so stars and nebulosity do not fool it. Each trail is then identified:
-cross-matched against orbital elements (TLE) propagated with SGP4 to give the
-satellite its **name**, or tested against active meteor-shower radiants, or
-flagged as a slow coherent mover (asteroid candidate). Output is an annotated
-composite image plus a bilingual night log with fun stats, personal records and
-a forum-ready post.
+1. **Resources → Updates → Manage Repositories**
+2. Add `https://pixinsight-scripts.caelo.works/update/`
+3. **Resources → Updates → Check for Updates**, accept, **restart PixInsight**.
 
-**Treasure Hunt.** Point it at one **plate-solved** image. It cone-searches the
-deep catalogs (galaxies, quasars, planetary nebulae, and asteroids at the
-capture epoch) and then **measures every catalog position on the image**, so the
-report can honestly separate *captured* from *in the field, below your noise*.
-Output is a star-chart overlay as a new image window plus a standalone
-illustrated HTML report.
+Updates then arrive through the same channel automatically.
 
-Everything runs inside PixInsight. Networking goes through PixInsight's own
-`NetworkTransfer`, which means it also inherits PixInsight's proxy settings.
+> **"Unsigned repository" warning.** Expected. The repository is not CPD-signed
+> yet; signing is underway. It is safe to accept. Make clear to the user that
+> this is a missing signature on the *repository*, not a virus warning and not a
+> sign that anything was tampered with.
 
----
+### Route B — manual
 
-## 3. Install, update, menu location
+Download the archive from the
+[Releases](https://github.com/caelo-works/sky-intruders/releases) page and
+extract it. Then **Script → Feature Scripts… → Add**, and select the folder that
+contains `SkyIntruders.js`. Or run it once with **Script → Execute Script
+File…**, which does not register it in the menus.
 
-### Version gate
+### "I installed it and I can't find it in the menus"
 
-Below PixInsight 1.9.4 the script refuses to start with:
+This is the number one question. Almost always one of:
 
-> `Sky Intruders requires PixInsight 1.9.4 or newer (this is X.Y.Z).`
+- **PixInsight was not restarted** after the update.
+- **The feature registry is stale.** PixInsight caches where scripts live. Fix:
+  **Script → Feature Scripts… → Regenerate**. This is also the answer when the
+  script appears under an *old* menu category after an update.
+- **The user is looking in the wrong place.** It is **Script → CaeloWorks → Sky
+  Intruders**.
 
-There is no workaround. 1.9.4 is the floor.
-
-### From the CaeloWorks update repository (recommended)
-
-**Resources → Updates → Manage Repositories**, add
-`https://pixinsight-scripts.caelo.works/update/`, then **Resources → Updates →
-Check for Updates**, accept, restart PixInsight.
-
-> **Expected warning:** PixInsight reports the repository as **unsigned**. The
-> CaeloWorks code-signing certificate is not distributed yet, so packages ship
-> unsigned. This is expected and not a compromise indicator. Users who refuse
-> unsigned repositories should use the manual install.
-
-### Manual install
-
-Download the zip from the GitHub Releases page, extract, then
-**Script → Feature Scripts…**, **Add**, select the folder containing
-`SkyIntruders.js`. Alternatively **Script → Execute Script File…** runs it once
-without registering it.
-
-### Menu location
-
-Once registered: **Script → CaeloWorks → Sky Intruders**.
-
-> **Common false alarm:** after an update or a re-install, the script may still
-> appear under its old menu category, or not appear at all. PixInsight caches
-> the feature-id registry. Fix: **Script → Feature Scripts… → Regenerate**, or
-> restart PixInsight. This is not a broken install.
-
-The menu icon comes from the script identifier declared in the source
-(`SkyIntruders : CaeloWorks > Sky Intruders`). If the icon is missing but the
-script runs, the icon file did not land in the PixInsight `rsc/icons/script/`
-tree — a packaging problem, not a user problem. Escalate.
+If the script runs but its **icon** is missing from the menu, that is a
+packaging problem, not something the user can fix. Escalate it.
 
 ---
 
-## 4. The interface, control by control
+## 3. The window, control by control
 
-One window, a header, two tabs, a shared input list, and a footer. The language
-combo switches **the whole UI, the reports and the chart** live, in both
-directions. Every setting is remembered between sessions (see
-[§7](#7-files-on-disk-and-how-to-reset)).
+### 3.1 Label map — English / French
 
-### Shared
+The user will name things in their own language. This is the lookup.
 
-| Control | EN label | FR label | Notes |
-|---|---|---|---|
-| Input list | `Input` | `Entrée` | Header text changes per mode |
-| Add files | `Add files…` | `Ajouter des fichiers…` | Filter: `*.fits *.fit *.fts *.xisf` |
-| Add folder | `Add folder…` | `Ajouter un dossier…` | Non-recursive scan of that one folder, same four extensions |
-| Clear | `Clear` | `Vider` | |
-| Language | `Language:` | `Langue :` | English / Français |
-| Run | `Analyze night` | `Analyser la nuit` | Label changes to `Hunt treasures` / `Chasser les trésors` in Treasure mode |
-| Close | `Close` | `Fermer` | |
+| English | Français |
+|---|---|
+| Night trails | Traînées de nuit |
+| Treasure Hunt | Chasse au trésor |
+| Detection threshold (σ): | Seuil de détection (σ) : |
+| Draw predicted crossers on the result image | Tracer les passages prédits sur l'image résultat |
+| Also draw shadow crossers | Tracer aussi les passages dans l'ombre |
+| Observer site — only if FITS headers lack SITELAT / SITELONG | Site d'observation — seulement si les headers FITS n'ont pas SITELAT / SITELONG |
+| Lat (°): / Lon (°): / Alt (m): | Lat (°) : / Lon (°) : / Alt (m) : |
+| Max catalog rows / type: | Objets max / type de catalogue : |
+| Hunt for: | Chercher : |
+| Galaxies / Quasars / Planetary nebulae / Asteroids | Galaxies / Quasars / Nébuleuses planétaires / Astéroïdes |
+| Overlay color: | Couleur du tracé : |
+| Input | Entrée |
+| Light frames | Brutes (lights) |
+| Plate-solved image — active window used if empty | Image résolue — fenêtre active si la liste est vide |
+| Add files… / Add folder… / Clear | Ajouter des fichiers… / Ajouter un dossier… / Vider |
+| Language: | Langue : |
+| Analyze night | Analyser la nuit |
+| Hunt treasures | Chasser les trésors |
+| Save report… | Enregistrer le rapport… |
+| Open image | Ouvrir l'image |
+| Open HTML / Save HTML… | Ouvrir le HTML / Enregistrer le HTML… |
+| below the noise | sous le bruit |
 
-Duplicate paths are silently ignored on add. Files are listed in plain
-lexicographic order, **not** by `DATE-OBS` — the chronology in the report is
-re-sorted by time later, so this only matters for one thing:
+The **Language** combo switches the whole interface, the reports **and** the star
+chart, live, in both directions. Every setting is remembered between sessions.
 
-> **The first file in the list is the registration reference and the source of
-> the field's WCS.** If frame 1 is unsolved, the whole set is treated as
-> unsolved. If a user's set is half-solved, tell them to put a solved frame
-> first.
+### 3.2 The input list (shared by both modes)
 
-### Night trails tab
+**Add files…** accepts `.fits`, `.fit`, `.fts`, `.xisf`. **Add folder…** scans
+one folder (it does not recurse). Duplicates are ignored.
 
-| Control | EN label | Default | Range |
-|---|---|---|---|
-| Detection threshold | `Detection threshold (σ):` | `5.0` | 3 – 12 |
-| Predicted crossers | `Draw predicted crossers on the result image` | off | |
-| Shadow crossers | `Also draw shadow crossers` | off | |
-| Observer site | `Observer site — only if FITS headers lack SITELAT / SITELONG` | empty | Lat °, Lon °, Alt m |
+> **The first file in the list matters more than the others.** In Night trails it
+> is the registration reference and the source of the field's plate solve. If the
+> first frame is not plate-solved, the whole set is treated as unsolved. If a user
+> has a half-solved set, tell them to put a solved frame first.
 
-**Detection threshold** is the σ used on *raw* frames. On the registered
-difference image — the normal path — the script uses a **separate, lower
-internal threshold of 4.5 σ** (`diffKSigma`), not the value in this control.
-The static sky has been subtracted there, so a lower bar is safe and catches
-the faint streaks narrowband filters leave. **Consequence for support: turning
-the visible σ control down does not make the normal night path more sensitive.**
-It only affects the fallback per-frame path (fewer than 3 frames).
+In **Treasure Hunt** the list holds **one** image. If the list is empty, the
+script uses the **active image window** instead — that is by design, and it is
+why a user with nothing in the list can still get a result.
 
-**Observer site** is only a fallback. If `SITELAT`/`SITELONG` are in the
-headers, they win and these fields are ignored. Longitude is taken **as-is** —
-no East/West convention correction. A header written West-positive yields a
-mirrored site and satellite identification will fail wholesale.
+### 3.3 Tab 1 — Night trails
 
-### Treasure Hunt tab
+*"Who crossed your photo last night?" — detects the trails and names them.*
 
-| Control | EN label | Default | Range |
-|---|---|---|---|
-| Row cap | `Max catalog rows / type:` | `400` | 50 – 2000 |
-| Types | `Hunt for:` `Galaxies` `Quasars` `Planetary nebulae` `Asteroids` | all on | |
-| Chart color | `Overlay color:` | `#9FD8D2` | swatch opens a color picker |
+- **Detection threshold (σ)** — default **5.0**, range 3 to 12. **Warning: on a
+  normal night run this slider does nothing.** The real detection happens on a
+  registered difference image, which uses its own fixed internal threshold.
+  The slider only takes effect in the degraded fallback path (fewer than 3
+  frames). Do not tell a user to lower it to catch a faint trail — it will not
+  help. This is a known interface trap.
+- **Draw predicted crossers on the result image** — default **off**. Draws, as
+  pale ghost lines, the satellites the orbit model puts inside the field during
+  an exposure but that no detected trail confirmed.
+- **Also draw shadow crossers** — default **off**. Same, for satellites the model
+  puts inside the Earth's shadow — invisible by definition, drawn in grey.
+- **Observer site (Lat / Lon / Alt)** — empty by default. This is only a
+  **fallback**: if the frames carry `SITELAT` / `SITELONG` headers, those win and
+  these fields are ignored. Altitude is optional and defaults to 0 m.
 
-The row cap is a **hard truncation per catalog**, not a magnitude cut, and
-VizieR does not guarantee brightest-first ordering. A dense field can silently
-lose objects past row 400. Raising it is safe (slower, busier chart), **but the
-cap is part of the cache key**, so changing it forces a fresh query — which is
-also the cleanest way to bypass a stale cached result.
+Without an observer site — from the headers *or* from these fields — **satellite
+identification is switched off entirely**. Trails are still detected, they simply
+cannot be named. This is the most common cause of "why is nothing identified?".
+
+### 3.4 Tab 2 — Treasure Hunt
+
+*"What you photographed without knowing" — on one plate-solved image.*
+
+- **Max catalog rows / type** — default **400**, range 50 to 2000. It is a hard
+  truncation per catalog, **not** a magnitude cut, and the catalog does not
+  guarantee brightest-first order. A dense field can silently lose objects past
+  row 400. Raising it is safe: slower, busier chart, nothing else.
+- **Hunt for: Galaxies / Quasars / Planetary nebulae / Asteroids** — all four on
+  by default. Unticking one skips that catalog entirely.
+- **Overlay color** — default `#9FD8D2`. The colour of the star chart's markers,
+  leader lines, labels and corner cards. The swatch button opens a colour picker.
+
+The input image **must be plate-solved**. Without an astrometric solution the
+mode refuses to run and says so in a warning box.
 
 ---
 
-## 5. Night trails — how it works
+## 4. Night trails — what it needs and what it does
 
-### What it needs from the headers
+### 4.1 The FITS headers it reads
 
-| Datum | Keywords tried, in order | Missing → |
-|---|---|---|
-| Date/time | `DATE-OBS` **only** | Frame is **excluded from satellite matching**; night label becomes `(undated)`; log times show `--:--` |
-| Exposure | `EXPTIME` → `EXPOSURE` | Frame is **excluded from satellite matching**; contributes 0 to total exposure |
-| Latitude | `SITELAT` → `OBSGEO-B` → `LAT-OBS` | See below |
-| Longitude | `SITELONG` → `OBSGEO-L` → `LONG-OBS` | See below |
-| Elevation | `SITEELEV` → `OBSGEO-H` → `ALT-OBS` | Defaults to **0 m** (harmless) |
-| Filter | `FILTER` | All filterless frames merge into one sky model |
-| Target name | `OBJECT` | Report and chart omit the target |
-| Plate scale | `XPIXSZ` + `FOCALLEN`, else derived from the WCS | Some size/rate figures are omitted |
+Per frame, in priority order:
 
-Latitude **and** longitude are both required to build an observer. Missing
-either one (and no dialog fallback) disables satellite identification entirely:
+- **Date/time**: `DATE-OBS` — **no fallback**. A frame without it is excluded
+  from satellite matching, the night is labelled `(undated)`, and log times show
+  `--:--`.
+- **Exposure**: `EXPTIME`, else `EXPOSURE`. A frame without either is excluded
+  from satellite matching.
+- **Latitude**: `SITELAT`, else `OBSGEO-B`, else `LAT-OBS`.
+- **Longitude**: `SITELONG`, else `OBSGEO-L`, else `LONG-OBS`.
+- **Elevation**: `SITEELEV`, else `OBSGEO-H`, else `ALT-OBS`. Optional, defaults
+  to 0 m — a missing elevation is harmless.
+- **Filter**: `FILTER`. Frames are grouped by it (see below). Frames with no
+  `FILTER` all merge into a single group.
+- **Target name**: `OBJECT`. Used in the report and on the chart.
+- **Plate scale**: `XPIXSZ` + `FOCALLEN`, else derived from the plate solve.
 
-> `Sky Intruders: no observer site (SITELAT/SITELONG headers or dialog fallback) — satellite identification disabled.`
-
-Trails are still detected. They just cannot be named. This is the single most
-common "why is nothing identified?" cause.
+Latitude **and** longitude are both required to build an observer. Missing either
+one, with no fallback typed into the dialog, disables satellite identification.
 
 Sexagesimal and decimal forms are both accepted (`48 51 24`, `-12 30 00`,
 `12:34:56.7`, `+48.85`).
 
-### The detection pipeline
+### 4.2 Why three frames is a hard minimum
 
-1. **Registration** — StarAlignment onto the first frame, into a temp directory.
-2. **Grouping by filter** — one static-sky model per `FILTER` value. Mixing
-   narrowband channels into one model was measured to lose every OIII trail.
-3. **Static-sky model** — a masked median stack; a pixel needs at least
-   **3 covering frames** to be valid.
-4. **Difference** — each frame minus the (photometrically fitted) model, then a
-   high-pass. Stars and nebula are gone by this point.
-5. **Detection** — adaptive threshold at **4.5 σ**, Hough line search, then a
-   faint second pass. Candidates must survive thinness, gap, fill-ratio,
-   uniformity and edge-affinity tests.
-6. **Vetoes** — anything **wider than 12 px is discarded** as a cloud band or
-   stacking artifact. There is no user knob for this.
+Detection does not look at the raw frame. The script registers the frames, builds
+a **median model of the static sky**, and hunts trails in the *difference*. That
+is why nebulosity and stars do not fool it — but it needs a population to take a
+median of.
 
-**Three frames is a hard floor.** Fewer than 3 usable frames — or fewer than 3
-*in a given filter group* — means no difference imaging for them:
+**The floor is 3 frames — and 3 frames *per filter*.**
 
-- fewer than 3 frames total, or fewer than 3 that register: the script falls
-  back to per-frame detection on the raw images, which only finds bright
-  streaks, and **produces no night composite at all**.
-- a filter group with fewer than 3 frames is **skipped entirely**: those frames
-  yield zero trails, announced by one console line and nothing else.
+- Fewer than 3 frames in total, or fewer than 3 that successfully register: the
+  script falls back to detecting on the raw frames. That only finds bright
+  streaks, and it produces **no night composite image at all**.
+- **A filter group with fewer than 3 frames is skipped entirely.** Those frames
+  yield zero trails. The console says so, and nothing else does.
 
-So a session with 26 Ha and 2 OIII subs will report trails for the Ha frames
-and silently none for the OIII pair. That is expected behavior; say so plainly.
+So a session of 26 Ha subs and 2 OIII subs will report trails for the Ha frames
+and, silently, none for the OIII pair. That is expected behaviour. One sky model
+per filter is deliberate: mixing narrowband channels into one model was measured
+to lose trails outright.
 
-### How a trail gets a name
+Trails **wider than about 12 pixels are discarded** as cloud bands or stacking
+artefacts. There is no user setting for this.
 
-Identification needs three things: **an observer site**, **fresh TLEs**, and
+### 4.3 How a trail gets a satellite's name
+
+Naming needs three things: **an observer site**, **fresh orbital elements**, and
 **sky coordinates for the trail** (i.e. a plate solve).
 
-- With a plate solve, each trail's endpoints are real sky positions, and the
-  match is geometric: the satellite's propagated path must pass within **0.2°**
-  of the trail and agree in orientation within **12°**.
-- Without a plate solve, the script tries a **field-orientation fit**: it knows
-  the field center and scale but not the rotation or the mirror parity, so it
-  scans all rotations and both parities looking for the orientation that makes
-  the most trails agree with predicted crossings. It reports, e.g.
-  `Field orientation fitted from 5 trail(s): rotation 136.9°, direct`.
-  **It gives up if fewer than 3 trails pair up** — with only two pairs, a
-  rotation can almost always be contrived, so the names would not be
-  trustworthy. In that case crossers are reported as predictions only:
-  `Field orientation fit found only N matched pair(s) — not enough to trust satellite names; crossers are reported as predictions only.`
-- **Satellites in the Earth's shadow are never matched.** An eclipsed object
-  cannot leave a streak, so the model refuses to explain a trail with one.
+- **With a plate solve**, the match is geometric: the satellite's propagated path
+  must pass within 0.2° of the trail and agree in orientation within 12°.
+- **Without a plate solve**, the script attempts a **field-orientation fit**: it
+  knows the field's centre and scale but not its rotation or mirror parity, so it
+  searches for the orientation that makes the most trails agree with predicted
+  passes. **It gives up if fewer than 3 trails pair up**, because with only two
+  pairs a rotation can almost always be contrived and the names would not be
+  trustworthy. It then reports crossers as predictions only, and names nothing.
+- **Satellites in the Earth's shadow are never matched to a trail.** An eclipsed
+  object cannot leave a streak, so the model refuses to explain one with it.
 
-Matches carry a confidence: **confirmed** (`high`), **probable** (`medium`,
-shown with a trailing `?` on the image and `[probable]` in the log), or
-low. Parallel bundles (satellite trains, airplane strobe sequences) are grouped
-*before* matching and are **never given satellite names**.
+Matches carry a confidence. **Confirmed** matches are shown plainly. **Probable**
+matches are shown with a trailing `?` on the image and `[probable]` in the
+report — they are explicitly uncertain, and in a tightly-packed group of
+identical satellites they can pick the wrong member.
 
-### What a trail can end up as
+Parallel bundles — satellite trains, aircraft strobe sequences — are grouped
+*before* matching and are **never given satellite names**, by design.
 
-| Class | Image color | Meaning |
-|---|---|---|
-| satellite | cyan `#22d3ee` | Named from the TLE catalog |
-| satellite-candidate | orange `#ffa05f` | A steady edge-to-edge trail with **no** catalog match — an honest "uncataloged" |
-| meteor | pink `#ff5f8f` | Contained in the frame and/or strongly varying in brightness, ideally aligned with an active shower radiant |
-| plane | olive `#a7b34d` | A parallel bundle whose brightness flickers (strobes) |
-| train | green `#8fd18f` | A parallel bundle with steady brightness — typically a fresh Starlink/Qianfan launch |
-| unknown | pale grey `#c9d2dd` | No distinguishing cue |
+### 4.4 What a trail can end up being called
 
-Ghost lines (predicted crossers that matched no trail) are pale yellow when
-sunlit, grey when in shadow, and only drawn if the user ticked the boxes.
+Each trail gets a class and a colour on the result image:
 
-A meteor verdict needs **two** cues out of: the trail stops inside the frame;
-its brightness varies strongly along its length; it aligns with an active IAU
-shower radiant (within 8°, radiant outside the segment). Radiant alignment
-**alone is never enough**.
+- **satellite** (cyan) — matched to a catalogued object and named.
+- **satellite-candidate** (orange) — a steady, edge-to-edge trail with **no**
+  catalog match. This is the honest "uncatalogued" answer: a fresh launch, a
+  classified object, or debris. **It is a correct result, not a failure.**
+- **meteor** (pink) — needs **two** cues out of: the trail stops inside the frame;
+  its brightness varies strongly along its length; it aligns with an active
+  meteor shower's radiant. Radiant alignment **alone is never enough**.
+- **airplane** (olive) — a parallel bundle whose brightness flickers (strobes).
+- **satellite train** (green) — a parallel bundle of steady brightness, typically
+  a recent constellation launch.
+- **unknown** (pale grey) — no distinguishing cue.
 
-### Outputs
+Ghost lines for predicted-but-unconfirmed passes are pale yellow (sunlit) or grey
+(in shadow), and only appear if the user ticked the corresponding box.
 
-| What | Where |
-|---|---|
-| Annotated composite | A new image window, `SkyIntruders_night` (PixInsight appends a counter) |
-| The same composite as a PNG | The system temp directory, `SkyIntruders-night-result.png` — the `Open image` button reopens this |
-| Night log (markdown) | Shown in a dialog and printed to the console; `Save report…` writes `SkyIntruders-<date>.md` next to the frames |
-| Forum post title | The bold line at the top of the report dialog |
-| Personal records | Appended to `history.json` (see [§7](#7-files-on-disk-and-how-to-reset)) |
+### 4.5 What you get at the end
 
-Personal records only track three things — most satellites, most Starlinks, most
-meteors in one night — and only fire when a night **strictly beats** all
-previous ones. Re-analyzing the same night **replaces** its history entry rather
-than adding one, so records cannot be inflated by re-running.
-
----
-
-## 6. Treasure Hunt — how it works
-
-### The plate-solve requirement is absolute
-
-The image must carry a real astrometric solution: either PixInsight's own
-(what ImageSolver writes) or a full FITS TAN WCS (`CRVAL1/2`, `CRPIX1/2`, plus
-either the `CD` matrix or `CDELT1/2`). An *approximate* center from `RA`/`DEC`
-or `OBJCTRA`/`OBJCTDEC` keywords is **not** accepted — it is enough for Night
-trails, not for this mode.
-
-Without it the run stops immediately with a warning box:
-
-> `This image has no astrometric solution (WCS). Plate-solve it first (ImageSolver), then run Treasure Hunt.`
-
-No catalog is queried, so **no network warning appears either** — a user who
-reports "it did nothing" with an unsolved image sees exactly this and nothing
-else.
-
-### The search
-
-The cone radius is the **half-diagonal of the solved field**, so the search
-circle circumscribes the frame. Objects landing outside the rectangle are
-dropped afterwards. Console line, useful to reproduce a search by hand:
-
-> `Field center RA 311.6170 Dec 45.2800, search radius 0.512 deg`
-
-| Type | Source |
-|---|---|
-| Galaxies | HyperLEDA (VizieR `VII/237`) — sizes from `logD25` |
-| Quasars | Milliquas (VizieR `VII/294`) — with redshift |
-| Planetary nebulae | MASH-I (VizieR `V/127A/mash1`) |
-| Asteroids | SkyBoT / IMCCE, cone search **at the capture epoch** (`DATE-OBS`) |
-| *(chart context only)* | Hipparcos bright stars, and PixInsight's own NGC/IC and named-star catalogs |
-
-If `DATE-OBS` is missing, the asteroid query silently uses **the current time** —
-which is simply wrong for archival data, and gets cached under that epoch.
-
-### Capture scoring — the heart of the mode
-
-This is what makes the report honest, and it is the source of most "why does it
-say below the noise?" questions. At every catalog position the script does
-aperture photometry and then tries hard to *disprove* the detection.
-
-**Step 1 — the aperture.** Radius 4 px for a point source; for an object with a
-catalog size, half its apparent diameter, clamped to 3–40 px. A background
-annulus surrounds it.
-
-**Step 2 — the noise floor is inflated by local structure.** Sigma is the
-annulus MAD, but if the annulus's 90th percentile implies a larger spread, that
-larger value is used instead. **Objects sitting on nebulosity, inside a bright
-halo, or in a rich star field must beat their surroundings, not just Gaussian
-noise.** This is deliberate.
-
-**Step 3 — the raw verdict.** Captured if peak SNR ≥ **4**, *or* if ≥ **30 %**
-of the aperture pixels sit above background + 2σ. A sharp peak or a filled disc.
-
-**Step 4 — the decoy ring.** If step 3 said captured, the script measures **12
-decoy apertures** on a ring around the target, identical in size. In a rich star
-field a blind aperture catches a chance star roughly one time in three, so the
-decoys measure the *local false-alarm floor*. The target must now beat the best
-decoy by **1.3× in SNR** or **2× in fill fraction**. Near a frame edge, where
-fewer than 6 decoys fit inside the image, this guard is skipped and the raw
-verdict stands.
-
-**Step 5 — magnitude consistency, per type.** If at least 5 objects of a type
-carry magnitudes and at least one was *not* detected, then anything fainter than
-(median magnitude of the non-detections + 1) is **demoted to not-captured** — it
-cannot be true that you caught a mag-24 quasar while missing mag-20 ones.
-
-**Step 6 — asteroids only.** If SkyBoT's own position uncertainty is larger than
-the aperture, the detection is dropped: a position that loose cannot attribute
-the flux to that object.
-
-The user sees the outcome as either a normal narrative sentence, or the same
-sentence with a suffix:
-
-> `It sits in the field, below the noise of this image.`
-> `Too faint to leave a visible trace here.` *(asteroids)*
-
-and as a `below the noise` / `sous le bruit` badge in the HTML report, on the
-chart, and in the result dialog.
-
-**A saturated or clipped core can report "below the noise."** If the annulus is
-flat, sigma collapses to zero and the code refuses to claim a detection rather
-than divide by nothing. Rare, but it happens on very bright targets.
-
-### Outputs
-
-| What | Where |
-|---|---|
-| Star chart | A new image window, `Sky Intruders Treasure Map` (sanitized and numbered by PixInsight) |
-| Illustrated HTML report | Nothing is written automatically. `Open HTML` writes it to the temp directory and opens the browser; `Save HTML…` defaults to the input image's folder, named `SkyIntruders-Treasure-<OBJECT>.html` |
-| Forum-ready summary | A copy-paste block inside the HTML report |
-
-Chart budget: **captured** objects are all labeled; only the **6** most notable
-below-noise ones appear at all, and past **40** labeled items objects get a bare
-marker. The HTML illustrates the **top 8** with thumbnails and lists up to
-**60**. So "the summary says 47 galaxies but the map shows 12" is expected —
-the counts are complete, the drawing is curated.
-
-Redshifts are turned into lookback times with a flat ΛCDM model
-(H₀ = 69.6, Ωm = 0.286), and phrased with the most dramatic true landmark:
-"before the Sun existed", "before the Cambrian explosion", and so on.
+- An **annotated composite** as a new image window (named `SkyIntruders_night`),
+  built on the best frame of the night, with every streak labelled — name,
+  country flag, altitude, angular speed, time.
+- The same composite as a **PNG in the system temp folder**. The **Open image**
+  button in the report window reopens it.
+- A **night log** in markdown, shown in a window and printed to the console, with
+  fun stats and a forum-ready post title. **Save report…** writes it next to the
+  frames.
+- **Personal records**, kept between sessions. They track three things only —
+  most satellites, most Starlinks, most meteors in one night — and only fire when
+  a night strictly beats every previous one. Re-analysing the same night
+  *replaces* its entry, so records cannot be inflated by re-running.
 
 ---
 
-## 7. Files on disk, and how to reset
+## 5. Treasure Hunt — what it needs and what it does
 
-Everything lives under **`~/.caeloworks/sky-intruders/`** (the user's home
-directory as PixInsight sees it).
+### 5.1 The plate solve is mandatory
 
-| File / folder | Contents | Safe to delete? |
-|---|---|---|
-| `settings.json` | All dialog parameters | Yes — resets to defaults |
-| `history.json` | Personal records, one entry per night | Yes — **loses the user's records forever** |
-| `tle/` | TLE + satellite-catalog cache | **Yes — this is the standard fix for stale/wrong satellite names** |
-| `treasure-cache/` | Cached catalog cone searches, 30-day TTL | **Yes — this is the standard fix for "it still finds nothing"** |
+The image must carry a **real astrometric solution**: either PixInsight's own
+(what **ImageSolver** writes, and what a WBPP master already has) or a complete
+FITS WCS. An *approximate* centre from `RA`/`DEC` or `OBJCTRA`/`OBJCTDEC`
+keywords is **not accepted** — it is good enough for Night trails, but not for
+this mode.
 
-> **Never tell a user to delete `~/.caeloworks/sky-intruders/` wholesale** — it
-> takes their settings and their personal records with it. Name the
-> subdirectory.
+Without it, the run stops immediately with this warning box:
 
-Temporary files (system temp directory): `si-night-reg/` holds a registered copy
-of every frame during a run — **disk usage roughly equal to the session** — and
-is cleared before and after. If PixInsight crashes mid-run it can be left
-behind, and it is safe to delete by hand.
+> *This image has no astrometric solution (WCS). Plate-solve it first
+> (ImageSolver), then run Treasure Hunt.*
 
-A corrupt `settings.json` silently reverts to defaults; a corrupt `history.json`
-silently resets records to "first night". Neither shows an error.
+No catalog is queried, so **no other message appears either**. A user who says
+"it did nothing" with an unsolved image saw exactly this and nothing more.
+
+When a user insists their image *is* solved: check that the solve is on the image
+the script actually opened. Common causes are solving a different file, or
+solving the open window while pointing the script at the file on disk (or the
+reverse — with an empty input list, the script uses the **active window**).
+
+### 5.2 Which catalogs are searched
+
+The search is a cone centred on the field, with a radius equal to half the
+field's diagonal, so it circumscribes the frame. The console prints the exact
+centre and radius used.
+
+- **Galaxies** — HyperLEDA, with apparent sizes.
+- **Quasars** — Milliquas, with redshift. Redshifts are turned into lookback
+  times ("its light left about 10.8 billion years ago, before the Sun existed").
+- **Planetary nebulae** — the MASH survey. **This catalog essentially only covers
+  the galactic plane.** Away from the plane, zero planetary nebulae is the normal,
+  correct answer — not a bug and not an outage.
+- **Asteroids** — SkyBoT, queried **at the moment of capture**, read from
+  `DATE-OBS`. If `DATE-OBS` is missing, the query silently uses *the current
+  time*, which is simply wrong for archival images.
+
+The star chart additionally labels bright stars and NGC/IC neighbours for
+context; those come from PixInsight's own bundled catalogs plus Hipparcos.
+
+### 5.3 "Captured" vs "below the noise" — how it decides
+
+This is the heart of the mode, and the source of most questions. Finding an
+object in a catalog proves nothing about whether the user actually *photographed*
+it, so the script **measures every catalog position on the image** and then tries
+hard to disprove the detection.
+
+1. **It measures an aperture** at the object's position, sized to the object.
+2. **The noise floor is raised by local structure.** An object sitting on
+   nebulosity, inside a bright halo, or in a rich star field must beat *its
+   surroundings*, not just the sky background. This is deliberate.
+3. **It needs a real signal**: a sharp peak, or a filled aperture.
+4. **It plants 12 decoy apertures** in a ring around the object. In a rich star
+   field, a blind aperture lands on a chance star roughly one time in three, so
+   the decoys measure the local false-alarm floor. The object must clearly beat
+   the best decoy.
+5. **It checks magnitude consistency per type.** If brighter objects of the same
+   type went undetected, a much fainter one claiming a detection is demoted — you
+   cannot have caught a magnitude-24 quasar while missing magnitude-20 ones.
+6. **For asteroids**, if the catalog's own position uncertainty is larger than
+   the aperture, the detection is dropped: a position that loose cannot attribute
+   the light to that object.
+
+Anything that fails is reported honestly, and the user sees:
+
+> *It sits in the field, below the noise of this image.*
+> *Il est dans le champ, mais sous le bruit de cette image.*
+
+or, for asteroids, *"Too faint to leave a visible trace here."* / *« Trop faible
+pour laisser une trace visible ici. »*, and a **below the noise** / **sous le
+bruit** badge in the report and on the chart.
+
+**"Below the noise" is the product working, not failing.** A magnitude-20
+asteroid in the field is never sold as "captured". When a user protests that they
+can clearly see the object, the cause is almost always one of: it sits on
+structure (nebula, galaxy halo, dense star field); the decoys caught chance stars
+just as bright; or magnitude consistency demoted it. All three are intended.
+
+One real exception: **a saturated or blown-out core can be reported as below the
+noise.** If the ring around the object is flat or clipped, the script refuses to
+claim a detection rather than divide by zero.
+
+### 5.4 What you get at the end
+
+- A **star chart** as a new image window, `Sky Intruders Treasure Map`: thin
+  markers, leader lines, corner cards, in the chosen overlay colour.
+- An **illustrated HTML report**, self-contained in a single file. **Nothing is
+  written to disk automatically.** *Open HTML* writes it to a temporary folder and
+  opens the browser; *Save HTML…* offers to save it next to the input image.
+- A **copy-paste forum summary** inside that report.
+
+**The chart deliberately draws fewer objects than the report counts.** Captured
+objects are all labelled, but only the 6 most notable *below-noise* ones appear,
+and past 40 labelled items the rest get a bare marker. The HTML illustrates the
+top 8 with thumbnails and lists up to 60. So "the summary says 47 galaxies but I
+only see 12 on the map" is expected: the counts are complete, the drawing is
+curated for legibility.
 
 ---
 
-## 8. Network, catalogs, caches
+## 6. Internet, catalogs and caches
 
-### Hosts to allow-list
+### 6.1 What it contacts, and firewalls
 
-| Host | Used for |
-|---|---|
-| `celestrak.org` | TLE orbital elements, satellite catalog |
-| `raw.githubusercontent.com` | The CaeloWorks TLE mirror (fallback) |
-| `vizier.cds.unistra.fr` | Galaxies, quasars, planetary nebulae, bright stars |
-| `ssp.imcce.fr` | SkyBoT asteroids |
+Four hosts, all HTTPS. A restrictive firewall must allow them:
 
-All HTTPS. The script sets **no proxy of its own** — it inherits PixInsight's
-network settings. A user behind a corporate proxy must configure it in
-PixInsight, not in the script.
+- `celestrak.org` — satellite orbital elements.
+- `raw.githubusercontent.com` — the CaeloWorks mirror of those elements.
+- `vizier.cds.unistra.fr` — galaxies, quasars, planetary nebulae, bright stars.
+- `ssp.imcce.fr` — asteroids.
 
-### TLE fetching and the mirror
+**The script sets no proxy of its own.** It uses PixInsight's networking, so a
+user behind a corporate proxy must configure it **in PixInsight**, not in the
+script.
 
-CelesTrak is tried first, then the CaeloWorks mirror on GitHub. CelesTrak
-rate-limits or blocks some ISPs outright, so **a 10–25 second pause before
-satellites resolve is normal**: that is CelesTrak timing out and the mirror
-taking over. It is not a bug.
+### 6.2 Satellite elements and the mirror — why it sometimes pauses
 
-The mirror is a scheduled snapshot, so its elements can be a few hours older
-than CelesTrak's. TLEs are cached for **12 hours** by default.
+Orbital elements are fetched from CelesTrak first, then from the CaeloWorks
+mirror on GitHub if CelesTrak does not answer. CelesTrak rate-limits or blocks
+some networks outright, so **a pause of 10 to 25 seconds before satellites
+resolve is normal**: that is CelesTrak timing out and the mirror taking over. It
+is not a bug and needs no action.
+
+Elements are cached for 12 hours.
 
 If **every** source fails and a cache exists, the script uses the expired cache
-and says so:
-
-> `   11234 satellites, from cache (STALE — network unreachable)`
-
-**That suffix is the smoking gun for "the satellite names are wrong / positions
-are off".** Old elements propagate to wrong places. Fix: restore network access,
-delete `~/.caeloworks/sky-intruders/tle/`, re-run.
+and says so in the console, with the words **`(STALE — network unreachable)`**.
+That phrase is the smoking gun for *"the satellite names are wrong"* or *"the
+positions are off"*: old elements propagate to the wrong place. The fix is to
+restore internet access, delete the cache folder, and re-run.
 
 If every source fails and there is **no** cache, satellite identification is
-disabled for the run (a warning, not a crash) — trails are still detected, just
+disabled for that run — a warning, not a crash. Trails are still detected, just
 unnamed.
 
-### Catalog failures are nearly silent — read this twice
+### 6.3 The cache and settings files, and when to delete them
 
-A VizieR or SkyBoT failure **returns an empty result rather than an error**. The
-consequences for support:
+Everything lives in the user's home folder, under **`.caeloworks/sky-intruders`**:
 
-- The run continues and reports `galaxies: 0 row(s)`.
-- The HTML report's "some catalogs did not respond" banner **does not fire**.
-- The *only* evidence is a console warning:
-  `Treasure/Catalogs: galaxy query failed: HTTP 503`
+- **`settings.json`** — all dialog settings. Deleting it resets them to defaults.
+- **`history.json`** — the personal records. **Deleting it destroys them
+  permanently.**
+- **`tle/`** — the satellite element cache. **Deleting this folder is the standard
+  fix for stale or wrong satellite names.**
+- **`treasure-cache/`** — the deep-catalog cache, kept for **30 days**. **Deleting
+  this folder is the standard fix for "Treasure Hunt still finds nothing after I
+  fixed my internet".**
 
-So **"Treasure Hunt found nothing" and "Treasure Hunt could not reach the
-catalogs" look identical to the user.** Always ask for the console text.
-
-Worse: a captive portal or an error page that parses to nothing is
-indistinguishable from a genuinely empty field, and **an empty result gets
-cached for 30 days**. A user who hits an outage, fixes their network, and
-re-runs will get the same empty result from cache. This is the single most
-likely cause of "I fixed my internet and it still finds nothing." Fix: delete
-`~/.caeloworks/sky-intruders/treasure-cache/`, or nudge the row cap (it is part
-of the cache key).
-
-One more proxy trap: VizieR queries put a literal `+` between RA and Dec. A
-gateway that re-encodes it breaks **every** VizieR query while leaving SkyBoT
-working — signature: galaxies, quasars and nebulae all return 0 rows, asteroids
-work fine.
+> **Never tell a user to delete the whole `.caeloworks/sky-intruders` folder.** It
+> takes their settings *and their personal records* with it. Always name the
+> subfolder: `tle` or `treasure-cache`.
 
 ---
 
-## 9. Troubleshooting playbook
+## 7. Error messages — exact text
 
-### "No trails were detected"
+The user will copy-paste. These are the messages, word for word.
 
-1. **How many frames?** Fewer than 3 → per-frame fallback, bright streaks only.
-   Fewer than 3 *in a filter group* → that group is skipped entirely. Check the
-   console for `filter group '…' has only N frame(s)`.
-2. **Did the frames register?** `only N/M frames registered — falling back to
-   per-frame detection` means StarAlignment failed on most of them (too few
-   stars, clouds).
-3. **Is the streak wider than ~12 px?** Bright, defocused or heavily bloated
-   trails are vetoed as artifacts. No knob; escalate if a genuine trail is being
-   eaten.
-4. **Clouds?** Above 8 % of pixels over threshold, the threshold auto-raises up
-   to 12 times. A cloudy sub can end up detecting nothing at all, by design.
-5. Note that lowering the visible σ control does **not** affect the normal night
-   path (see [§4](#4-the-interface-control-by-control)).
+### 7.1 Dialog boxes
 
-### "Trails are detected but nothing is identified"
+- *"Sky Intruders requires PixInsight 1.9.4 or newer (this is X.Y.Z)."* — the
+  version gate. There is no workaround; 1.9.4 is the floor.
+- *"This image has no astrometric solution (WCS). Plate-solve it first
+  (ImageSolver), then run Treasure Hunt."* — Treasure Hunt on an unsolved image.
+  Solve it with **Script → Image Analysis → ImageSolver**. A WBPP master is
+  usually already solved.
+- *"Add some light frames first."* / « Ajoute d'abord des brutes (lights). » —
+  Analyze pressed with an empty list in Night trails.
+- *"Add one plate-solved image, or open one in PixInsight first."* — Hunt pressed
+  in Treasure Hunt with an empty list **and** no active image window.
+- *"Cannot open <path>"* — the listed file could not be read.
 
-In order of likelihood:
+### 7.2 Console messages, Night trails
 
-1. **No observer site.** Check the console. Fix: `SITELAT`/`SITELONG` in the
-   headers, or fill the Observer site fields in the Night trails tab.
-2. **No plate solve, and the orientation fit gave up** (fewer than 3 pairs).
-   Fix: plate-solve at least the *first* frame in the list.
-3. **Stale or missing TLEs.** Look for `(STALE — network unreachable)`.
-4. **The satellite is genuinely not in the catalog** — a fresh launch, a
-   classified object, or debris. It will be reported honestly as an *uncataloged
-   satellite candidate*, in orange. That is a correct answer, not a failure.
-5. **The trail is part of a parallel bundle** (train/plane). Bundles are never
-   named, by design.
+- *"no observer site (SITELAT/SITELONG headers or dialog fallback) — satellite
+  identification disabled."* — **the number one cause of "nothing was
+  identified"**. Trails are detected but cannot be named. Fix: add `SITELAT` /
+  `SITELONG` to the headers, or fill the Observer site fields in the Night trails
+  tab.
+- *"NNNN satellites, from cache (STALE — network unreachable)"* — every source
+  for the orbital elements failed and expired ones were used. Names and positions
+  may be wrong. Restore the internet, delete the `tle` cache folder, re-run.
+- *"TLE matching unavailable — …"* — no source reachable and no cache at all.
+  Trails are detected, nothing is named.
+- *"only N/M frames registered — falling back to per-frame detection"* — star
+  alignment failed on most frames (clouds, too few stars). Detection degrades to
+  bright streaks only and no composite is produced.
+- *"filter group 'X' has only N frame(s) — 3+ are needed for difference
+  detection; skipped."* — those frames get **zero trails**. Expected with a stray
+  filter; three frames per filter is the minimum.
+- *"geometry mismatch, skipped: <file>"* — that frame's dimensions differ from
+  the first frame's. Don't mix sensors or crops in one run.
+- *"not registered, skipped: <file>"* — star alignment rejected that frame.
+- *"Field orientation fit found only N matched pair(s) — not enough to trust
+  satellite names; crossers are reported as predictions only."* — no plate solve,
+  and the fallback fit could not be trusted. **Nothing gets named.** Fix:
+  plate-solve at least the first frame in the list.
+- *"no frame could be analyzed"* — fatal; nothing could be opened at all.
 
-### "The satellite names look wrong"
+### 7.3 Console messages, Treasure Hunt
 
-Check for `(STALE — network unreachable)` first; then check the observer
-longitude sign; then check whether the run used the orientation fit rather than
-a real plate solve (the console says so). Medium-confidence matches — shown with
-a `?` and `[probable]` — are explicitly uncertain, and the rescue pass that
-produces them can pick the wrong member of a tightly-packed Starlink plane.
-
-### "Treasure Hunt says my image has no WCS, but I solved it"
-
-The solution must be on the image the script actually opens. Common causes: the
-user solved a different file; the solve lives only in the open window and they
-pointed the script at the file on disk (or the reverse — with an empty list the
-script uses the **active window**); or the file carries only `RA`/`DEC`
-keywords, which is an *approximate* center and is refused on purpose.
-
-### "Treasure Hunt found nothing / far too few objects"
-
-1. Console: any `Treasure/Catalogs: … query failed`? → network. See
-   [§8](#8-network-catalogs-caches).
-2. All four types return 0 but the network is fine? → suspect the proxy `+`
-   trap, or a cached empty result. Delete `treasure-cache/`.
-3. Only planetary nebulae are empty? → **normal.** MASH-I is essentially a
-   galactic-plane survey; away from the plane there are none to find.
-4. Small field? The catalogs may genuinely hold nothing there.
-5. Exactly 400 objects of a type? → the row cap truncated it. Raise it.
-
-### "It says below the noise but I can clearly see it"
-
-Walk through [§6](#6-treasure-hunt--how-it-works) step by step. In practice it is
-almost always one of:
-
-- **the object sits on structure** (nebula, galaxy halo, dense star field) and
-  the sigma inflation raised the bar above it — intended;
-- **the decoy ring caught chance stars** at comparable brightness, so the
-  detection could not be distinguished from a lucky aperture — intended;
-- **magnitude consistency demoted it** because brighter objects of the same type
-  went undetected — intended;
-- **a big galaxy measured through a small aperture**: if the plate scale is
-  unknown, every extended object falls back to a 4 px point-source aperture,
-  whose annulus then sits *on the galaxy itself*. Fix: make sure `XPIXSZ` and
-  `FOCALLEN` are in the headers.
-
-If none of these fit, it is worth escalating with the image.
-
-### "The chart shows fewer objects than the summary counts"
-
-Expected. See the chart budget in [§6](#6-treasure-hunt--how-it-works).
-
-### "The script does not appear in the menu / is in the wrong category"
-
-**Script → Feature Scripts… → Regenerate**, or restart PixInsight. PixInsight
-caches the registry.
-
-### "PixInsight says the repository is unsigned"
-
-Expected, see [§3](#3-install-update-menu-location).
+- *"Treasure/Catalogs: galaxy query failed: …"* (also `quasar`, `pne`,
+  `asteroid`) — **a catalog was unreachable.** This is important: the report will
+  still cheerfully say `0 row(s)`. See the Known bugs section — an outage looks
+  exactly like an empty field.
+- *"Treasure/Catalogs: asteroid query failed after retries"* — the asteroid
+  service did not answer after three tries.
+- *"galaxies: 0 row(s)"* — **ambiguous by itself.** It means either "nothing is
+  there" or "the catalog did not answer". Always ask for the lines above it.
 
 ---
 
-## 10. Message reference
+## 8. Known bugs and limitations — read before answering
 
-Console messages the user is most likely to quote. All are prefixed by the
-script name unless noted.
+### 8.1 A catalog outage looks exactly like an empty field
 
-| Message | Meaning | Action |
+**This is the most dangerous gap in the product for support.** When a deep-sky
+catalog (VizieR or SkyBoT) is unreachable, the query returns an *empty result*
+rather than an error. Consequences:
+
+- The run completes normally and reports `galaxies: 0 row(s)`.
+- The report's "some catalogs did not respond" banner **does not appear**.
+- The **only** evidence is a console warning line: *"Treasure/Catalogs: … query
+  failed: …"*.
+
+So *"Treasure Hunt found nothing"* and *"Treasure Hunt could not reach the
+catalogs"* are indistinguishable to the user. **Always ask for the full console
+text** before concluding that a field is empty. Confirm the bug if you see the
+warning; do not tell the user their field is empty. Escalate.
+
+### 8.2 An empty result stays cached for 30 days
+
+When a deep-sky catalog is unreachable, Treasure Hunt reports zero objects rather
+than an error — and that empty result is then **cached for 30 days**. A user who
+hits an outage, fixes their network, and re-runs will get **the same empty result
+straight from the cache**, with nothing in the console at all.
+
+This is the single most likely cause of *"I fixed my internet and it still finds
+nothing."*
+
+**Workaround:** have them delete the `treasure-cache` folder inside
+`.caeloworks/sky-intruders` in their home folder, then re-run. Changing the "Max
+catalog rows / type" value also forces a fresh query. Escalate the bug itself.
+
+### 8.3 The detection threshold slider does nothing on a normal night run
+
+The **Detection threshold (σ)** slider in the Night trails tab does **not** affect
+a normal run. Detection happens on a registered difference image, which uses its
+own fixed internal threshold; the slider only applies to the degraded fallback
+path used when there are fewer than three frames.
+
+**Do not tell a user to lower it to catch a faint trail.** It will change
+nothing, and they will lose confidence in the advice. If they need more
+sensitivity, there is currently no setting for it — escalate.
+
+### 8.4 Longitude sign is taken at face value
+
+`SITELONG` is read exactly as written — there is no East/West convention
+correction. A file that writes West longitudes as positive silently places the
+observer on the wrong side of the planet, and **every satellite identification
+then fails**, with no error message.
+
+**Symptom:** "trails are detected, the site is filled in, and still nothing is
+named." Have the user check the sign of their longitude. Escalate if it is
+correct.
+
+### 8.5 Trains and aircraft can be confused, and parallel satellites merged
+
+The distinction between a **satellite train** and an **airplane** rests on a
+single measurement: whether the brightness flickers along the trail. A steadily
+lit aircraft can therefore be reported as a satellite train, and a tumbling train
+as an aircraft.
+
+Separately, **three genuinely unrelated but roughly parallel satellite trails can
+be merged into one "train"** — and a bundle is never given satellite names, so
+those three lose their identities. Known limitation, no workaround.
+
+### 8.6 The star chart shows fewer objects than the summary counts
+
+Not a bug. Treasure Hunt labels every *captured* object, but only the 6 most
+notable *below-noise* ones, and past 40 labelled items the remainder get a bare
+marker with no label. The HTML report illustrates the top 8 and lists up to 60.
+
+The counts in the summary are complete and correct. The drawing is curated so the
+chart stays readable. Reassure the user; nothing was lost.
+
+### 8.7 A saturated core can be reported as "below the noise"
+
+If the ring the script measures around an object is flat or clipped — which
+happens on very bright, blown-out targets — it refuses to claim a detection
+rather than compute a meaningless signal-to-noise value. The object is then
+reported as below the noise even though it is plainly visible.
+
+Rare, but real. Confirm it rather than arguing with the user, and escalate.
+
+### 8.8 The update repository is unsigned
+
+PixInsight warns that the CaeloWorks repository is not signed. Expected; signing
+is underway. It is safe to accept, and it says nothing about the integrity of the
+files.
+
+---
+
+## 9. Troubleshooting — symptom → cause → answer
+
+| The user says | It means | Tell them |
 |---|---|---|
-| `no observer site (SITELAT/SITELONG headers or dialog fallback) — satellite identification disabled.` | Warning. Trails detected, none named. | Add site headers or fill the dialog fields |
-| `NNNN satellites, from cache (STALE — network unreachable)` | Every TLE source failed; expired elements were used | Restore network, delete `tle/`, re-run |
-| `TLE matching unavailable — …` | No source reachable and no cache | Same, but nothing to fall back on this run |
-| `only N/M frames registered — falling back to per-frame detection` | StarAlignment failed on most frames | Check frame quality |
-| `filter group 'X' has only N frame(s) — 3+ are needed for difference detection; skipped.` | Those frames get zero trails | Expected with a stray filter |
-| `geometry mismatch, skipped: <file>` | Frame dimensions differ from the reference | Don't mix sensors/crops in one run |
-| `not registered, skipped: <file>` | StarAlignment rejected it | Usually clouds or too few stars |
-| `Field orientation fitted from N trail(s): rotation X°, direct\|mirrored` | Names come from the orientation fit, not a plate solve | Fine, but less certain |
-| `Field orientation fit found only N matched pair(s) — not enough to trust satellite names…` | Fit abandoned | Plate-solve the first frame |
-| `Treasure/Catalogs: <kind> query failed: …` | **A catalog was unreachable.** The report will still say 0 rows | Network; then clear `treasure-cache/` |
-| `Treasure/Catalogs: asteroid query failed after retries` | SkyBoT unreachable after 3 tries | Same |
-| `no frame could be analyzed` | Fatal; nothing could be opened | Check paths and formats |
-| `Sky Intruders requires PixInsight 1.9.4 or newer …` | Version gate | Upgrade PixInsight |
-
-Dialog boxes:
-
-| Box | Trigger |
-|---|---|
-| `Add some light frames first.` | Run pressed with an empty list, Night mode |
-| `Add one plate-solved image, or open one in PixInsight first.` | Run pressed with an empty list and no active window, Treasure mode |
-| `This image has no astrometric solution (WCS). Plate-solve it first (ImageSolver), then run Treasure Hunt.` | Treasure mode, unsolved image |
-| `Cannot open <path>` | The listed file could not be opened |
+| "I installed it but there is no menu entry" | PixInsight not restarted, or the feature registry is stale | Restart PixInsight, then **Script → Feature Scripts… → Regenerate**. It lives under **Script → CaeloWorks → Sky Intruders**. |
+| "It found no trails at all" | Fewer than 3 frames, or fewer than 3 **per filter** | Difference detection needs at least 3 frames of the same filter. Check the console for *"filter group … has only N frame(s)"*. |
+| "Trails are found but nothing is identified" | **No observer site** — by far the most common | The frames need `SITELAT` / `SITELONG`, or the user fills Lat/Lon in the Night trails tab. Without a site, identification is switched off entirely. |
+| "Still nothing is identified, and my site is filled in" | No plate solve, and the orientation fallback gave up (fewer than 3 matching trails) | Plate-solve at least the **first** frame in the list. |
+| "The satellite names look wrong" | Stale orbital elements, or a wrong longitude sign | Look for **`(STALE — network unreachable)`** in the console; if present, delete the `tle` folder in `.caeloworks/sky-intruders` and re-run. Then check the longitude sign. |
+| "It says 'unidentified satellite' / orange trail" | No catalog match — a fresh launch, a classified object, or debris | **This is a correct, honest answer, not a failure.** The script refuses to guess a name it cannot support. |
+| "Treasure Hunt says my image has no WCS, but I solved it" | The solve is not on the image the script opened | With an empty input list the script uses the **active window**. Make sure the solved image is the one being read. A WBPP master is normally already solved. |
+| "Treasure Hunt found nothing" | Possibly a **catalog outage**, which reads as an empty field | Ask for the console text and look for *"Treasure/Catalogs: … query failed"*. If they "already fixed their internet", have them delete the `treasure-cache` folder — an empty result is cached for 30 days. |
+| "It found no planetary nebulae" | Normal away from the Milky Way | The nebula catalog essentially only covers the galactic plane. Zero is the correct answer for most fields. |
+| "It says below the noise but I can see the object" | Working as intended in most cases | The object must beat its local surroundings and 12 decoy apertures. Objects on nebulosity or in dense star fields legitimately fail. A blown-out saturated core can also trigger it — that one is a real bug, escalate. |
+| "I got exactly 400 objects" | The per-catalog row cap | Raise **Max catalog rows / type**. |
+| "The map shows far fewer objects than the summary" | Deliberate — the chart is curated | The counts are complete; only the most notable below-noise objects are drawn. |
+| "Lowering the σ slider changed nothing" | **Known bug** — the slider does not affect a normal night run | Confirm it. Do not blame the user. Escalate. |
+| "PixInsight warns about an unsigned repository" | Expected — not signed yet | Safe to accept. |
+| "It takes 20 seconds before it finds any satellites" | CelesTrak timing out, mirror taking over | Normal. No action needed. |
 
 ---
 
-## 11. Defaults reference
+## 10. Escalating
 
-| Parameter | Default | Notes |
-|---|---|---|
-| Detection threshold (σ) | 5.0 | Raw frames only |
-| Difference threshold | 4.5 | Internal, not exposed |
-| Max trails per frame | 10 | Raised to ≥ 25 on the difference path |
-| Trail width veto | > 12 px | Internal, not exposed |
-| Minimum trail length | 15 % of the frame diagonal | 10 % on the faint pass |
-| TLE group | `active` + `last-30-days` | The second catches fresh launches |
-| TLE cache max age | 12 h | |
-| Satellite catalog cache | 7 days | |
-| Match tolerance | 0.2° separation, 12° orientation | |
-| Orientation fit | needs ≥ 3 matched pairs | |
-| Asteroid (mover) detection | on | Requires a real plate solve |
-| Predicted / shadow crossers | off | |
-| Language | English | |
-| Treasure row cap | 400 per catalog | 50–2000 |
-| Treasure catalogs | all four on | |
-| Chart accent | `#9FD8D2` | |
-| Catalog cache TTL | 30 days | |
-| Capture: SNR / fill | ≥ 4 σ **or** ≥ 30 % of the aperture | |
-| Capture: decoys | 12, must beat the best by 1.3× SNR or 2× fill | Skipped near frame edges |
+**Stop and hand over to a human** when: the user reports one of the known bugs
+above (an outage that reads as an empty field, the dead σ slider, a saturated
+core called "below the noise", a merged train); when they have lost data (a
+deleted `history.json` cannot be recovered); when the answer is not in this
+document. **Do not improvise a threshold, a file path, or a compatibility claim.**
 
----
+Collect these five things first. Without them the report is not actionable:
 
-## 12. By design, not a bug
+1. **PixInsight version and OS** (Help → About).
+2. **Sky Intruders version** — hover the **"by CaeloWorks"** line under the title
+   in the script window; the tooltip ends with the build number.
+3. **The complete console output of the run.** The script logs every decision it
+   makes there, and several failures — including catalog outages — appear
+   *nowhere else*. This alone usually settles the diagnosis.
+4. **Which mode**, how many frames, and **whether the frames are plate-solved** —
+   specifically whether the **first** frame in the list is.
+5. **The FITS header of one frame**: `DATE-OBS`, `EXPTIME`, `SITELAT`,
+   `SITELONG`, `FILTER`, `OBJECT`.
 
-Report these back to users with confidence — they are deliberate, and several
-exist precisely to keep the script honest.
+For a misidentification, also ask **which name they expected** and which name they
+got.
 
-- **"Uncataloged satellite" is a real answer.** The script would rather say "a
-  steady trail I cannot name" than guess. Fresh launches, classified objects and
-  debris legitimately land here.
-- **"Below the noise" is the whole point of Treasure Hunt.** A mag-20 asteroid
-  in the field is never sold as "captured". The decoy ring and the magnitude
-  consistency check exist to make the *captured* list defensible.
-- **Eclipsed satellites are never matched to a trail.** An object in Earth's
-  shadow cannot streak your frame.
-- **Trails in a parallel bundle get no names.** A train is reported as a train.
-- **Fewer than 3 frames per filter means no difference detection.** The static
-  sky model needs a population to take a median of.
-- **The σ control does not affect the normal night path.** The difference image
-  has its own, lower threshold.
-- **The star chart draws fewer objects than the report counts.** Curated for
-  legibility; the counts are complete.
-- **Planetary nebulae are absent off the galactic plane.** The catalog is a
-  plane survey.
-- **The update repository is unsigned.** Signing is pending.
-
----
-
-## 13. Known limitations and rough edges
-
-Things that are genuinely imperfect. Do not promise fixes; log them.
-
-- **Catalog outages masquerade as empty fields.** VizieR and SkyBoT failures
-  return an empty list, so the report's "some catalogs did not respond" banner
-  does not fire and the user sees `0 row(s)`. The console warning is the only
-  evidence. *(A cached empty result then persists for 30 days.)* This is the
-  weakest point in the whole product from a support standpoint.
-- **Longitude sign convention is taken at face value.** A West-positive
-  `SITELONG` silently mirrors the observer.
-- **`OBJCTRA` is always read as hours; `RA` is read as degrees when decimal.** A
-  file that violates this is off by a factor of 15.
-- **The train/plane distinction rests on a single brightness-variability
-  threshold.** A steadily-lit airplane can be reported as a satellite train, and
-  three genuinely unrelated parallel satellites can be merged into one "train"
-  and lose their names.
-- **Label collision avoidance can give up.** On very crowded frames the last
-  candidate position is used even if it overlaps.
-- **Operator classification is substring-based**, so a satellite whose name
-  happens to contain `ISS` or `CSS` can be miscounted in the stats.
-- **A missing plate scale degrades extended-object photometry** to a 4 px
-  aperture (see [§9](#9-troubleshooting-playbook)).
-- **The registration scratch directory can survive a PixInsight crash**, holding
-  a full copy of the session on disk.
-
----
-
-## 14. Escalation checklist
-
-Before escalating a bug, collect:
-
-1. Script version, PixInsight version, operating system.
-2. **The complete Process Console output** for the run.
-3. Which mode, and how many frames.
-4. The FITS header dump of one representative frame (`DATE-OBS`, `EXPTIME`,
-   `SITELAT`, `SITELONG`, `FILTER`, `OBJECT`, `XPIXSZ`, `FOCALLEN`, and whether
-   a WCS is present).
-5. Whether the frames are plate-solved, and whether the **first** frame in the
-   list is.
-6. What the user expected versus what they got — for a misidentification, the
-   name they expected and the name they were given.
-7. Whether the problem survives deleting `~/.caeloworks/sky-intruders/tle/` and
-   `~/.caeloworks/sky-intruders/treasure-cache/`.
-
-Issues: <https://github.com/caelo-works/sky-intruders/issues>
+File issues at https://github.com/caelo-works/sky-intruders/issues.
