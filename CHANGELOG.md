@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-16
+
+**Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-07-16:
+GUI construction smoke test in both languages (including the new observer-site
+tooltip key); the 13-frame reference night on the no-plate-solve path locks the
+orientation fit at 12 anchor pairs and names 12 of 12 trails at high
+confidence, matching the day's post-fix reference exactly; the plate-solved
+reference night names 3 of 5 trails at high confidence (SPACEMOBILE-009,
+SL-14 R/B, QIANFAN-2 — the remaining two have no sunlit counterpart within
+2.5° of 31k cataloged objects) with the slow-mover storm breaker verified (41
+artifact candidates on the same input before, zero reported after, real-mover
+budget preserved); frame corrections anchored on sky at 0.009° (32″)
+cross-track residual through the rebuilt Node module; Node pure-logic harness:
+all suites green. Console log clean (the only grep hits are PixInsight's usual
+headless GLES-fallback notices, present on every headless run). Note for
+future baseline comparisons: identifications of past nights are only
+reproducible with observation-epoch orbital elements — week-stale replays
+re-rank along-track neighbors within constellations by simple physics.
+
 ### Added
 - Identified satellites now say what they are: the overlay telemetry line and
   the night-log lines carry the object's nature from the SATCAT — *in service*
@@ -42,6 +61,12 @@ All notable changes to this project are documented here. The format is based on
   from 0.351° to 0.009° (32 arcsec), and two more trails gain names —
   SPACEMOBILE-009 at 0.04° (its mismodeled track previously passed 0.875° off,
   outside the search FOV) and SL-14 R/B from the widened catalog. Fixes #4.
+- Slow-mover storm breaker: on plate-solved sets the mover detector can chain
+  dithered sensor artifacts into dozens of fake "asteroid candidates" (the
+  stationarity test works in sky coordinates; hot pixels sit still in sensor
+  coordinates). Until that is hardened (#5), more than 5 candidates on one
+  field is treated as an artifact storm: the list is suppressed and the log
+  says so instead of reporting dozens of false asteroids.
 - The coarse candidate cull sampled position and angular rate only at the
   exposure midpoint, so a fast, low satellite that cut the field in the first
   seconds of a long exposure was culled tens of degrees away before the fine

@@ -15,7 +15,7 @@ Three rules when you use it:
 - **"I can't find it" and "it found nothing" are usually two different bugs.**
   Read the Known bugs section before answering either one.
 
-Applies to **0.1.1**. To check a user's version: in the script window, hover the
+Applies to **0.2.0**. To check a user's version: in the script window, hover the
 **"by CaeloWorks"** line just under the title — the tooltip ends with the build
 number. There is no other version display.
 
@@ -26,7 +26,7 @@ number. There is no other version display.
 | | |
 |---|---|
 | What it is | A PixInsight script that finds who crossed your light frames, and what hid in your image |
-| Version | 0.1.1 · GPL-3.0 · free and open source |
+| Version | 0.2.0 · GPL-3.0 · free and open source |
 | Requires | **PixInsight 1.9.4 or newer** — Windows, macOS, Linux |
 | Where it lives | **Script → CaeloWorks → Sky Intruders** |
 | Internet | Needed for satellite elements and deep-sky catalogs. Everything is cached; it degrades gracefully offline |
@@ -620,7 +620,25 @@ reported as below the noise even though it is plainly visible.
 
 Rare, but real. Confirm it rather than arguing with the user, and escalate.
 
-### 8.8 The update repository is unsigned
+### 8.8 Asteroid candidates are unreliable on plate-solved sets, and a crowd of them is suppressed
+
+On a plate-solved night set, the slow-mover detector can mistake dithered
+sensor artifacts (hot pixels) for asteroid candidates. As a stopgap, when more
+than 5 candidates appear on one field the whole list is suppressed and the
+console says:
+
+> *"N slow-mover candidates on one field look like a sensor-artifact storm,
+> not asteroids — list suppressed."*
+
+That message is expected behaviour, not a failure — a real night holds zero to
+a couple of slow movers, never dozens. The cost of the stopgap: on such a
+night, a *real* slow mover would be suppressed along with the noise. A proper
+hardening is planned; treat any user report of a **confirmed** real asteroid
+being suppressed as valuable and escalate it. Up to 5 candidates are still
+reported normally, and the *asteroid candidate* lines that do appear should be
+treated as candidates to verify, not confirmed detections.
+
+### 8.9 The update repository is unsigned
 
 PixInsight warns that the CaeloWorks repository is not signed. Expected; signing
 is underway. It is safe to accept, and it says nothing about the integrity of the

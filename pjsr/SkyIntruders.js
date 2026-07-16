@@ -1343,6 +1343,19 @@ function runAnalysis( files, params )
       {
          console.writeln( "Searching for slow movers across " + blobsByFrame.length + " solved frame(s)…" );
          movers = SIMeteors.findAsteroidCandidates( blobsByFrame, 3, null );
+         // Storm breaker: a real night holds zero to a couple of slow movers.
+         // Dithered sensor artifacts chain into dozens of fake tracks (the
+         // stationarity test works in sky coordinates, hot pixels sit still
+         // in sensor coordinates) — until that is hardened, an implausible
+         // crowd is suppressed and said out loud, not reported as asteroids.
+         var MAX_PLAUSIBLE_MOVERS = 5;
+         if ( movers.length > MAX_PLAUSIBLE_MOVERS )
+         {
+            console.warningln( format( SKYINTRUDERS_TITLE + ": %d slow-mover candidates on one " +
+                                       "field look like a sensor-artifact storm, not asteroids — " +
+                                       "list suppressed.", movers.length ) );
+            movers = [];
+         }
          for ( var m = 0; m < movers.length; ++m )
             events.push( { timeUtc: movers[ m ].points[ 0 ].t,
                            klass: "asteroid",
