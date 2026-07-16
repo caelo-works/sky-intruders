@@ -233,21 +233,24 @@ var SITleNet = ( function()
 
    function parseSatcatInfo( csvText )
    {
-      // NORAD id -> { owner, ops } from the SATCAT CSV. Pure string work:
-      // locate the columns from the header, split the rows (the fields used
-      // never contain quoted commas). ops is the OPS_STATUS_CODE: '+', 'P',
-      // 'B', 'S', 'X' are flavors of alive; '-' is out of service.
+      // NORAD id -> { owner, ops, type } from the SATCAT CSV. Pure string
+      // work: locate the columns from the header, split the rows (the fields
+      // used never contain quoted commas). ops is the OPS_STATUS_CODE: '+',
+      // 'P', 'B', 'S', 'X' are flavors of alive; '-' is out of service; '?'
+      // or empty is unknown. type is the OBJECT_TYPE: 'PAY', 'R/B', 'DEB'
+      // or 'UNK' — rocket bodies and debris carry no ops status at all.
       var out = {};
       var lines = String( csvText ).split( "\n" );
       if ( lines.length < 2 )
          return out;
       var header = lines[ 0 ].replace( /\r$/, "" ).split( "," );
-      var idCol = -1, ownerCol = -1, opsCol = -1;
+      var idCol = -1, ownerCol = -1, opsCol = -1, typeCol = -1;
       for ( var i = 0; i < header.length; ++i )
       {
          if ( header[ i ] == "NORAD_CAT_ID" ) idCol = i;
          if ( header[ i ] == "OWNER" ) ownerCol = i;
          if ( header[ i ] == "OPS_STATUS_CODE" ) opsCol = i;
+         if ( header[ i ] == "OBJECT_TYPE" ) typeCol = i;
       }
       if ( idCol < 0 || ownerCol < 0 )
          return out;
@@ -260,7 +263,9 @@ var SITleNet = ( function()
          if ( isFinite( id ) )
             out[ id ] = { owner: ( f[ ownerCol ] || "" ).replace( /\r$/, "" ).trim(),
                           ops: ( opsCol >= 0 && f[ opsCol ] !== undefined )
-                                  ? f[ opsCol ].replace( /\r$/, "" ).trim() : "" };
+                                  ? f[ opsCol ].replace( /\r$/, "" ).trim() : "",
+                          type: ( typeCol >= 0 && f[ typeCol ] !== undefined )
+                                  ? f[ typeCol ].replace( /\r$/, "" ).trim() : "" };
       }
       return out;
    }

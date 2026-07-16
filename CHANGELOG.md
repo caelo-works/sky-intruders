@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Identified satellites now say what they are: the overlay telemetry line and
+  the night-log lines carry the object's nature from the SATCAT — *in service*
+  / *out of service* for payloads, *rocket body* or *debris* for the rest,
+  *unknown* when the catalog has no status (typically classified objects).
+  Rocket bodies and debris carry no operational status at all, which is why
+  they used to show nothing; with the full-catalog group now naming them, a
+  1986 Tsyklon-3 stage reads `1 449 km · 0.36°/s · 1986 · rocket body`.
 - `docs/support-kb.md` — the knowledge base the Discord support agent answers
   from: the facts card, install routes, every control in both languages with its
   default, both modes end to end, the exact text of every message, the known bugs

@@ -1151,6 +1151,33 @@ function runAnalysis( files, params )
 
    // Second label line on the result image: distance, angular rate, launch
    // year (from the COSPAR designator), service status (SATCAT).
+   // What kind of thing is this, per the SATCAT record: a working payload,
+   // a dead one, an unknown one (classified objects come out '?'), a rocket
+   // body or debris \u2014 the last two have no ops status, the notion does not
+   // apply. Returns a language-neutral code, or null without a record (a
+   // failed SATCAT fetch must not relabel everything "unknown").
+   function satClassCode( rec )
+   {
+      if ( !rec )
+         return null;
+      if ( rec.type == "R/B" )
+         return "rb";
+      if ( rec.type == "DEB" )
+         return "debris";
+      if ( rec.ops && "+PBSX".indexOf( rec.ops ) >= 0 )
+         return "active";
+      if ( rec.ops == "-" )
+         return "dead";
+      return "unknown";
+   }
+
+   var SAT_CLASS_LABEL = {
+      en: { rb: "rocket body", debris: "debris", active: "in service",
+            dead: "out of service", unknown: "unknown" },
+      fr: { rb: "\u00e9tage de fus\u00e9e", debris: "d\u00e9bris", active: "en service",
+            dead: "hors service", unknown: "inconnu" }
+   };
+
    function satTelemetryLine( crossing, satcat, lang )
    {
       var fr = ( lang == "fr" );
@@ -1166,14 +1193,9 @@ function runAnalysis( files, params )
       var m = /^(\d{4})-/.exec( des );
       if ( m )
          parts.push( m[ 1 ] );
-      var rec = satcat[ crossing.noradId ];
-      if ( rec && rec.ops )
-      {
-         if ( "+PBSX".indexOf( rec.ops ) >= 0 )
-            parts.push( fr ? "en service" : "in service" );
-         else if ( rec.ops == "-" )
-            parts.push( fr ? "hors service" : "out of service" );
-      }
+      var cls = satClassCode( satcat[ crossing.noradId ] );
+      if ( cls != null )
+         parts.push( SAT_CLASS_LABEL[ fr ? "fr" : "en" ][ cls ] );
       return parts.join( " \u00b7 " );
    }
 
@@ -1240,6 +1262,7 @@ function runAnalysis( files, params )
                            confidence: crossings[ c ].matchConfidence || "high",
                            elevationDeg: crossings[ c ].elevationDeg,
                            angularRateDegPerSec: crossings[ c ].angularRateDegPerSec,
+                           satClass: satClassCode( satcatInfo[ crossings[ c ].noradId ] ),
                            frameId: f.meta.id } );
             var tr0 = null;
             for ( var tt = 0; tt < f.trails.length; ++tt )

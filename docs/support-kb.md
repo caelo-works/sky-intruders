@@ -112,6 +112,8 @@ The user will name things in their own language. This is the lookup.
 | Open image | Ouvrir l'image |
 | Open HTML / Save HTML… | Ouvrir le HTML / Enregistrer le HTML… |
 | below the noise | sous le bruit |
+| in service / out of service | en service / hors service |
+| rocket body / debris / unknown | étage de fusée / débris / inconnu |
 
 The **Language** combo switches the whole interface, the reports **and** the star
 chart, live, in both directions. Every setting is remembered between sessions.
@@ -289,7 +291,12 @@ Ghost lines for predicted-but-unconfirmed passes are pale yellow (sunlit) or gre
 
 - An **annotated composite** as a new image window (named `SkyIntruders_night`),
   built on the best frame of the night, with every streak labelled — name,
-  country flag, altitude, angular speed, time.
+  country flag, altitude, angular speed, time, and the object's nature: **in
+  service** / **out of service** for payloads, **rocket body** (« étage de
+  fusée ») or **debris** for the rest, **unknown** when the public catalog has
+  no status (typically classified objects). The same tag appears on the night
+  log's satellite lines. It comes from the public satellite catalog; if that
+  download failed for the session, the tag is simply absent — not an error.
 - The same composite as a **PNG in the system temp folder**. The **Open image**
   button in the report window reopens it.
 - A **night log** in markdown, shown in a window and printed to the console, with
