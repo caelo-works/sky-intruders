@@ -82,6 +82,12 @@ var SITleNet = ( function()
 
    function buildUrl( template, group )
    {
+      // "catalog" is a mirror-side aggregate of the full GP catalog: it is
+      // not a gp.php GROUP, and CelesTrak retired its single-file catalog
+      // download. Skip CelesTrak-style sources for it; the mirror template
+      // resolves {group} to the real tle/catalog.tle snapshot.
+      if ( group == "catalog" && template.indexOf( "gp.php" ) >= 0 )
+         return null;
       // A "{group}" template is used as-is; a bare base (legacy) gets the
       // CelesTrak query appended.
       if ( template.indexOf( "{group}" ) >= 0 )
@@ -97,6 +103,8 @@ var SITleNet = ( function()
       for ( var i = 0; i < sources.length; ++i )
       {
          var url = buildUrl( sources[ i ], group );
+         if ( url == null )
+            continue;
          var r = httpGet( url, timeoutSec );
          if ( !r.ok || ( r.code != 0 && r.code != 200 ) )
          {

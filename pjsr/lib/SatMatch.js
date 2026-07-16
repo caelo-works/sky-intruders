@@ -5,16 +5,22 @@
  * tle.go — the certified reference). SGP4 propagation comes from the
  * vendored satellite.js (satellite-js 5.0.0 UMD, global `satellite`);
  * everything else — TLE validation, Meeus sun direction, cylindrical
- * Earth-shadow test, spherical observer ECI, topocentric directions,
+ * Earth-shadow test, WGS84 geodetic observer ECI, topocentric directions,
  * gnomonic FOV test, crossing scan and score-ordered trail assignment —
  * is self-contained here. Request and response shapes are inherited
  * verbatim from the Go engine (docs/ARCHITECTURE.md, matching contracts):
  * match() returns either a full response with error: null, or a bare
  * { error: "..." } object; it never throws on bad catalog or request data.
  *
- * Directions are TEME of date vs the J2000 frame of plate-solved WCS;
- * the ~0.35 deg precession difference is absorbed by matchMaxSepDeg,
- * exactly as in the Go reference.
+ * Two deliberate departures from the Go reference (its simplifications
+ * stacked up to ~0.35-0.9 deg of cross-track error, larger than the
+ * default match gate): topocentric directions are rotated from TEME of
+ * date to J2000 (IAU76 precession + main nutation terms + equation of
+ * the equinoxes) before they are compared with the plate-solved J2000
+ * WCS, and the observer sits on the WGS84 ellipsoid at its geodetic
+ * latitude instead of on a sphere at geocentric latitude. Validated
+ * on-sky: 0.009 deg cross-track residual against an observed trail,
+ * vs 0.351 deg with the old spherical-observer TEME model.
  */
 
 var SISatMatch = ( function()
@@ -22,7 +28,9 @@ var SISatMatch = ( function()
    var DEG2RAD = Math.PI/180;
    var RAD2DEG = 180/Math.PI;
    var TWO_PI = 2*Math.PI;
-   var EARTH_RADIUS = 6378.137;     // km, equatorial
+   var EARTH_RADIUS = 6378.137;     // km, WGS84 equatorial (semi-major axis)
+   var EARTH_F = 1/298.257223563;   // WGS84 flattening
+   var EARTH_E2 = EARTH_F*( 2 - EARTH_F ); // first eccentricity squared
    var EARTH_OMEGA = 7.29211585e-5; // rad per second, Earth rotation rate
    var JD_UNIX_EPOCH = 2440587.5;   // Julian date of 1970-01-01T00:00:00Z
    var MS_PER_DAY = 86400000;
@@ -261,8 +269,115 @@ var SISatMatch = ( function()
    }
 
    // ------------------------------------------------------------------------
-   // Observer and look angles (ports of go-satellite's ThetaG_JD, LLAToECI
-   // and ECIToLookAngles — spherical Earth, 1992 Astronomical Almanac).
+   // TEME -> J2000 frame rotation. SGP4 states are TEME of date, while the
+   // plate-solved WCS the crossings are compared with is J2000; skipping
+   // the rotation displaces every prediction by the accumulated precession
+   // since J2000 (~50 arcsec per year — ~0.35 deg by 2026, more than the
+   // default match gate). The rotation is
+   //    r_J2000 = Pt * Nt * Rz(-eqeq) * r_TEME
+   // with P the IAU76 precession matrix (J2000 -> mean of date; zeta, z,
+   // theta polynomials), N the nutation matrix (mean -> true of date, main
+   // terms of the IAU 1980 series), eqeq = dpsi*cos(epsBar) the equation
+   // of the equinoxes, and Pt, Nt the transposes. Truncating the nutation
+   // series costs a few arcseconds — three orders of magnitude below the
+   // match gates.
+
+   function mat3T( m )
+   {
+      return [ [ m[0][0], m[1][0], m[2][0] ],
+               [ m[0][1], m[1][1], m[2][1] ],
+               [ m[0][2], m[1][2], m[2][2] ] ];
+   }
+
+   function mat3Mul( a, b )
+   {
+      var m = [ [ 0, 0, 0 ], [ 0, 0, 0 ], [ 0, 0, 0 ] ];
+      for ( var i = 0; i < 3; ++i )
+         for ( var j = 0; j < 3; ++j )
+            m[i][j] = a[i][0]*b[0][j] + a[i][1]*b[1][j] + a[i][2]*b[2][j];
+      return m;
+   }
+
+   function mat3Vec( m, v )
+   {
+      return { x: m[0][0]*v.x + m[0][1]*v.y + m[0][2]*v.z,
+               y: m[1][0]*v.x + m[1][1]*v.y + m[1][2]*v.z,
+               z: m[2][0]*v.x + m[2][1]*v.y + m[2][2]*v.z };
+   }
+
+   function nutationAngles( jday )
+   {
+      // Main terms of the IAU 1980 nutation series, radians.
+      var tj = ( jday - 2451545.0 )/36525.0;
+      var s = DEG2RAD/3600;
+      var om = ( 125.04452 - 1934.136261*tj )*DEG2RAD; // lunar ascending node
+      var ls = ( 280.4665 + 36000.7698*tj )*DEG2RAD;   // mean solar longitude
+      var lm = ( 218.3165 + 481267.8813*tj )*DEG2RAD;  // mean lunar longitude
+      return {
+         dpsi: ( -17.20*Math.sin( om ) - 1.32*Math.sin( 2*ls )
+                 - 0.23*Math.sin( 2*lm ) + 0.21*Math.sin( 2*om ) )*s,
+         deps: ( 9.20*Math.cos( om ) + 0.57*Math.cos( 2*ls )
+                 + 0.10*Math.cos( 2*lm ) - 0.09*Math.cos( 2*om ) )*s,
+         epsBar: ( 23.439291 - 0.0130042*tj )*DEG2RAD  // mean obliquity
+      };
+   }
+
+   function temeToJ2000Matrix( jday )
+   {
+      var tj = ( jday - 2451545.0 )/36525.0;
+      var s = DEG2RAD/3600;
+      // IAU76 precession angles
+      var zeta = ( 2306.2181 + ( 0.30188 + 0.017998*tj )*tj )*tj*s;
+      var z = ( 2306.2181 + ( 1.09468 + 0.018203*tj )*tj )*tj*s;
+      var th = ( 2004.3109 - ( 0.42665 + 0.041833*tj )*tj )*tj*s;
+      var cz = Math.cos( zeta ), sz = Math.sin( zeta );
+      var cZ = Math.cos( z ), sZ = Math.sin( z );
+      var ct = Math.cos( th ), st = Math.sin( th );
+      // P = Rz(-z) Ry(theta) Rz(-zeta), J2000 -> mean of date
+      var P = [ [ cZ*ct*cz - sZ*sz, -cZ*ct*sz - sZ*cz, -cZ*st ],
+                [ sZ*ct*cz + cZ*sz, -sZ*ct*sz + cZ*cz, -sZ*st ],
+                [ st*cz,            -st*sz,             ct    ] ];
+      var nut = nutationAngles( jday );
+      var eps = nut.epsBar + nut.deps;
+      var cp = Math.cos( nut.dpsi ), sp = Math.sin( nut.dpsi );
+      var ce = Math.cos( nut.epsBar ), se = Math.sin( nut.epsBar );
+      var cE = Math.cos( eps ), sE = Math.sin( eps );
+      // N = Rx(-eps) Rz(-dpsi) Rx(epsBar), mean -> true of date
+      var N = [ [ cp,    -sp*ce,            -sp*se            ],
+                [ cE*sp,  cE*cp*ce + sE*se,  cE*cp*se - sE*ce ],
+                [ sE*sp,  sE*cp*ce - cE*se,  sE*cp*se + cE*ce ] ];
+      // TEME -> true of date: rotate by minus the equation of the equinoxes
+      var q = nut.dpsi*Math.cos( nut.epsBar );
+      var cq = Math.cos( q ), sq = Math.sin( q );
+      var R = [ [ cq, -sq, 0 ], [ sq, cq, 0 ], [ 0, 0, 1 ] ];
+      return mat3Mul( mat3T( P ), mat3Mul( mat3T( N ), R ) );
+   }
+
+   // One-entry cache: the matrix drifts by well under 0.01 arcsec over 15
+   // minutes, so one matrix serves every sample of an exposure. Without it
+   // the trig above would run once per 1 s fine-scan sample per satellite
+   // — the hot path over a 16k-record catalog.
+   var temeMatJday = null;
+   var temeMat = null;
+
+   function temeToJ2000( v, jday )
+   {
+      // Recomputation is the fail-open path: a non-finite jday never passes
+      // the <= test, so it cannot poison the cache for later valid calls.
+      if ( temeMatJday === null || !( Math.abs( jday - temeMatJday ) <= 0.01 ) )
+      {
+         temeMat = temeToJ2000Matrix( jday );
+         temeMatJday = jday;
+      }
+      return mat3Vec( temeMat, v );
+   }
+
+   // ------------------------------------------------------------------------
+   // Observer and look angles. gmstRad ports go-satellite's ThetaG_JD (1992
+   // Astronomical Almanac); the observer itself is WGS84 geodetic, NOT the
+   // Go reference's spherical-geocentric model, whose misplacement (23.7 km
+   // at latitude 43.6 deg) leaks 0.2-2 deg into topocentric directions at
+   // LEO ranges — far beyond the matching tolerance budget.
 
    function gmstRad( jday )
    {
@@ -277,29 +392,37 @@ var SISatMatch = ( function()
 
    function llaToEci( latRad, lonRad, altKm, jday )
    {
+      // WGS84 geodetic coordinates -> ECI position in the true-equator
+      // frame rotated by GMST (TEME-compatible, so satellite-minus-observer
+      // differencing stays frame-consistent). N is the prime-vertical
+      // radius of curvature of the ellipsoid.
       var theta = ( gmstRad( jday ) + lonRad ) % TWO_PI;
-      var r = ( EARTH_RADIUS + altKm )*Math.cos( latRad );
+      var sinLat = Math.sin( latRad );
+      var N = EARTH_RADIUS/Math.sqrt( 1 - EARTH_E2*sinLat*sinLat );
+      var r = ( N + altKm )*Math.cos( latRad );
       return { x: r*Math.cos( theta ),
                y: r*Math.sin( theta ),
-               z: ( EARTH_RADIUS + altKm )*Math.sin( latRad ) };
+               z: ( N*( 1 - EARTH_E2 ) + altKm )*sinLat };
    }
 
    function observerEci( obs, jday )
    {
-      // Observer position (km) and velocity (km per second) in TEME. The
-      // spherical (geocentric) latitude model of the Go reference is kept:
-      // at LEO ranges it costs at most ~0.2 deg of parallax, absorbed by
-      // the matching tolerance budget.
+      // Observer position (km) and velocity (km per second) in TEME, from
+      // WGS84 geodetic latitude/longitude/altitude. (The Go reference used
+      // a spherical-geocentric observer, misplaced by up to ~24 km at
+      // mid-latitudes — 0.2-2 deg of topocentric error at LEO ranges.)
       var pos = llaToEci( obs.latDeg*DEG2RAD, obs.lonDeg*DEG2RAD, obs.altM/1000, jday );
       var vel = { x: -EARTH_OMEGA*pos.y, y: EARTH_OMEGA*pos.x, z: 0 };
       return { pos: pos, vel: vel };
    }
 
-   function topocentricRaDec( satPos, obsPos )
+   function topocentricRaDec( satPos, obsPos, jday )
    {
-      // Topocentric equatorial direction: satellite TEME position minus
-      // observer ECI position.
-      return vecToRaDec( sub3( satPos, obsPos ) );
+      // Topocentric equatorial direction in J2000: satellite TEME position
+      // minus observer ECI position, rotated TEME -> J2000 so the result
+      // can be compared with plate-solved WCS coordinates. Every sky-facing
+      // direction the pipeline produces flows through here.
+      return vecToRaDec( temeToJ2000( sub3( satPos, obsPos ), jday ) );
    }
 
    function elevationDeg( satPos, obs, jday )
@@ -470,38 +593,54 @@ var SISatMatch = ( function()
       return {
          stepSec: ( o.stepSec > 0 ) ? o.stepSec : 1.0,
          matchMaxSepDeg: ( o.matchMaxSepDeg > 0 ) ? o.matchMaxSepDeg : 0.2,
+         alongTolDeg: ( o.alongTolDeg > 0 ) ? o.alongTolDeg : 0.6,
          matchMaxAngleDiffDeg: ( o.matchMaxAngleDiffDeg > 0 ) ? o.matchMaxAngleDiffDeg : 12
       };
    }
 
    function coarseCandidate( e, fr, obs, opt, startMs )
    {
-      // One propagation at the exposure midpoint: keep the satellite only
-      // if it could plausibly touch the FOV during the window.
-      var tMid = startMs + fr.exposureSec/2*1000;
-      var pv = propagateAt( e, tMid );
-      if ( pv === null )
-         return false;
-      var jd = jdayOfMs( tMid );
-      var o = observerEci( obs, jd );
-      var rho = sub3( pv.pos, o.pos );
-      var rhoDot = sub3( pv.vel, o.vel );
-      var rhoLen = norm3( rho );
-      if ( rhoLen === 0 )
-         return false;
-      // topocentric angular rate: |rho x rhodot| over |rho| squared
-      var rateDeg = norm3( cross3( rho, rhoDot ) )/( rhoLen*rhoLen )*RAD2DEG;
-      var reachDeg = rateDeg*fr.exposureSec/2;
-
-      // below the horizon for the whole window -> skip (2 deg slack on top
-      // of the angular reach, so risers and setters at the edge are kept)
-      var el = elevationDeg( pv.pos, obs, jd );
-      if ( el < -( reachDeg + 2 ) )
-         return false;
-
-      var sep = angularSepDeg( vecToRaDec( rho ), { raDeg: fr.fov.raDeg, decDeg: fr.fov.decDeg } );
+      // Sample the window at start, middle and end: keep the satellite if
+      // ANY sample makes the FOV plausibly reachable within the exposure.
+      // A single midpoint sample is not enough for a fast, low crossing:
+      // an object that cuts the field in the first seconds of a long
+      // exposure can be tens of degrees away — with a grossly
+      // underestimated angular rate — by mid-exposure, and gets culled
+      // before the fine sampler ever sees it.
       var halfDiag = 0.5*Math.sqrt( fr.fov.widthDeg*fr.fov.widthDeg + fr.fov.heightDeg*fr.fov.heightDeg );
-      return sep <= halfDiag + reachDeg + opt.matchMaxSepDeg;
+      var tSamples = [ startMs,
+                       startMs + fr.exposureSec/2*1000,
+                       startMs + fr.exposureSec*1000 ];
+      for ( var s = 0; s < tSamples.length; ++s )
+      {
+         var pv = propagateAt( e, tSamples[ s ] );
+         if ( pv === null )
+            continue;
+         var jd = jdayOfMs( tSamples[ s ] );
+         var o = observerEci( obs, jd );
+         var rho = sub3( pv.pos, o.pos );
+         var rhoDot = sub3( pv.vel, o.vel );
+         var rhoLen = norm3( rho );
+         if ( rhoLen === 0 )
+            continue;
+         // topocentric angular rate: |rho x rhodot| over |rho| squared;
+         // from any sample the object can move rate x the full exposure
+         // within the window, so that is the reach budget.
+         var rateDeg = norm3( cross3( rho, rhoDot ) )/( rhoLen*rhoLen )*RAD2DEG;
+         var reachDeg = rateDeg*fr.exposureSec;
+
+         // below the horizon beyond reach at this sample -> try the others
+         // (2 deg slack on top, so risers and setters at the edge are kept)
+         var el = elevationDeg( pv.pos, obs, jd );
+         if ( el < -( reachDeg + 2 ) )
+            continue;
+
+         var sep = angularSepDeg( topocentricRaDec( pv.pos, o.pos, jd ),
+                                  { raDeg: fr.fov.raDeg, decDeg: fr.fov.decDeg } );
+         if ( sep <= halfDiag + reachDeg + opt.matchMaxSepDeg )
+            return true;
+      }
+      return false;
    }
 
    function fineCrossings( e, fr, obs, opt, startMs )
@@ -519,7 +658,7 @@ var SISatMatch = ( function()
             return [];
          var jd = jdayOfMs( t );
          var o = observerEci( obs, jd );
-         var dir = vecToRaDec( sub3( pv.pos, o.pos ) );
+         var dir = topocentricRaDec( pv.pos, o.pos, jd );
          var inFov = fovContains( fr.fov, dir ) && elevationDeg( pv.pos, obs, jd ) > 0;
          samples.push( { tMs: t, dir: dir, inFov: inFov } );
       }
@@ -549,8 +688,9 @@ var SISatMatch = ( function()
             var pvn = propagateAt( e, tn );
             if ( pvn !== null )
             {
-               var on = observerEci( obs, jdayOfMs( tn ) );
-               rate = angularSepDeg( entry.dir, vecToRaDec( sub3( pvn.pos, on.pos ) ) )/opt.stepSec;
+               var jdn = jdayOfMs( tn );
+               var on = observerEci( obs, jdn );
+               rate = angularSepDeg( entry.dir, topocentricRaDec( pvn.pos, on.pos, jdn ) )/opt.stepSec;
             }
          }
 
@@ -581,14 +721,36 @@ var SISatMatch = ( function()
       return out;
    }
 
+   function crossAlongDeg( cMid, cPA, tMid )
+   {
+      // Offset of a trail midpoint from a crossing midpoint, decomposed
+      // against the crossing's track direction: cross-track (sideways) and
+      // along-track (early or late on the ephemeris) components, degrees.
+      // Planar split of the great-circle separation — exact enough at the
+      // sub-degree gates it feeds. Mirrors assignTrailsLoose.
+      var sep = angularSepDeg( cMid, tMid );
+      var rel = ( positionAngleDeg( cMid, tMid ) - cPA )*DEG2RAD;
+      return { sep: sep,
+               cross: Math.abs( sep*Math.sin( rel ) ),
+               along: Math.abs( sep*Math.cos( rel ) ) };
+   }
+
    function assignTrails( crossings, fr, opt )
    {
-      // Candidates: sunlit crossings vs trails with sky coordinates,
-      // midpoint separation within matchMaxSepDeg and orientation within
-      // matchMaxAngleDiffDeg (mod 180). Score blends separation (0.4),
-      // orientation (0.3) and path-length agreement (0.3), each normalized
-      // to [0,1]. Conflicts are resolved globally by score order: each
-      // trail and each crossing is used at most once.
+      // Candidates: sunlit crossings vs trails with sky coordinates. The
+      // midpoint offset is decomposed against the predicted track
+      // (crossAlongDeg): TLE error is dominantly ALONG-track — ordinary
+      // epoch staleness makes the satellite run early or late on an
+      // otherwise accurate ground track — so the gate is tight sideways
+      // (cross-track within matchMaxSepDeg) and looser lengthwise
+      // (along-track within alongTolDeg); orientation must agree within
+      // matchMaxAngleDiffDeg (mod 180). Score blends cross-track (0.4),
+      // orientation (0.3), path-length agreement (0.2) and along-track
+      // (0.1), each normalized to [0,1] by its own gate — the geometry
+      // that discriminates hardest carries the most weight. Conflicts are
+      // resolved globally by score order: each trail and each crossing is
+      // used at most once.
+      var alongTol = ( opt.alongTolDeg > 0 ) ? opt.alongTolDeg : 0.6;
       var trails = fr.trails || [];
       var cands = [];
       for ( var ci = 0; ci < crossings.length; ++ci )
@@ -604,11 +766,11 @@ var SISatMatch = ( function()
             var tr = trails[ti];
             if ( !tr.p1 || !tr.p2 )
                continue;
-            var sep = angularSepDeg( cMid, midpointRaDec( tr.p1, tr.p2 ) );
-            if ( sep > opt.matchMaxSepDeg )
-               continue;
             var ad = orientationDiffDeg( cPA, positionAngleDeg( tr.p1, tr.p2 ) );
             if ( ad > opt.matchMaxAngleDiffDeg )
+               continue;
+            var off = crossAlongDeg( cMid, cPA, midpointRaDec( tr.p1, tr.p2 ) );
+            if ( off.cross > opt.matchMaxSepDeg || off.along > alongTol )
                continue;
             // rate agreement compared as path lengths over the same window
             var tLen = angularSepDeg( tr.p1, tr.p2 );
@@ -616,10 +778,11 @@ var SISatMatch = ( function()
             var mx = Math.max( cLen, tLen );
             if ( mx > 0 )
                rateScore = 1 - Math.min( 1, Math.abs( cLen - tLen )/mx );
-            var score = 0.4*( 1 - sep/opt.matchMaxSepDeg ) +
+            var score = 0.4*( 1 - off.cross/opt.matchMaxSepDeg ) +
                         0.3*( 1 - ad/opt.matchMaxAngleDiffDeg ) +
-                        0.3*rateScore;
-            cands.push( { ci: ci, ti: ti, score: score, sep: sep, ad: ad } );
+                        0.2*rateScore +
+                        0.1*( 1 - off.along/alongTol );
+            cands.push( { ci: ci, ti: ti, score: score, sep: off.sep, ad: ad } );
          }
       }
       cands.sort( function( a, b ) { return b.score - a.score; } );
@@ -1039,7 +1202,9 @@ var SISatMatch = ( function()
          sunDirection: sunDirection,
          isSunlit: isSunlit,
          observerEci: observerEci,
+         temeToJ2000: temeToJ2000,
          topocentricRaDec: topocentricRaDec,
+         crossAlongDeg: crossAlongDeg,
          elevationDeg: elevationDeg,
          vecToRaDec: vecToRaDec,
          raDecToVec: raDecToVec,

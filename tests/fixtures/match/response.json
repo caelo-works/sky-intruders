@@ -15,12 +15,12 @@
      "exitUtc": "2006-06-25T19:46:44Z",
      "path": {
       "p1": {
-       "raDeg": 53.55255803262239,
-       "decDeg": -0.8901610842323382
+       "raDeg": 53.46994777882422,
+       "decDeg": -0.9127381676547349
       },
       "p2": {
-       "raDeg": 54.54197529564517,
-       "decDeg": 0.9039714574002472
+       "raDeg": 54.45849305952271,
+       "decDeg": 0.8818750440116471
       }
      },
      "angularRateDegPerSec": 1.024423995511225,
@@ -28,9 +28,9 @@
      "elevationDeg": 89.99921335657257,
      "sunlit": true,
      "matchedTrailIndex": 0,
-     "matchScore": 1,
-     "sepDeg": 0,
-     "angleDiffDeg": 0
+     "matchScore": 0.865452249995363,
+     "sepDeg": 0.08599502773060873,
+     "angleDiffDeg": 0.02765349367362191
     }
    ]
   }

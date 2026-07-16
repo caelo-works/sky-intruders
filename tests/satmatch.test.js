@@ -1,7 +1,9 @@
-// SISatMatch: replay the Go-engine reference fixtures (tests/fixtures/match/).
-// The Go sidecar is the certified reference; these tests pin the JS port to
-// its propagation (ECI, topocentric RA/Dec, sunlit, range) and to its full
-// match response (crossing identity, times, path, rate, score).
+// SISatMatch: replay the reference fixtures (tests/fixtures/match/).
+// Split pinning (see the fixtures' README): TEME ECI positions, sunlit,
+// range and crossing times still pin the certified Go engine; topocentric
+// RA/Dec (and the match path/score derived from it) pin the corrected
+// WGS84-geodetic + TEME->J2000 frame model, which the Go engine lacked
+// (validated on-sky at a 32 arcsec cross-track residual).
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
@@ -40,7 +42,10 @@ assert.strictEqual(SISatMatch.parseTles(alpha5).length, 0, "Alpha-5 must be reje
 // Propagation replay: fixture steps run every 10 s from the frame start.
 // propagation.json prints whole-second UTC labels (Go RFC3339 truncation);
 // the exact instants carry the frame start's fractional second, recovered
-// from request.json (fixture provenance: sidecar/fixtures_test.go).
+// from request.json (fixture provenance: sidecar/fixtures_test.go). ECI,
+// sunlit and range pin the Go engine; the raDeg/decDeg columns are the
+// corrected-frame values (they differ from the Go originals by 0.073-0.090
+// deg — the precession accumulated between J2000 and the 2006 epoch).
 
 const startMs = core.parseRfc3339Ms(request.frames[0].startUtc);
 assert.ok(startMs !== null, "request startUtc must parse");
@@ -58,7 +63,7 @@ propagation.steps.forEach((s, i) => {
 
    const jd = core.jdayOfMs(t);
    const obs = core.observerEci(propagation.observer, jd);
-   const rd = core.topocentricRaDec(pv.pos, obs.pos);
+   const rd = core.topocentricRaDec(pv.pos, obs.pos, jd);
    const sep = core.angularSepDeg(rd, { raDeg: s.raDeg, decDeg: s.decDeg });
    assert.ok(sep < 0.05, `step ${i}: RA/Dec off by ${sep} deg (>0.05)`);
 
@@ -72,7 +77,9 @@ propagation.steps.forEach((s, i) => {
 });
 
 // ---------------------------------------------------------------------------
-// Full match replay against the Go CLI response
+// Full match replay. Identity, times, rate, range and elevation still agree
+// with the Go CLI response within the original tolerances; path/score/sep
+// in response.json are re-pinned to the corrected frame model.
 
 const res = SISatMatch.match(request, tleText, "delta");
 assert.strictEqual(res.error, null, "match must succeed: " + JSON.stringify(res.error));
@@ -110,8 +117,13 @@ assert.strictEqual(c.sunlit, true);
 assert.strictEqual(c.matchedTrailIndex, 0, "trail 0 must match");
 assert.ok(Math.abs(c.matchScore - w.matchScore) < 0.05,
    `matchScore ${c.matchScore} vs ${w.matchScore} (>0.05)`);
-assert.ok(typeof c.sepDeg === "number" && c.sepDeg <= 0.2, "sepDeg present and sane");
-assert.ok(typeof c.angleDiffDeg === "number" && c.angleDiffDeg <= 12, "angleDiffDeg present and sane");
+// The trail is the OLD (Go-frame) predicted path; the corrected prediction
+// sits 0.086 deg away from it (6.5 years of precession since J2000), well
+// inside the 0.2 deg cross-track gate.
+assert.ok(typeof c.sepDeg === "number" && Math.abs(c.sepDeg - w.sepDeg) < 0.01,
+   `sepDeg ${c.sepDeg} vs ${w.sepDeg}`);
+assert.ok(typeof c.angleDiffDeg === "number" && Math.abs(c.angleDiffDeg - w.angleDiffDeg) < 0.05,
+   `angleDiffDeg ${c.angleDiffDeg} vs ${w.angleDiffDeg}`);
 
 // ---------------------------------------------------------------------------
 // Negative case: the same trail rotated 90 deg about its midpoint must not
@@ -145,7 +157,7 @@ assert.strictEqual(resRot.frames[0].crossings[0].matchedTrailIndex, null,
    "rotated trail must not match");
 assert.ok(!("matchScore" in resRot.frames[0].crossings[0]), "no matchScore when unmatched");
 
-console.log("satmatch: 7 propagation steps within tolerance; match replay == Go reference; rotated trail rejected");
+console.log("satmatch: 7 propagation steps within tolerance; match replay == reference; rotated trail rejected");
 
 // ---------------------------------------------------------------------------
 // Circular FOV (rotation unknown): a point inside the bounding circle must
@@ -279,6 +291,44 @@ console.log("satmatch: 7 propagation steps within tolerance; match replay == Go 
    assert.strictEqual(crs[0].matchedTrailIndex, null, "wrong orientation rejected");
 
    console.log("satmatch: loose along-track assignment OK");
+}
+
+// ---------------------------------------------------------------------------
+// Strict assigner gate: cross-track / along-track decomposition. A trail
+// shifted 0.5 deg ALONG the predicted track (ordinary TLE timing error)
+// must match; 0.7 deg along-track (beyond alongTolDeg 0.6) and 0.3 deg
+// cross-track (beyond matchMaxSepDeg 0.2) must not.
+
+{
+   const cos30 = Math.cos(30 * Math.PI / 180);
+   const path = { p1: { raDeg: 99.2, decDeg: 30 }, p2: { raDeg: 100.8, decDeg: 30 } };
+   const mkCross = id => [{ noradId: id, name: "STRICT-" + id, sunlit: true,
+                            path, matchedTrailIndex: null }];
+   const shifted = (alongDeg, crossDeg) => ({
+      index: 0,
+      p1: { raDeg: 99.2 + alongDeg / cos30, decDeg: 30 + crossDeg },
+      p2: { raDeg: 100.8 + alongDeg / cos30, decDeg: 30 + crossDeg }
+   });
+   const opt = core.normalizedOptions({});
+   assert.strictEqual(opt.alongTolDeg, 0.6, "alongTolDeg defaults to 0.6");
+
+   let crs = mkCross(1);
+   core.assignTrails(crs, { trails: [shifted(0.5, 0)] }, opt);
+   assert.strictEqual(crs[0].matchedTrailIndex, 0, "strict: 0.5 deg along-track matches");
+
+   crs = mkCross(2);
+   core.assignTrails(crs, { trails: [shifted(0.7, 0)] }, opt);
+   assert.strictEqual(crs[0].matchedTrailIndex, null, "strict: 0.7 deg along-track rejected");
+
+   crs = mkCross(3);
+   core.assignTrails(crs, { trails: [shifted(0, 0.3)] }, opt);
+   assert.strictEqual(crs[0].matchedTrailIndex, null, "strict: 0.3 deg cross-track rejected");
+
+   crs = mkCross(4);
+   core.assignTrails(crs, { trails: [shifted(0, 0.15)] }, opt);
+   assert.strictEqual(crs[0].matchedTrailIndex, 0, "strict: 0.15 deg cross-track matches");
+
+   console.log("satmatch: strict cross/along gate OK");
 }
 
 // Rescue pass: a lone sunlit crossing 0.6 deg SIDEWAYS of a lone trail with

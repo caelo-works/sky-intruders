@@ -78,8 +78,11 @@ var DEFAULT_PARAMS = {
    maxTrails: 10,
    tleGroup: "active",
    // Fresh launches take days to reach the "active" group — without
-   // last-30-days they all show up as unidentified.
-   tleExtraGroups: [ "last-30-days" ],
+   // last-30-days they all show up as unidentified. The full GP catalog
+   // (a mirror-side aggregate) adds rocket bodies, defunct payloads and
+   // debris: the high-orbit population still sunlit deep in the night,
+   // which "active" alone would report as uncataloged.
+   tleExtraGroups: [ "last-30-days", "catalog" ],
    tleMaxAgeHours: 12,
    tleBaseUrl: null,   // override to use a CelesTrak mirror
    matchMaxSepDeg: 0.2,
@@ -123,6 +126,11 @@ function loadParams()
          for ( var k in out )
             if ( saved[ k ] !== undefined )
                out[ k ] = saved[ k ];
+         // tleExtraGroups has no dialog control, so a saved value is a
+         // frozen former default, not a user choice: upgrade the old
+         // default in place so existing installs gain the full catalog.
+         if ( JSON.stringify( out.tleExtraGroups ) === JSON.stringify( [ "last-30-days" ] ) )
+            out.tleExtraGroups = DEFAULT_PARAMS.tleExtraGroups.slice();
       }
    }
    catch ( e ) {}

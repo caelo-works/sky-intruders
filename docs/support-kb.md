@@ -225,8 +225,22 @@ artefacts. There is no user setting for this.
 Naming needs three things: **an observer site**, **fresh orbital elements**, and
 **sky coordinates for the trail** (i.e. a plate solve).
 
-- **With a plate solve**, the match is geometric: the satellite's propagated path
-  must pass within 0.2° of the trail and agree in orientation within 12°.
+- **With a plate solve**, the match is geometric, and the tolerance is
+  direction-aware: the satellite's propagated path must pass within **0.2°
+  *across* the predicted track**, within **0.6° *along* it**, and agree in
+  orientation within 12°. The along-track allowance is deliberately looser:
+  published orbital elements put a satellite slightly early or late on its
+  path far more often than they put it sideways of it. A match that looks
+  "half a degree off" along the trail's own direction can still be a
+  confident, correct identification — do not treat the along-track slack as
+  sloppiness.
+- The predicted positions account for the observatory's true position on the
+  WGS84 ellipsoid and are compared in the same J2000 frame the plate solve
+  uses. If a user on an **old version (0.1.1 or earlier)** reports that
+  *nothing* is ever identified on plate-solved frames even with a correct
+  site and fresh elements, that is a known geometry bug in those versions —
+  the fix is to **update the script**, not to fiddle with settings. Escalate
+  if updating does not resolve it.
 - **Without a plate solve**, the script attempts a **field-orientation fit**: it
   knows the field's centre and scale but not its rotation or mirror parity, so it
   searches for the orientation that makes the most trails agree with predicted
@@ -235,6 +249,14 @@ Naming needs three things: **an observer site**, **fresh orbital elements**, and
   trustworthy. It then reports crossers as predictions only, and names nothing.
 - **Satellites in the Earth's shadow are never matched to a trail.** An eclipsed
   object cannot leave a streak, so the model refuses to explain one with it.
+
+**Identification quality decays with the age of the orbital elements.**
+Elements are a prediction, and the prediction drifts — mostly along the track —
+by roughly half a degree within a few days, more for maneuvering
+constellations. Advise users to **analyze a night within ~48 hours of shooting
+it**. Frames analyzed weeks later still get their trails detected, but names
+become progressively less trustworthy and more trails fall out as uncataloged.
+This is physics, not a bug.
 
 Matches carry a confidence. **Confirmed** matches are shown plainly. **Probable**
 matches are shown with a trailing `?` on the image and `[probable]` in the
@@ -406,6 +428,17 @@ resolve is normal**: that is CelesTrak timing out and the mirror taking over. It
 is not a bug and needs no action.
 
 Elements are cached for 12 hours.
+
+The download includes the **full GP catalog** (~31k objects) on top of the
+active and recent-launch groups. Versions **0.1.1 and earlier** covered roughly
+19k of the ~34k objects on orbit — missing most rocket bodies, defunct payloads
+and debris. Those are exactly the high-altitude objects still sunlit deep in
+the night, so on old versions a bright late-night trail often came out
+"uncatalogued" simply because the object was never in the list. If a user on
+an old version reports many orange (satellite-candidate) trails late at night,
+the first answer is **update the script**; the fuller catalog usually names
+them. The larger download makes the first fetch of a session a little slower —
+normal, no action needed.
 
 If **every** source fails and a cache exists, the script uses the expired cache
 and says so in the console, with the words **`(STALE — network unreachable)`**.

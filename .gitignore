@@ -4,6 +4,8 @@ bin/
 *.log
 .DS_Store
 tests/build/
+tests/data/
+tests/diag/
 testset/
 # Local working files (mockups, run artifacts dropped at the repo root)
 /*.png

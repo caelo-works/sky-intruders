@@ -24,6 +24,39 @@ All notable changes to this project are documented here. The format is based on
   reference now stays open until every projection is done, then is released. The
   non-plate-solved path is byte-identical (validated on the 13-frame reference
   night: same 8 named satellites, same events and report). Fixes #3.
+- Satellite matching frames of reference: SGP4 states are now rotated from
+  TEME of date to J2000 before comparison with plate-solved coordinates, and
+  the observer sits on the WGS84 ellipsoid instead of a sphere with geodetic
+  latitude read as geocentric (23.7 km of site misplacement at mid-latitudes —
+  0.2° to ~2° of topocentric error at LEO ranges). The two errors added up to
+  more than the 0.2° strict gate, so the strict matcher could practically
+  never match; the layer was unreachable until the window-lifetime fix above.
+  Proof on the reference night: a QIANFAN-2 trail's cross-track residual drops
+  from 0.351° to 0.009° (32 arcsec), and two more trails gain names —
+  SPACEMOBILE-009 at 0.04° (its mismodeled track previously passed 0.875° off,
+  outside the search FOV) and SL-14 R/B from the widened catalog. Fixes #4.
+- The coarse candidate cull sampled position and angular rate only at the
+  exposure midpoint, so a fast, low satellite that cut the field in the first
+  seconds of a long exposure was culled tens of degrees away before the fine
+  sampler ever saw it. The window is now sampled at start, middle and end, and
+  the satellite is kept if any sample makes the field reachable.
+
+### Changed
+- The strict trail assigner now gates on a cross/along decomposition of the
+  midpoint offset — within 0.2° *across* the predicted track, 0.6° *along* it,
+  orientation within 12° — the same form the field-orientation path already
+  used. Raw midpoint separation let ordinary along-track TLE timing error eat
+  the whole budget; cross-track is what a TLE actually gets right.
+- Satellite elements now include the full GP catalog group (a mirror-side
+  aggregate, ~31k objects), on top of the active/recent groups. The old merge
+  covered ~19k of ~34k on-orbit objects — missing ~2.3k rocket bodies, ~1.5k
+  defunct payloads and most debris — exactly the high-orbit population still
+  sunlit deep in the night, which is why bright late-night trails came out
+  "uncataloged". Saved settings carrying the former default are upgraded in
+  place (the group list has no dialog control).
+- `tests/fixtures/match/` re-pinned for the corrected geometry; the ECI states,
+  times, ranges and elevations remain pinned to the reference engine, so it
+  stays the certified oracle for propagation.
 
 ## [0.1.1] - 2026-07-11
 
