@@ -918,8 +918,9 @@ function runAnalysis( files, params )
    // TLE cross-match through the sidecar; degrade gracefully without it.
    var matchResponse = null, tleInfo = null;
    if ( observer == null )
-      console.warningln( SKYINTRUDERS_TITLE + ": no observer site (SITELAT/SITELONG headers " +
-                         "or dialog fallback) — satellite identification disabled." );
+      console.warningln( SKYINTRUDERS_TITLE + ": no observer site in the FITS headers " +
+                         "(SITELAT, OBSGEO-B/L, LAT/LONG-OBS) or dialog fallback — " +
+                         "satellite identification disabled." );
    else
       try
       {
@@ -2213,7 +2214,11 @@ var SI_UI = {
       shadowTip: "Crossers the model puts in the Earth's shadow during your " +
                  "exposure — invisible by definition, drawn in grey. Useful to " +
                  "see the full traffic or to spot shadow-model errors.",
-      observer: "Observer site — only if FITS headers lack SITELAT / SITELONG",
+      observer: "Observer site — only if the FITS headers carry none",
+      observerTip: "Used only when no frame carries the site. Headers read, in " +
+                   "order: SITELAT / SITELONG, OBSGEO-B / OBSGEO-L, LAT-OBS / " +
+                   "LONG-OBS — decimal or sexagesimal. Elevation: SITEELEV, " +
+                   "OBSGEO-H, ALT-OBS.",
       lat: "Lat (\u00b0):", lon: "Lon (\u00b0):", alt: "Alt (m):",
       treasureRows: "Max catalog rows / type:",
       treasureRowsTip: "Upper bound on objects fetched per catalog (galaxies, quasars, " +
@@ -2264,7 +2269,11 @@ var SI_UI = {
       shadowTip: "Passages que le mod\u00e8le place dans l'ombre de la Terre pendant la pose — " +
                  "invisibles par d\u00e9finition, trac\u00e9s en gris. Utile pour voir tout le trafic " +
                  "ou d\u00e9busquer une erreur du mod\u00e8le d'ombre.",
-      observer: "Site d'observation — seulement si les headers FITS n'ont pas SITELAT / SITELONG",
+      observer: "Site d'observation — seulement si les headers FITS n'en ont pas",
+      observerTip: "Utilis\u00e9 seulement quand aucune brute ne porte le site. Headers " +
+                   "lus, dans l'ordre : SITELAT / SITELONG, OBSGEO-B / OBSGEO-L, " +
+                   "LAT-OBS / LONG-OBS — d\u00e9cimal ou sexag\u00e9simal. \u00c9l\u00e9vation : " +
+                   "SITEELEV, OBSGEO-H, ALT-OBS.",
       lat: "Lat (\u00b0) :", lon: "Lon (\u00b0) :", alt: "Alt (m) :",
       treasureRows: "Objets max / type de catalogue :",
       treasureRowsTip: "Plafond d'objets r\u00e9cup\u00e9r\u00e9s par catalogue (galaxies, quasars, " +
@@ -2799,7 +2808,7 @@ class SkyIntrudersDialog extends Dialog
       this.observerRow.add( this.altEdit.sizer );
       this.observerRow.addStretch();
       this.observerGroup = new GroupBox( this );
-      this.observerGroup.title = "Observer site — only if FITS headers lack SITELAT / SITELONG";
+      this.observerGroup.title = "Observer site — only if the FITS headers carry none";
       this.observerGroup.sizer = new VerticalSizer;
       this.observerGroup.sizer.margin = 8;
       this.observerGroup.sizer.add( this.observerRow );
@@ -3113,6 +3122,7 @@ class SkyIntrudersDialog extends Dialog
       this.shadowCheck.text = uiT( L, "shadow" );
       this.shadowCheck.toolTip = uiT( L, "shadowTip" );
       this.observerGroup.title = uiT( L, "observer" );
+      this.observerGroup.toolTip = uiT( L, "observerTip" );
       this.latEdit.label.text = uiT( L, "lat" );
       this.lonEdit.label.text = uiT( L, "lon" );
       this.altEdit.label.text = uiT( L, "alt" );

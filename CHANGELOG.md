@@ -49,6 +49,12 @@ All notable changes to this project are documented here. The format is based on
   the satellite is kept if any sample makes the field reachable.
 
 ### Changed
+- The Observer site group no longer names only SITELAT/SITELONG: its label
+  reads "only if the FITS headers carry none" and a new tooltip lists every
+  header pair actually read (SITELAT/SITELONG, OBSGEO-B/L, LAT/LONG-OBS,
+  decimal or sexagesimal, plus the elevation keywords). The no-observer console
+  warning lists them too — all three families were already read; the wording
+  just stopped pretending otherwise.
 - The strict trail assigner now gates on a cross/along decomposition of the
   midpoint offset — within 0.2° *across* the predicted track, 0.6° *along* it,
   orientation within 12° — the same form the field-orientation path already

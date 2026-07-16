@@ -95,7 +95,7 @@ The user will name things in their own language. This is the lookup.
 | Detection threshold (σ): | Seuil de détection (σ) : |
 | Draw predicted crossers on the result image | Tracer les passages prédits sur l'image résultat |
 | Also draw shadow crossers | Tracer aussi les passages dans l'ombre |
-| Observer site — only if FITS headers lack SITELAT / SITELONG | Site d'observation — seulement si les headers FITS n'ont pas SITELAT / SITELONG |
+| Observer site — only if the FITS headers carry none | Site d'observation — seulement si les headers FITS n'en ont pas |
 | Lat (°): / Lon (°): / Alt (m): | Lat (°) : / Lon (°) : / Alt (m) : |
 | Max catalog rows / type: | Objets max / type de catalogue : |
 | Hunt for: | Chercher : |
@@ -148,7 +148,8 @@ why a user with nothing in the list can still get a result.
 - **Also draw shadow crossers** — default **off**. Same, for satellites the model
   puts inside the Earth's shadow — invisible by definition, drawn in grey.
 - **Observer site (Lat / Lon / Alt)** — empty by default. This is only a
-  **fallback**: if the frames carry `SITELAT` / `SITELONG` headers, those win and
+  **fallback**: if the frames carry site headers (`SITELAT`/`SITELONG`,
+  `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), those win and
   these fields are ignored. Altitude is optional and defaults to 0 m.
 
 Without an observer site — from the headers *or* from these fields — **satellite
@@ -496,11 +497,13 @@ The user will copy-paste. These are the messages, word for word.
 
 ### 7.2 Console messages, Night trails
 
-- *"no observer site (SITELAT/SITELONG headers or dialog fallback) — satellite
-  identification disabled."* — **the number one cause of "nothing was
-  identified"**. Trails are detected but cannot be named. Fix: add `SITELAT` /
-  `SITELONG` to the headers, or fill the Observer site fields in the Night trails
-  tab.
+- *"no observer site in the FITS headers (SITELAT, OBSGEO-B/L, LAT/LONG-OBS) or
+  dialog fallback — satellite identification disabled."* — **the number one
+  cause of "nothing was identified"**. Trails are detected but cannot be named.
+  Fix: any of the listed header pairs in the frames, or fill the Observer site
+  fields in the Night trails tab. (Versions 0.1.1 and earlier word this message
+  "no observer site (SITELAT/SITELONG headers or dialog fallback)" — same
+  meaning.)
 - *"NNNN satellites, from cache (STALE — network unreachable)"* — every source
   for the orbital elements failed and expired ones were used. Names and positions
   may be wrong. Restore the internet, delete the `tle` cache folder, re-run.
@@ -631,7 +634,7 @@ files.
 |---|---|---|
 | "I installed it but there is no menu entry" | PixInsight not restarted, or the feature registry is stale | Restart PixInsight, then **Script → Feature Scripts… → Regenerate**. It lives under **Script → CaeloWorks → Sky Intruders**. |
 | "It found no trails at all" | Fewer than 3 frames, or fewer than 3 **per filter** | Difference detection needs at least 3 frames of the same filter. Check the console for *"filter group … has only N frame(s)"*. |
-| "Trails are found but nothing is identified" | **No observer site** — by far the most common | The frames need `SITELAT` / `SITELONG`, or the user fills Lat/Lon in the Night trails tab. Without a site, identification is switched off entirely. |
+| "Trails are found but nothing is identified" | **No observer site** — by far the most common | The frames need site headers (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), or the user fills Lat/Lon in the Night trails tab. Without a site, identification is switched off entirely. |
 | "Still nothing is identified, and my site is filled in" | No plate solve, and the orientation fallback gave up (fewer than 3 matching trails) | Plate-solve at least the **first** frame in the list. |
 | "The satellite names look wrong" | Stale orbital elements, or a wrong longitude sign | Look for **`(STALE — network unreachable)`** in the console; if present, delete the `tle` folder in `.caeloworks/sky-intruders` and re-run. Then check the longitude sign. |
 | "It says 'unidentified satellite' / orange trail" | No catalog match — a fresh launch, a classified object, or debris | **This is a correct, honest answer, not a failure.** The script refuses to guess a name it cannot support. |
