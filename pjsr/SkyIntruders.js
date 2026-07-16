@@ -503,6 +503,32 @@ function analyzeNightSet( files, params )
    }
 
    var refMeta = entries[ 0 ].meta;
+   // A property-based astrometric solution (ImageSolver's spline "solution")
+   // projects through the live PixInsight window: makeSolutionProjector closes
+   // over `window`. Pass A closed the reference window while binning, so
+   // imageToCelestial would return null when the trail endpoints are projected
+   // below — killing strict WCS matching for every real plate solve. Re-open
+   // the reference and read its metadata from a window kept alive until every
+   // projection is done, then close it before returning. Only needed when the
+   // reference actually carries a usable solution (the fov() cache is warmed
+   // below; ghost overlays use a separate synthetic TAN, and mover blobs are
+   // projected in-loop, so nothing past the return still needs this window).
+   var refWin = null;
+   if ( hasUsableWcs( refMeta.wcs.kind ) )
+   {
+      try
+      {
+         var rw = ImageWindow.open( reg.paths[ 0 ] );
+         if ( rw.length > 0 )
+         {
+            refWin = rw[ 0 ];
+            for ( var rk = 1; rk < rw.length; ++rk )
+               rw[ rk ].forceClose();
+            refMeta = SIFrameMeta.read( refWin, files[ 0 ] );
+         }
+      }
+      catch ( e ) { refWin = null; }
+   }
    var refW = entries[ 0 ].binned.srcW, refH = entries[ 0 ].binned.srcH;
    var margin = Math.max( 8, Math.round( 0.03 * Math.max( refW, refH ) ) );
    function nearEdge( x, y )
@@ -739,6 +765,13 @@ function analyzeNightSet( files, params )
    if ( detProfile.photometryMs ) SIProf.add( ".detect: photometry", detProfile.photometryMs );
    if ( detProfile.faintIters ) SIProf.add( ".detect: faint iterations (count)", detProfile.faintIters );
 
+   // Warm the fov() cache while the reference window is still live (fov is the
+   // only refMeta.wcs use left after this return), then release the window.
+   if ( refWin != null )
+   {
+      try { refMeta.wcs.fov(); } catch ( e ) {}
+      try { refWin.forceClose(); } catch ( e ) {}
+   }
    return { frames: frames, refMeta: refMeta, refW: refW, refH: refH,
             regPaths: regPaths, regDir: regDir, bestIndex: bestIndex };
 }

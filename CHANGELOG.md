@@ -15,6 +15,16 @@ All notable changes to this project are documented here. The format is based on
   limit without subheadings, and each one stands on its own). Keeping it 100% in
   sync with the code is a step of the release ritual (`docs/RELEASING.md`).
 
+### Fixed
+- Night trails: a plate-solved reference frame now actually drives strict
+  per-trail WCS matching. An ImageSolver solution projects through the live
+  image window, but the pipeline closed the reference window before it projected
+  the trail endpoints, so every real plate solve produced null sky coordinates
+  and identification silently fell back to the field-orientation fit. The
+  reference now stays open until every projection is done, then is released. The
+  non-plate-solved path is byte-identical (validated on the 13-frame reference
+  night: same 8 named satellites, same events and report). Fixes #3.
+
 ## [0.1.1] - 2026-07-11
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-07-11:
