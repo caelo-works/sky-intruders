@@ -627,23 +627,29 @@ reported as below the noise even though it is plainly visible.
 
 Rare, but real. Confirm it rather than arguing with the user, and escalate.
 
-### 8.6 Asteroid candidates are unreliable on plate-solved sets, and a crowd of them is suppressed
+### 8.6 Asteroid candidates are candidates, not confirmed detections
 
-On a plate-solved night set, the slow-mover detector can mistake dithered
-sensor artifacts (hot pixels) for asteroid candidates. As a stopgap, when more
-than 5 candidates appear on one field the whole list is suppressed and the
-console says:
+The slow-mover detector is hardened against sensor artifacts: a candidate must
+hold at least 4 points (3 on a 3-frame set), follow a straight constant-rate
+line within tight residuals, move well beyond centroid noise, never chain
+across gaps longer than 2 hours — and a group of 3+ "candidates" all moving
+with one shared velocity is recognized as a registration-drift artifact family
+and dropped (real asteroids never march in step). On earlier builds (0.2.0 and
+older) this hardening did not exist and plate-solved sets could print dozens
+of false *asteroid candidate* lines: tell those users to update.
 
-> *"N slow-mover candidates on one field look like a sensor-artifact storm,
-> not asteroids — list suppressed."*
+Two behaviours remain by design:
 
-That message is expected behaviour, not a failure — a real night holds zero to
-a couple of slow movers, never dozens. The cost of the stopgap: on such a
-night, a *real* slow mover would be suppressed along with the noise. A proper
-hardening is planned; treat any user report of a **confirmed** real asteroid
-being suppressed as valuable and escalate it. Up to 5 candidates are still
-reported normally, and the *asteroid candidate* lines that do appear should be
-treated as candidates to verify, not confirmed detections.
+- **Storm breaker.** If more than 5 candidates still appear on one field, the
+  whole list is suppressed and the console says: *"N slow-mover candidates on
+  one field look like a sensor-artifact storm, not asteroids — list
+  suppressed."* Expected behaviour, not a failure — a real night holds zero to
+  a couple of slow movers, never dozens. If a user reports a **confirmed**
+  real asteroid suppressed this way, that report is valuable: escalate it.
+- The *asteroid candidate* lines that do appear are **candidates to verify**
+  (against SkyBoT or a minor-planet checker), not confirmed detections, and
+  a mover slower than ~0.1 arcsec/min or visible in fewer than 3 frames is
+  below the detector's floor by construction.
 
 ### 8.7 The update repository is unsigned
 

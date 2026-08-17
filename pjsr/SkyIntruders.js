@@ -1342,12 +1342,12 @@ function runAnalysis( files, params )
       if ( blobsByFrame.length >= 3 )
       {
          console.writeln( "Searching for slow movers across " + blobsByFrame.length + " solved frame(s)…" );
-         movers = SIMeteors.findAsteroidCandidates( blobsByFrame, 3, null );
-         // Storm breaker: a real night holds zero to a couple of slow movers.
-         // Dithered sensor artifacts chain into dozens of fake tracks (the
-         // stationarity test works in sky coordinates, hot pixels sit still
-         // in sensor coordinates) — until that is hardened, an implausible
-         // crowd is suppressed and said out loud, not reported as asteroids.
+         // minFrames null = auto: 4 points with >= 4 usable frames, else 3.
+         movers = SIMeteors.findAsteroidCandidates( blobsByFrame, null, null );
+         // Storm breaker, kept as a backstop behind the hardened track gates
+         // in SIMeteors.findMovers: a real night holds zero to a couple of
+         // slow movers, so an implausible crowd is suppressed and said out
+         // loud rather than reported as asteroids.
          var MAX_PLAUSIBLE_MOVERS = 5;
          if ( movers.length > MAX_PLAUSIBLE_MOVERS )
          {

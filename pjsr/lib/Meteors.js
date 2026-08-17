@@ -164,29 +164,101 @@ var SIMeteors = ( function()
    }
 
    /*
+    * Constant-velocity least-squares fit of a track in the tangent plane of
+    * its first point (arcsec / minutes since first point). Returns
+    * { vxArcsecPerMin, vyArcsecPerMin, rateArcsecPerMin, rmsArcsec,
+    *   totalArcsec, monotonic } or null when degenerate. Pure.
+    */
+   function fitConstantVelocity( points )
+   {
+      var n = points.length;
+      if ( n < 2 )
+         return null;
+      var cd = Math.cos( points[ 0 ].decDeg * Math.PI / 180 );
+      var xs = [], ys = [], ts = [];
+      for ( var i = 0; i < n; ++i )
+      {
+         var dra = points[ i ].raDeg - points[ 0 ].raDeg;
+         if ( dra > 180 ) dra -= 360;
+         if ( dra < -180 ) dra += 360;
+         xs.push( dra * cd * 3600 );
+         ys.push( ( points[ i ].decDeg - points[ 0 ].decDeg ) * 3600 );
+         ts.push( ( points[ i ].t - points[ 0 ].t ) / 60000 );
+      }
+      var st = 0, stt = 0, sx = 0, sy = 0, stx = 0, sty = 0;
+      for ( var k = 0; k < n; ++k )
+      {
+         st += ts[ k ]; stt += ts[ k ] * ts[ k ];
+         sx += xs[ k ]; sy += ys[ k ];
+         stx += ts[ k ] * xs[ k ]; sty += ts[ k ] * ys[ k ];
+      }
+      var det = n * stt - st * st;
+      if ( det == 0 )
+         return null;
+      var vx = ( n * stx - st * sx ) / det;
+      var vy = ( n * sty - st * sy ) / det;
+      var x0 = ( sx - vx * st ) / n;
+      var y0 = ( sy - vy * st ) / n;
+      var ss = 0, monotonic = true, lastProj = null;
+      for ( var m = 0; m < n; ++m )
+      {
+         var rx = xs[ m ] - ( x0 + vx * ts[ m ] );
+         var ry = ys[ m ] - ( y0 + vy * ts[ m ] );
+         ss += rx * rx + ry * ry;
+         var proj = ( xs[ m ] - x0 ) * vx + ( ys[ m ] - y0 ) * vy;
+         if ( lastProj !== null && proj <= lastProj )
+            monotonic = false;
+         lastProj = proj;
+      }
+      return { vxArcsecPerMin: vx, vyArcsecPerMin: vy,
+               rateArcsecPerMin: Math.sqrt( vx * vx + vy * vy ),
+               rmsArcsec: Math.sqrt( ss / n ),
+               totalArcsec: Math.sqrt( ( xs[ n - 1 ] - xs[ 0 ] ) * ( xs[ n - 1 ] - xs[ 0 ] ) +
+                                       ( ys[ n - 1 ] - ys[ 0 ] ) * ( ys[ n - 1 ] - ys[ 0 ] ) ),
+               monotonic: monotonic };
+   }
+
+   /*
     * Asteroid candidates: compact sources drifting coherently across frames.
     * blobsByFrame: [ { id, dateObs (Date), blobs: [ {raDeg,decDeg,fluxAdu} ] } ]
     * (sky coordinates required — the caller skips frames without WCS).
-    * A candidate must appear in >= minFrames frames, move monotonically at a
-    * consistent rate in [0.1, 120] arcsec/min, along a consistent direction.
+    *
+    * Hardened against sensor-artifact storms (dithered hot pixels, faint
+    * sources flickering around the detection cap chain into fake tracks at
+    * noise-level pseudo-rates): a candidate must
+    *   - chain only across gaps <= 120 min (a multi-night set is tracked
+    *     per session, chance chains across day gaps are pure combinatorics);
+    *   - hold >= 4 points when the set allows it (minFrames null = auto:
+    *     4 with >= 4 usable frames, else 3);
+    *   - fit a constant-velocity line at rms <= 2.5 arcsec, monotonically,
+    *     with total motion >= 10 arcsec (beyond centroid noise) and a fitted
+    *     rate in [0.1, 120] arcsec/min;
+    * and a population of >= 3 candidates sharing one velocity vector is a
+    * registration-drift artifact family (sensor-fixed points all move with
+    * the frame-to-frame alignment offset), not asteroids: all dropped.
+    * Validated against the 13-frame reference night (126-candidate storm ->
+    * 0) with synthetic movers at 0.3-8 arcsec/min recovered intact.
     */
    function findMovers( blobsByFrame, minFrames )
    {
-      if ( minFrames == null )
-         minFrames = 3;
+      var MAX_GAP_MIN = 120;      // never chain across session/night gaps
+      var FIT_RMS_MAX = 2.5;      // arcsec: real movers are linear, chains ragged
+      var MIN_TOTAL_ARCSEC = 10;  // motion must clearly exceed centroid noise
+
       var frames = blobsByFrame.filter( function( f ) { return f.dateObs != null; } )
                                .sort( function( a, b ) { return a.dateObs - b.dateObs; } );
-      if ( frames.length < minFrames )
+      if ( minFrames == null )
+         minFrames = ( frames.length >= 4 ) ? 4 : 3;
+      if ( frames.length < minFrames || frames.length < 3 )
          return [];
 
-      var TOL_ARCSEC = 20;   // position tolerance when extrapolating
       var candidates = [];
 
-      // Seed with pairs from the first two usable frames, then extend.
+      // Seed with pairs from consecutive usable frames, then extend.
       for ( var i = 0; i + 1 < frames.length; ++i )
       {
          var dtMin = ( frames[ i + 1 ].dateObs - frames[ i ].dateObs ) / 60000;
-         if ( dtMin <= 0 )
+         if ( dtMin <= 0 || dtMin > MAX_GAP_MIN )
             continue;
          for ( var a = 0; a < frames[ i ].blobs.length; ++a )
             for ( var b = 0; b < frames[ i + 1 ].blobs.length; ++b )
@@ -196,20 +268,24 @@ var SIMeteors = ( function()
                if ( rate < 0.1 || rate > 120 )
                   continue;
                var track = { points: [ { frame: frames[ i ].id, t: frames[ i ].dateObs, raDeg: A.raDeg, decDeg: A.decDeg },
-                                       { frame: frames[ i + 1 ].id, t: frames[ i + 1 ].dateObs, raDeg: B.raDeg, decDeg: B.decDeg } ],
-                             rateArcsecPerMin: rate };
+                                       { frame: frames[ i + 1 ].id, t: frames[ i + 1 ].dateObs, raDeg: B.raDeg, decDeg: B.decDeg } ] };
                // Extend through subsequent frames by linear extrapolation.
+               // The tolerance scales with the time-gap ratio (prediction
+               // noise grows with extrapolation length) but stays tight:
+               // the wide fixed 20 arcsec of earlier builds is what let
+               // dither-scale chance chains through.
                for ( var j = i + 2; j < frames.length; ++j )
                {
                   var last = track.points[ track.points.length - 1 ];
                   var prev = track.points[ track.points.length - 2 ];
                   var dt1 = ( frames[ j ].dateObs - last.t ) / 60000;
                   var dt0 = ( last.t - prev.t ) / 60000;
-                  if ( dt1 <= 0 || dt0 <= 0 )
+                  if ( dt1 <= 0 || dt1 > MAX_GAP_MIN || dt0 <= 0 )
                      continue;
                   var predRa = last.raDeg + ( last.raDeg - prev.raDeg ) * dt1 / dt0;
                   var predDec = last.decDeg + ( last.decDeg - prev.decDeg ) * dt1 / dt0;
-                  var best = null, bestSep = TOL_ARCSEC;
+                  var tolJ = Math.max( 6, Math.min( 20, 5 * dt1 / dt0 ) );
+                  var best = null, bestSep = tolJ;
                   for ( var c = 0; c < frames[ j ].blobs.length; ++c )
                   {
                      var s = sepDeg( predRa, predDec, frames[ j ].blobs[ c ].raDeg, frames[ j ].blobs[ c ].decDeg ) * 3600;
@@ -223,24 +299,82 @@ var SIMeteors = ( function()
                      track.points.push( { frame: frames[ j ].id, t: frames[ j ].dateObs,
                                           raDeg: best.raDeg, decDeg: best.decDeg } );
                }
-               if ( track.points.length >= minFrames )
-                  candidates.push( track );
+               if ( track.points.length < minFrames )
+                  continue;
+               var fit = fitConstantVelocity( track.points );
+               if ( fit == null || !fit.monotonic ||
+                    fit.rmsArcsec > FIT_RMS_MAX ||
+                    fit.totalArcsec < MIN_TOTAL_ARCSEC ||
+                    fit.rateArcsecPerMin < 0.1 || fit.rateArcsecPerMin > 120 )
+                  continue;
+               track.rateArcsecPerMin = fit.rateArcsecPerMin;
+               track.fit = fit;
+               candidates.push( track );
             }
       }
 
-      // Deduplicate tracks sharing their first point (keep the longest).
+      // Deduplicate: a track sharing 2+ points with a longer accepted one is
+      // the same object re-seeded from a later frame, not a second mover.
       candidates.sort( function( a, b ) { return b.points.length - a.points.length; } );
-      var seen = {}, out = [];
+      function pointKeys( t )
+      {
+         var ks = {};
+         for ( var p = 0; p < t.points.length; ++p )
+            ks[ Number( t.points[ p ].t ) + "@" + t.points[ p ].raDeg.toFixed( 5 ) +
+                "," + t.points[ p ].decDeg.toFixed( 5 ) ] = true;
+         return ks;
+      }
+      var out = [], outKeys = [];
       for ( var k = 0; k < candidates.length; ++k )
       {
-         var key = candidates[ k ].points[ 0 ].frame + "@" +
-                   candidates[ k ].points[ 0 ].raDeg.toFixed( 4 ) + "," +
-                   candidates[ k ].points[ 0 ].decDeg.toFixed( 4 );
-         if ( !seen[ key ] )
+         var ks = pointKeys( candidates[ k ] );
+         var dup = false;
+         for ( var o = 0; o < out.length && !dup; ++o )
          {
-            seen[ key ] = true;
-            out.push( candidates[ k ] );
+            var shared = 0;
+            for ( var kk in ks )
+               if ( outKeys[ o ][ kk ] && ++shared >= 2 )
+               {
+                  dup = true;
+                  break;
+               }
          }
+         if ( !dup )
+         {
+            out.push( candidates[ k ] );
+            outKeys.push( ks );
+         }
+      }
+
+      // Shared-velocity veto: sensor-fixed artifacts under a registration
+      // drift all move with the SAME frame-to-frame offset, so they produce
+      // parallel equal-rate tracks. Three or more tracks sharing a velocity
+      // vector are an artifact family; real asteroids never march in step.
+      if ( out.length >= 3 )
+      {
+         var drop = {};
+         for ( var u = 0; u < out.length; ++u )
+         {
+            var fu = out[ u ].fit, same = [ u ];
+            for ( var v = 0; v < out.length; ++v )
+            {
+               if ( v == u )
+                  continue;
+               var fv = out[ v ].fit;
+               var dv = Math.sqrt( ( fu.vxArcsecPerMin - fv.vxArcsecPerMin ) * ( fu.vxArcsecPerMin - fv.vxArcsecPerMin ) +
+                                   ( fu.vyArcsecPerMin - fv.vyArcsecPerMin ) * ( fu.vyArcsecPerMin - fv.vyArcsecPerMin ) );
+               if ( dv < Math.max( 0.5, 0.25 * fu.rateArcsecPerMin ) )
+                  same.push( v );
+            }
+            if ( same.length >= 3 )
+               for ( var w = 0; w < same.length; ++w )
+                  drop[ same[ w ] ] = true;
+         }
+         var kept = [];
+         for ( var z = 0; z < out.length; ++z )
+            if ( !drop[ z ] )
+               kept.push( out[ z ] );
+         out = kept;
       }
       return out;
    }
@@ -377,6 +511,7 @@ var SIMeteors = ( function()
       activeShowers: activeShowers,
       classifyTrail: classifyTrail,
       findMovers: findMovers,
+      fitConstantVelocity: fitConstantVelocity,
       filterStationary: filterStationary,
       findAsteroidCandidates: findAsteroidCandidates,
       sepDeg: sepDeg,

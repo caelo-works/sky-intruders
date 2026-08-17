@@ -1,6 +1,8 @@
 // Meteor classification + asteroid mover heuristics (pure logic).
 
 var assert = require( "assert" );
+var fs = require( "fs" );
+var path = require( "path" );
 var M = require( "./build/module.js" ).SIMeteors;
 var R = require( "./build/module.js" ).SIReport;
 
@@ -79,6 +81,136 @@ var R = require( "./build/module.js" ).SIReport;
    assert.strictEqual( movers[ 0 ].points.length, 3, "tracked across all three frames" );
    assert( movers[ 0 ].rateArcsecPerMin > 0.1 && movers[ 0 ].rateArcsecPerMin < 120,
            "plausible asteroid rate" );
+} )();
+
+// --- constant-velocity fit -------------------------------------------------
+
+( function testFitConstantVelocity()
+{
+   var t0 = Date.UTC( 2026, 6, 3, 2, 0, 0 );
+   function pt( min, xArcsec, yArcsec )
+   {
+      var cd = Math.cos( 30 * Math.PI / 180 );
+      return { t: new Date( t0 + min * 60000 ),
+               raDeg: 200 + xArcsec / 3600 / cd, decDeg: 30 + yArcsec / 3600 };
+   }
+   // Perfect 2 arcsec/min along +x.
+   var fit = M.fitConstantVelocity( [ pt( 0, 0, 0 ), pt( 5, 10, 0 ), pt( 10, 20, 0 ), pt( 15, 30, 0 ) ] );
+   assert( Math.abs( fit.rateArcsecPerMin - 2 ) < 0.01, "rate recovered" );
+   assert( fit.rmsArcsec < 0.01, "perfect line has ~zero rms" );
+   assert( fit.monotonic, "steady progression is monotonic" );
+   assert( Math.abs( fit.totalArcsec - 30 ) < 0.1, "total motion measured" );
+
+   // Back-and-forth jitter is not monotonic.
+   var jit = M.fitConstantVelocity( [ pt( 0, 0, 0 ), pt( 5, 6, 0 ), pt( 10, 2, 0 ), pt( 15, 8, 0 ) ] );
+   assert( !jit.monotonic, "jitter around a point is not monotonic" );
+} )();
+
+// --- hardened mover gates (issue #5) ---------------------------------------
+
+// Deterministic LCG so the noisy scenarios are reproducible.
+function makeRng( seed )
+{
+   var s = seed >>> 0;
+   return function()
+   {
+      s = ( 1664525 * s + 1013904223 ) >>> 0;
+      return s / 4294967296;
+   };
+}
+function gauss( rng )
+{
+   return Math.sqrt( -2 * Math.log( 1 - rng() ) ) * Math.cos( 2 * Math.PI * rng() );
+}
+
+( function testRealStormPool()
+{
+   // The exact pool that produced the 126-candidate artifact storm on the
+   // 13-frame plate-solved reference set. Hardened detector: zero candidates.
+   var raw = JSON.parse( fs.readFileSync(
+      path.join( __dirname, "fixtures", "movers", "night13-pool.json" ), "utf8" ) );
+   function poolFrames()
+   {
+      return raw.frames.map( function( f )
+      {
+         return { id: f.id, dateObs: new Date( f.dateObs ),
+                  blobs: f.blobs.map( function( b )
+                  {
+                     return { raDeg: b[ 0 ], decDeg: b[ 1 ], fluxAdu: b[ 2 ] };
+                  } ) };
+      } );
+   }
+   var storm = M.findAsteroidCandidates( poolFrames(), null, null );
+   assert.strictEqual( storm.length, 0, "real artifact storm fully rejected, got " + storm.length );
+
+   // A synthetic mover injected into the SAME pool (last 7 frames form one
+   // session with gaps <= 91 min) must still come out — exactly once.
+   var rng = makeRng( 42 );
+   var rates = [ 0.5, 1.0, 3.0, 8.0 ];
+   for ( var r = 0; r < rates.length; ++r )
+   {
+      var fr = poolFrames();
+      var seg = fr.slice( 6 );
+      var t0 = seg[ 0 ].dateObs;
+      var ra0 = 312.9, dec0 = 31.6, pa = 30 + 70 * r;
+      var cd = Math.cos( dec0 * Math.PI / 180 );
+      for ( var s = 0; s < seg.length; ++s )
+      {
+         var dt = ( seg[ s ].dateObs - t0 ) / 60000;
+         var dx = rates[ r ] * dt * Math.sin( pa * Math.PI / 180 ) + gauss( rng );
+         var dy = rates[ r ] * dt * Math.cos( pa * Math.PI / 180 ) + gauss( rng );
+         seg[ s ].blobs.push( { raDeg: ra0 + dx / 3600 / cd, decDeg: dec0 + dy / 3600, fluxAdu: 500 } );
+      }
+      var got = M.findAsteroidCandidates( fr, null, null );
+      assert.strictEqual( got.length, 1, "injected " + rates[ r ] + " arcsec/min mover found once, got " + got.length );
+      assert( got[ 0 ].points.length >= 4, "mover tracked over 4+ frames" );
+      assert( Math.abs( got[ 0 ].rateArcsecPerMin - rates[ r ] ) < 0.2 * rates[ r ] + 0.2,
+              "rate recovered: " + got[ 0 ].rateArcsecPerMin + " for " + rates[ r ] );
+   }
+} )();
+
+( function testDriftArtifactFamily()
+{
+   // Registration drift makes sensor-fixed hot pixels move LINEARLY at one
+   // shared velocity — track statistics alone cannot reject them. The
+   // shared-velocity veto must drop the family and keep a lone real mover.
+   var rng = makeRng( 7 );
+   var t0 = Date.UTC( 2026, 6, 3, 1, 0, 0 );
+   function buildFrames( withMover )
+   {
+      var frames = [];
+      for ( var k = 0; k < 6; ++k )
+      {
+         var blobs = [];
+         // 8 sensor-fixed artifacts drifting +6/+2 arcsec per 25-min frame.
+         for ( var a = 0; a < 8; ++a )
+         {
+            var ra0 = 312.5 + a * 0.03, dec0 = 31.3 + ( a % 3 ) * 0.05;
+            var cd0 = Math.cos( dec0 * Math.PI / 180 );
+            blobs.push( { raDeg: ra0 + ( 6 * k + 0.6 * gauss( rng ) ) / 3600 / cd0,
+                          decDeg: dec0 + ( 2 * k + 0.6 * gauss( rng ) ) / 3600, fluxAdu: 900 } );
+         }
+         // Random noise detections.
+         for ( var n = 0; n < 40; ++n )
+            blobs.push( { raDeg: 312.3 + rng() * 0.9, decDeg: 31.1 + rng() * 0.7, fluxAdu: 300 } );
+         if ( withMover )
+         {
+            var cdm = Math.cos( 31.5 * Math.PI / 180 );
+            blobs.push( { raDeg: 312.7 - ( 1.4 * 25 * k + 0.8 * gauss( rng ) ) / 3600 / cdm,
+                          decDeg: 31.5 + ( 0.9 * 25 * k + 0.8 * gauss( rng ) ) / 3600, fluxAdu: 500 } );
+         }
+         frames.push( { id: "d" + k, dateObs: new Date( t0 + 25 * k * 60000 ), blobs: blobs } );
+      }
+      return frames;
+   }
+   var storm = M.findAsteroidCandidates( buildFrames( false ), null, null );
+   assert.strictEqual( storm.length, 0, "drifting artifact family vetoed, got " + storm.length );
+
+   var withReal = M.findAsteroidCandidates( buildFrames( true ), null, null );
+   assert.strictEqual( withReal.length, 1, "real mover survives among the drift family, got " + withReal.length );
+   var expect = Math.sqrt( 1.4 * 1.4 + 0.9 * 0.9 );
+   assert( Math.abs( withReal[ 0 ].rateArcsecPerMin - expect ) < 0.3,
+           "mover rate recovered: " + withReal[ 0 ].rateArcsecPerMin );
 } )();
 
 // --- report renders the new asteroid class --------------------------------

@@ -8,6 +8,18 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- The slow-mover (asteroid-candidate) detector no longer floods plate-solved
+  night sets with sensor-artifact tracks (#5). A candidate now needs 4 points
+  (3 only on a 3-frame set), a constant-velocity fit within 2.5″ rms, strictly
+  monotonic motion totalling at least 10″, chaining only across gaps of up to
+  2 hours; duplicate sub-tracks of one object are merged, and a family of 3+
+  tracks sharing one velocity vector — sensor-fixed points carried by a
+  registration drift — is dropped as a whole. The >5-candidate storm breaker
+  stays as a backstop. Validated on the 13-frame reference set (126-candidate
+  storm → 0, kept as a committed regression fixture) with synthetic movers at
+  0.3–8 arcsec/min recovered exactly once each, including one seeded among a
+  drifting artifact family.
+
 - Treasure Hunt now distinguishes a catalog outage from an empty field (#1).
   The query layer returns a failure — instead of an empty result — when a
   catalog is unreachable, errors out, or answers with something that is not
