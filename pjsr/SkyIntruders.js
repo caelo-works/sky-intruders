@@ -1619,7 +1619,7 @@ function loadChartContext( meta, width, height, maxStars, maxDsos, cone )
       try
       {
          var hd = projectInto( SICatalogs.queryBrightStars(
-            cone.raDeg, cone.decDeg, cone.radiusDeg, { max: 300 } ) );
+            cone.raDeg, cone.decDeg, cone.radiusDeg, { max: 300 } ) || [] );
          for ( var hi = 0; hi < hd.length; ++hi )
          {
             if ( hd[ hi ].mag === null )
@@ -1864,6 +1864,7 @@ function runTreasureHunt( window, filePath, params, onProgress )
          if ( rows === null || rows === undefined )
          {
             queryFailures.push( kind );
+            console.warningln( "   " + label + ": catalog did not answer — flagged in the report" );
             return [];
          }
          progress( "   " + label + ": " + rows.length + " row(s)" );

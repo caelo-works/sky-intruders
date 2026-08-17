@@ -467,13 +467,33 @@ Everything lives in the user's home folder, under **`.caeloworks/sky-intruders`*
   permanently.**
 - **`tle/`** — the satellite element cache. **Deleting this folder is the standard
   fix for stale or wrong satellite names.**
-- **`treasure-cache/`** — the deep-catalog cache, kept for **30 days**. **Deleting
-  this folder is the standard fix for "Treasure Hunt still finds nothing after I
-  fixed my internet".**
+- **`treasure-cache/`** — the deep-catalog cache, kept for **30 days**. Only
+  genuine catalog answers are stored (a failed query is never cached), so
+  deleting it is rarely needed; it remains the way to force fresh queries on a
+  field the user re-runs often.
 
 > **Never tell a user to delete the whole `.caeloworks/sky-intruders` folder.** It
 > takes their settings *and their personal records* with it. Always name the
 > subfolder: `tle` or `treasure-cache`.
+
+### 6.4 When a deep catalog does not answer
+
+Treasure Hunt separates "the catalog said this field is empty" from "the
+catalog did not answer". On any failure — the host unreachable, an HTTP error,
+or a 200 response that is not catalog data (an HTML maintenance page, a proxy
+or captive-portal page; SkyBoT reporting its own service error) — the run:
+
+- **continues** with the other catalogs; the failed one counts 0 objects;
+- prints two console lines: *"Treasure/Catalogs: … query failed: …"* and
+  *"…: catalog did not answer — flagged in the report"*;
+- shows the **"some catalogs did not respond" banner** in the report, naming
+  the affected catalog(s);
+- **caches nothing** for that query, so the next run asks again.
+
+So a report **without** the banner genuinely means every catalog answered, and
+its zeros are real zeros. A report **with** the banner must never be read as
+"the field is empty" for the named catalogs — have the user re-run once their
+network (or the service) is back.
 
 ---
 
@@ -527,49 +547,36 @@ The user will copy-paste. These are the messages, word for word.
 ### 7.3 Console messages, Treasure Hunt
 
 - *"Treasure/Catalogs: galaxy query failed: …"* (also `quasar`, `pne`,
-  `asteroid`) — **a catalog was unreachable.** This is important: the report will
-  still cheerfully say `0 row(s)`. See the Known bugs section — an outage looks
-  exactly like an empty field.
+  `asteroid`) — **a catalog was unreachable.** The run continues, the count for
+  that catalog reads 0, and the report shows the "some catalogs did not respond"
+  banner naming it.
+- *"Treasure/Catalogs: galaxy query failed: response is not catalog output
+  (outage page?)"* — the server answered, but with something other than catalog
+  data (an HTML maintenance page, a proxy or captive-portal page). Treated as an
+  outage: banner in the report, nothing cached.
 - *"Treasure/Catalogs: asteroid query failed after retries"* — the asteroid
-  service did not answer after three tries.
-- *"galaxies: 0 row(s)"* — **ambiguous by itself.** It means either "nothing is
-  there" or "the catalog did not answer". Always ask for the lines above it.
+  service did not answer usefully after three tries (unreachable, or it
+  reported its own service error). Banner in the report.
+- *"galaxies: catalog did not answer — flagged in the report"* (also the other
+  catalog names) — the run-level confirmation that the failure above was
+  recorded and will appear as the report banner.
+- *"galaxies: 0 row(s)"* — **the field is genuinely empty for that catalog.**
+  This line is only printed when the catalog actually answered; an outage
+  prints the "did not answer" warning instead.
 
 ---
 
 ## 8. Known bugs and limitations — read before answering
 
-### 8.1 A catalog outage looks exactly like an empty field
+> Earlier builds (up to 0.2.0) had two Treasure Hunt bugs here: a catalog
+> outage read exactly like an empty field (the report banner could never
+> fire), and that false empty was then cached for 30 days. Both are fixed —
+> outages now show the report banner and are never cached (see 6.4). If the
+> user's version is 0.2.0 or older, those symptoms are expected: the fix is to
+> **update the script**, then delete the `treasure-cache` folder inside
+> `.caeloworks/sky-intruders` once to clear any cached false empties.
 
-**This is the most dangerous gap in the product for support.** When a deep-sky
-catalog (VizieR or SkyBoT) is unreachable, the query returns an *empty result*
-rather than an error. Consequences:
-
-- The run completes normally and reports `galaxies: 0 row(s)`.
-- The report's "some catalogs did not respond" banner **does not appear**.
-- The **only** evidence is a console warning line: *"Treasure/Catalogs: … query
-  failed: …"*.
-
-So *"Treasure Hunt found nothing"* and *"Treasure Hunt could not reach the
-catalogs"* are indistinguishable to the user. **Always ask for the full console
-text** before concluding that a field is empty. Confirm the bug if you see the
-warning; do not tell the user their field is empty. Escalate.
-
-### 8.2 An empty result stays cached for 30 days
-
-When a deep-sky catalog is unreachable, Treasure Hunt reports zero objects rather
-than an error — and that empty result is then **cached for 30 days**. A user who
-hits an outage, fixes their network, and re-runs will get **the same empty result
-straight from the cache**, with nothing in the console at all.
-
-This is the single most likely cause of *"I fixed my internet and it still finds
-nothing."*
-
-**Workaround:** have them delete the `treasure-cache` folder inside
-`.caeloworks/sky-intruders` in their home folder, then re-run. Changing the "Max
-catalog rows / type" value also forces a fresh query. Escalate the bug itself.
-
-### 8.3 The detection threshold slider does nothing on a normal night run
+### 8.1 The detection threshold slider does nothing on a normal night run
 
 The **Detection threshold (σ)** slider in the Night trails tab does **not** affect
 a normal run. Detection happens on a registered difference image, which uses its
@@ -580,7 +587,7 @@ path used when there are fewer than three frames.
 nothing, and they will lose confidence in the advice. If they need more
 sensitivity, there is currently no setting for it — escalate.
 
-### 8.4 Longitude sign is taken at face value
+### 8.2 Longitude sign is taken at face value
 
 `SITELONG` is read exactly as written — there is no East/West convention
 correction. A file that writes West longitudes as positive silently places the
@@ -591,7 +598,7 @@ then fails**, with no error message.
 named." Have the user check the sign of their longitude. Escalate if it is
 correct.
 
-### 8.5 Trains and aircraft can be confused, and parallel satellites merged
+### 8.3 Trains and aircraft can be confused, and parallel satellites merged
 
 The distinction between a **satellite train** and an **airplane** rests on a
 single measurement: whether the brightness flickers along the trail. A steadily
@@ -602,7 +609,7 @@ Separately, **three genuinely unrelated but roughly parallel satellite trails ca
 be merged into one "train"** — and a bundle is never given satellite names, so
 those three lose their identities. Known limitation, no workaround.
 
-### 8.6 The star chart shows fewer objects than the summary counts
+### 8.4 The star chart shows fewer objects than the summary counts
 
 Not a bug. Treasure Hunt labels every *captured* object, but only the 6 most
 notable *below-noise* ones, and past 40 labelled items the remainder get a bare
@@ -611,7 +618,7 @@ marker with no label. The HTML report illustrates the top 8 and lists up to 60.
 The counts in the summary are complete and correct. The drawing is curated so the
 chart stays readable. Reassure the user; nothing was lost.
 
-### 8.7 A saturated core can be reported as "below the noise"
+### 8.5 A saturated core can be reported as "below the noise"
 
 If the ring the script measures around an object is flat or clipped — which
 happens on very bright, blown-out targets — it refuses to claim a detection
@@ -620,7 +627,7 @@ reported as below the noise even though it is plainly visible.
 
 Rare, but real. Confirm it rather than arguing with the user, and escalate.
 
-### 8.8 Asteroid candidates are unreliable on plate-solved sets, and a crowd of them is suppressed
+### 8.6 Asteroid candidates are unreliable on plate-solved sets, and a crowd of them is suppressed
 
 On a plate-solved night set, the slow-mover detector can mistake dithered
 sensor artifacts (hot pixels) for asteroid candidates. As a stopgap, when more
@@ -638,7 +645,7 @@ being suppressed as valuable and escalate it. Up to 5 candidates are still
 reported normally, and the *asteroid candidate* lines that do appear should be
 treated as candidates to verify, not confirmed detections.
 
-### 8.9 The update repository is unsigned
+### 8.7 The update repository is unsigned
 
 PixInsight warns that the CaeloWorks repository is not signed. Expected; signing
 is underway. It is safe to accept, and it says nothing about the integrity of the
@@ -657,7 +664,7 @@ files.
 | "The satellite names look wrong" | Stale orbital elements, or a wrong longitude sign | Look for **`(STALE — network unreachable)`** in the console; if present, delete the `tle` folder in `.caeloworks/sky-intruders` and re-run. Then check the longitude sign. |
 | "It says 'unidentified satellite' / orange trail" | No catalog match — a fresh launch, a classified object, or debris | **This is a correct, honest answer, not a failure.** The script refuses to guess a name it cannot support. |
 | "Treasure Hunt says my image has no WCS, but I solved it" | The solve is not on the image the script opened | With an empty input list the script uses the **active window**. Make sure the solved image is the one being read. A WBPP master is normally already solved. |
-| "Treasure Hunt found nothing" | Possibly a **catalog outage**, which reads as an empty field | Ask for the console text and look for *"Treasure/Catalogs: … query failed"*. If they "already fixed their internet", have them delete the `treasure-cache` folder — an empty result is cached for 30 days. |
+| "Treasure Hunt found nothing" | An empty field — or a catalog outage, which the report now flags | Ask whether the report shows the **"some catalogs did not respond"** banner. No banner: every catalog answered, the zeros are real. Banner: the named catalogs did not answer — re-run once the network or service is back (failures are not cached). On **0.2.0 or older** the banner never fires and a false empty can sit in the cache: update the script, then delete the `treasure-cache` folder once. |
 | "It found no planetary nebulae" | Normal away from the Milky Way | The nebula catalog essentially only covers the galactic plane. Zero is the correct answer for most fields. |
 | "It says below the noise but I can see the object" | Working as intended in most cases | The object must beat its local surroundings and 12 decoy apertures. Objects on nebulosity or in dense star fields legitimately fail. A blown-out saturated core can also trigger it — that one is a real bug, escalate. |
 | "I got exactly 400 objects" | The per-catalog row cap | Raise **Max catalog rows / type**. |
@@ -671,8 +678,8 @@ files.
 ## 10. Escalating
 
 **Stop and hand over to a human** when: the user reports one of the known bugs
-above (an outage that reads as an empty field, the dead σ slider, a saturated
-core called "below the noise", a merged train); when they have lost data (a
+above (the dead σ slider, a saturated core called "below the noise", a merged
+train); when they have lost data (a
 deleted `history.json` cannot be recovered); when the answer is not in this
 document. **Do not improvise a threshold, a file path, or a compatibility claim.**
 
@@ -682,8 +689,8 @@ Collect these five things first. Without them the report is not actionable:
 2. **Sky Intruders version** — hover the **"by CaeloWorks"** line under the title
    in the script window; the tooltip ends with the build number.
 3. **The complete console output of the run.** The script logs every decision it
-   makes there, and several failures — including catalog outages — appear
-   *nowhere else*. This alone usually settles the diagnosis.
+   makes there, and several failures appear *nowhere else*. This alone usually
+   settles the diagnosis.
 4. **Which mode**, how many frames, and **whether the frames are plate-solved** —
    specifically whether the **first** frame in the list is.
 5. **The FITS header of one frame**: `DATE-OBS`, `EXPTIME`, `SITELAT`,

@@ -3,8 +3,12 @@
  * for the Treasure Hunt deep catalogs, plus a PixInsight query layer over
  * SINet with a per-field disk cache.
  *
- * PURE (Node-testable): vizierUrl, skybotUrl, parseVizierTsv, parseSkybot.
+ * PURE (Node-testable): vizierUrl, skybotUrl, parseVizierTsv, parseSkybot,
+ * hasCommentLine, skybotFlag.
  * PI-only: queryGalaxies/queryQuasars/queryPne/queryAsteroids (SINet + File).
+ * The query layer returns NULL when the catalog did not answer — callers must
+ * treat null as "unreachable", never as an empty field — and only genuine
+ * catalog responses are ever written to the disk cache.
  *
  * Verified sources (see docs/TREASURE-HUNT.md):
  *   Galaxies  VII/237  (HyperLEDA)  cols PGC, logD25
@@ -167,6 +171,33 @@ var SICatalogs = ( function()
          out.push( row );
       }
       return out;
+   }
+
+   function hasCommentLine( text )
+   {
+      // A genuine catalog body (VizieR banner/INFO lines, SkyBoT Flag/Ticket
+      // lines) always carries '#'-comment lines, even for an empty field. An
+      // outage body — an HTML page from a proxy or captive portal, an empty
+      // 200 — has none. This is the gate that separates "the catalog said
+      // empty" from "something else answered in its place".
+      if ( text === null || text === undefined )
+         return false;
+      var lines = String( text ).split( /\r?\n/ );
+      for ( var i = 0; i < lines.length; ++i )
+         if ( lines[ i ].charAt( 0 ) === '#' )
+            return true;
+      return false;
+   }
+
+   function skybotFlag( text )
+   {
+      // SkyBoT states its own status in a comment: '# Flag: 1' (objects
+      // found), '# Flag: 0' (none in the cone), '# Flag: -1' (service error).
+      // Returns the flag number, or null when absent (not a SkyBoT body).
+      if ( text === null || text === undefined )
+         return null;
+      var m = String( text ).match( /^#\s*Flag\s*:\s*(-?\d+)/m );
+      return ( m !== null ) ? Number( m[ 1 ] ) : null;
    }
 
    function indexOfCol( header, exact, prefix )
@@ -418,11 +449,17 @@ var SICatalogs = ( function()
 
    function fetchVizier( kind, raDeg, decDeg, radiusDeg, coerce, opts )
    {
+      // Returns typed rows, or NULL when the query failed — so an outage is
+      // reportable and is never mistaken for (or cached as) an empty field.
+      // Only genuine VizieR bodies reach the cache; a real empty field is one,
+      // and caching it is correct.
       opts = opts || {};
       var spec = SOURCE[ kind ];
       var max = ( opts.max > 0 ) ? opts.max : 1000;
       var maxAge = ( opts.maxAgeHours > 0 ) ? opts.maxAgeHours : 720;
-      var key = cacheKey( [ kind, round3( raDeg ), round3( decDeg ), round3( radiusDeg ), max ] );
+      // "v2": earlier builds could cache an outage body as an empty field for
+      // 30 days; the version bump orphans any such poisoned entries.
+      var key = cacheKey( [ kind, "v2", round3( raDeg ), round3( decDeg ), round3( radiusDeg ), max ] );
       if ( opts.useCache !== false )
       {
          var cached = readCache( key, maxAge );
@@ -437,7 +474,12 @@ var SICatalogs = ( function()
          if ( !r.ok || ( r.code != 0 && r.code != 200 ) )
          {
             warn( kind + " query failed: " + ( r.error || ( "HTTP " + r.code ) ) );
-            return [];
+            return null;
+         }
+         if ( !hasCommentLine( r.text ) )
+         {
+            warn( kind + " query failed: response is not catalog output (outage page?)" );
+            return null;
          }
          var parsed = parseVizierTsv( r.text );
          for ( var i = 0; i < parsed.length; ++i )
@@ -446,7 +488,7 @@ var SICatalogs = ( function()
       catch ( e )
       {
          warn( kind + " query error: " + e.message );
-         return [];
+         return null;
       }
       if ( opts.useCache !== false )
          writeCache( key, rows );
@@ -476,10 +518,13 @@ var SICatalogs = ( function()
    function queryAsteroids( raDeg, decDeg, radiusDeg, epochIso, opts )
    {
       // SkyBoT is flaky: up to 3 attempts with 1s/2s backoff. The cache key
-      // includes the epoch, so a hit is effectively immutable.
+      // includes the epoch, so a hit is effectively immutable. Returns NULL
+      // when every attempt failed — never an empty array for an outage.
       opts = opts || {};
       var maxAge = ( opts.maxAgeHours > 0 ) ? opts.maxAgeHours : 720;
-      var key = cacheKey( [ "asteroid-v2", round3( raDeg ), round3( decDeg ),
+      // v3: v2 could cache a service-error body ('# Flag: -1') as an empty
+      // field; the bump orphans any such poisoned entries.
+      var key = cacheKey( [ "asteroid-v3", round3( raDeg ), round3( decDeg ),
                             round3( radiusDeg ), String( epochIso ) ] );
       if ( opts.useCache !== false )
       {
@@ -499,6 +544,12 @@ var SICatalogs = ( function()
             var r = SINet.getText( url, ( opts.timeoutSec > 0 ) ? opts.timeoutSec : 30 );
             if ( !r.ok || ( r.code != 0 && r.code != 200 ) )
                continue;
+            // SkyBoT reports its own status: Flag 0 is a genuinely empty
+            // cone, Flag -1 (or a body without the Flag line — an outage
+            // page) is a failed attempt, not an empty field.
+            var flag = skybotFlag( r.text );
+            if ( flag === null || flag < 0 )
+               continue;
             var parsed = parseSkybot( r.text );
             rows = [];
             for ( var i = 0; i < parsed.length; ++i )
@@ -510,7 +561,7 @@ var SICatalogs = ( function()
       if ( rows === null )
       {
          warn( "asteroid query failed after retries" );
-         return [];
+         return null;
       }
       if ( opts.useCache !== false )
          writeCache( key, rows );
@@ -524,6 +575,8 @@ var SICatalogs = ( function()
       skybotUrl: skybotUrl,
       parseVizierTsv: parseVizierTsv,
       parseSkybot: parseSkybot,
+      hasCommentLine: hasCommentLine,
+      skybotFlag: skybotFlag,
       parseNgcIcCsv: parseNgcIcCsv,
       parseNamedStarsCsv: parseNamedStarsCsv,
       typeGalaxyRow: typeGalaxyRow,

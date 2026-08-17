@@ -162,4 +162,33 @@ function allFinite( rows )
    assert.strictEqual( noHd.name, "HIP 12345", "falls back to the HIP designation" );
 } )();
 
+// --- Outage discrimination (query failures must never read as empty) -------
+
+( function testOutageDiscrimination()
+{
+   // Every recorded genuine body carries '#'-comment lines, even when the
+   // data table below them is empty…
+   assert( Cat.hasCommentLine( fixture( "hyperleda-m51.tsv" ) ), "VizieR galaxy body" );
+   assert( Cat.hasCommentLine( fixture( "milliquas-3c273.tsv" ) ), "VizieR quasar body" );
+   assert( Cat.hasCommentLine( fixture( "pne-bulge.tsv" ) ), "VizieR PNe body" );
+   assert( Cat.hasCommentLine( fixture( "skybot-m51.txt" ) ), "SkyBoT body" );
+
+   // …an outage body has none: HTML from a proxy or captive portal, an empty
+   // 200, a plain-text error.
+   assert( !Cat.hasCommentLine( "<!DOCTYPE html>\n<html><body><h1>503 Service Unavailable</h1></body></html>" ),
+           "HTML error page rejected" );
+   assert( !Cat.hasCommentLine( "Service temporarily unavailable, try again later." ),
+           "plain-text error rejected" );
+   assert( !Cat.hasCommentLine( "" ), "empty body rejected" );
+   assert( !Cat.hasCommentLine( null ), "null body rejected" );
+
+   // SkyBoT states its own status in the Flag comment: 1 = objects found,
+   // 0 = genuinely empty cone, -1 = service error.
+   assert.strictEqual( Cat.skybotFlag( fixture( "skybot-m51.txt" ) ), 1, "fixture flag" );
+   assert.strictEqual( Cat.skybotFlag( "# Flag: 0\n# Ticket: 186979707952415811\n" ), 0, "empty-cone flag" );
+   assert.strictEqual( Cat.skybotFlag( "# Flag: -1\n# Error: ephemeris service down\n" ), -1, "error flag" );
+   assert.strictEqual( Cat.skybotFlag( "<!DOCTYPE html><html></html>" ), null, "no flag in an outage page" );
+   assert.strictEqual( Cat.skybotFlag( null ), null, "null body has no flag" );
+} )();
+
 console.log( "catalogs.test.js: all assertions passed" );

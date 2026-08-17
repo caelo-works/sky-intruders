@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Treasure Hunt now distinguishes a catalog outage from an empty field (#1).
+  The query layer returns a failure — instead of an empty result — when a
+  catalog is unreachable, errors out, or answers with something that is not
+  catalog data (an HTML maintenance or captive-portal page; a SkyBoT body
+  reporting `Flag: -1`). The report's "some catalogs did not respond" banner,
+  which could never fire before, now names the affected catalogs, and the
+  console prints `catalog did not answer — flagged in the report` per failed
+  catalog. `N row(s)` lines are now only printed when the catalog actually
+  answered.
+- A failed deep-catalog query is no longer cached as an empty field for 30
+  days (#2). Only genuine catalog answers reach the treasure cache, and the
+  cache key format was versioned so entries poisoned by earlier builds are
+  ignored instead of being served.
+
 ## [0.2.0] - 2026-07-16
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-07-16:
