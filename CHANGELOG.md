@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-17
+
+**Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-17:
+GUI construction smoke test in both languages (emblem, live language switch,
+HTML and color dialogs); v8 runtime selftest clean; the 13-frame reference
+night on the no-plate-solve path locks the orientation fit at 12 anchor pairs
+and names 12 of 12 trails at high confidence (constellation-neighbour
+identities re-rank with today's orbital elements, as documented); the
+slow-mover storm pool that yielded 126 raw candidates on 0.2.0 yields 0, with
+the storm breaker never invoked, on a full production re-run; catalog-outage
+simulation against the production Treasure Hunt pipeline passes 13/13 checks
+(null contract, no cache writes on failure, genuine empties cached, end-to-end
+banner naming the one stubbed-down catalog while the others answer live);
+Node pure-logic harness: all suites green, including the committed
+126-candidate storm fixture pinned at zero and synthetic movers at
+0.3–8 arcsec/min each recovered exactly once.
+
 ### Fixed
 
 - The slow-mover (asteroid-candidate) detector no longer floods plate-solved

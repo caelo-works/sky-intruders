@@ -15,7 +15,7 @@ Three rules when you use it:
 - **"I can't find it" and "it found nothing" are usually two different bugs.**
   Read the Known bugs section before answering either one.
 
-Applies to **0.2.0**. To check a user's version: in the script window, hover the
+Applies to **0.2.1**. To check a user's version: in the script window, hover the
 **"by CaeloWorks"** line just under the title — the tooltip ends with the build
 number. There is no other version display.
 
@@ -26,7 +26,7 @@ number. There is no other version display.
 | | |
 |---|---|
 | What it is | A PixInsight script that finds who crossed your light frames, and what hid in your image |
-| Version | 0.2.0 · GPL-3.0 · free and open source |
+| Version | 0.2.1 · GPL-3.0 · free and open source |
 | Requires | **PixInsight 1.9.4 or newer** — Windows, macOS, Linux |
 | Where it lives | **Script → CaeloWorks → Sky Intruders** |
 | Internet | Needed for satellite elements and deep-sky catalogs. Everything is cached; it degrades gracefully offline |
