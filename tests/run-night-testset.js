@@ -81,7 +81,7 @@ function runNightTestset()
                             time: e.timeUtc ? e.timeUtc.toISOString() : null,
                             shower: e.shower || null,
                             confidence: e.confidence || null,
-                            frameId: e.frameId } );
+                            frameId: e.frameId, frameName: e.frameName || null } );
       }
       out.trailsByFrame = {};
       for ( var f = 0; f < res.frames.length; ++f )

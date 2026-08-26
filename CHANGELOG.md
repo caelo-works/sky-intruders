@@ -132,6 +132,20 @@ All notable changes to this project are documented here. The format is based on
   console; the console also prints the site that was used and where it came
   from. Fixes #9.
 
+- Frames are identified by their position in the input list plus their file
+  name (`NNN_<name>`) instead of the file name alone, so a night assembled
+  from several capture folders that reuse `Light_001.fits` no longer merges
+  two frames' satellite crossings, mover tracks or overlays into one.
+  Registered copies in the scratch folder are named `NNN_<name>_r.xisf`
+  (StarAlignment runs in as many batches as the largest name multiplicity,
+  one in the usual case), the per-frame debug overlays carry the same tag,
+  and the input list warns on duplicate file names in both languages. The
+  night log and console still show the plain file name. The single-frame
+  fallback no longer runs StarDetector on unsolved frames whose sources
+  could never be projected, and the pass-A profiler timer and GUI yield now
+  run on every skip path (a "geometry mismatch" drop is counted in the
+  fallback warning). Fixes #18.
+
 ## [0.2.1] - 2026-08-17
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-17:

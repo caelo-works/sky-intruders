@@ -951,6 +951,14 @@ var SIRender = ( function()
       // input -> output correspondence: returns { ref, paths } where
       // paths[i] is the registered file for input i (paths[0] === ref,
       // failures are null), or null when registration is unavailable.
+      //
+      // StarAlignment names every output <base>_r.xisf in one directory, so
+      // two inputs that share a base name (Light_001.fits from two capture
+      // folders) would overwrite each other. Targets are therefore run in
+      // batches whose base names are unique (one batch in the usual case),
+      // and each output is renamed <NNN>_<base>_r.xisf right after its
+      // batch, NNN being the input's index — the same tag the pipeline
+      // uses as the frame's id.
       if ( typeof StarAlignment === "undefined" || !framePaths || framePaths.length < 2 )
          return null;
       try
@@ -959,26 +967,67 @@ var SIRender = ( function()
             File.createDirectory( outDir, true );
          var ref = framePaths[ 0 ];
          var postfix = "_r";
-         var SA = new StarAlignment;
-         SA.referenceImage = ref;
-         SA.referenceIsFile = true;
-         SA.outputDirectory = outDir;
-         SA.outputPostfix = postfix;
-         SA.outputPrefix = "";
-         SA.generateDrizzleData = false;
-         SA.generateMasks = false;
-         var targets = [];
-         for ( var i = 1; i < framePaths.length; ++i )
-            targets.push( [ true, true, framePaths[ i ] ] );
-         SA.targets = targets;
-         SA.executeGlobal();
+         var n = framePaths.length;
 
-         var paths = [ ref ];
-         for ( var j = 1; j < framePaths.length; ++j )
+         // Batch assignment: the k-th occurrence of a base name (compared
+         // case-insensitively — Windows file systems are) goes to batch k.
+         var batches = [];
+         var seen = {};
+         for ( var i = 1; i < n; ++i )
          {
-            var base = File.extractName( framePaths[ j ] );
-            var cand = outDir + "/" + base + postfix + ".xisf";
-            paths.push( File.exists( cand ) ? cand : null );
+            var key = File.extractName( framePaths[ i ] ).toLowerCase();
+            var k = seen[ key ] || 0;
+            seen[ key ] = k + 1;
+            if ( batches.length <= k )
+               batches.push( [] );
+            batches[ k ].push( i );
+         }
+         if ( batches.length > 1 )
+            try { console.writeln( "   duplicate file names in the set: registering in " +
+                                   batches.length + " batches" ); } catch ( e0 ) {}
+
+         var paths = new Array( n );
+         paths[ 0 ] = ref;
+         for ( var b = 0; b < batches.length; ++b )
+         {
+            var SA = new StarAlignment;
+            SA.referenceImage = ref;
+            SA.referenceIsFile = true;
+            SA.outputDirectory = outDir;
+            SA.outputPostfix = postfix;
+            SA.outputPrefix = "";
+            SA.generateDrizzleData = false;
+            SA.generateMasks = false;
+            var targets = [];
+            for ( var t = 0; t < batches[ b ].length; ++t )
+               targets.push( [ true, true, framePaths[ batches[ b ][ t ] ] ] );
+            SA.targets = targets;
+            SA.executeGlobal();
+
+            for ( var t2 = 0; t2 < batches[ b ].length; ++t2 )
+            {
+               var j = batches[ b ][ t2 ];
+               var base = File.extractName( framePaths[ j ] );
+               var produced = outDir + "/" + base + postfix + ".xisf";
+               var unique = outDir + "/" + SIFrameMetaCore.frameTag( j, n ) + "_" + base +
+                            postfix + ".xisf";
+               paths[ j ] = null;
+               if ( File.exists( produced ) )
+               {
+                  try
+                  {
+                     if ( File.exists( unique ) )
+                        File.remove( unique );
+                     File.move( produced, unique );
+                     paths[ j ] = unique;
+                  }
+                  catch ( e1 )
+                  {
+                     try { console.warningln( "SIRender.registerFramesMapped: cannot rename " +
+                                              produced + " — " + e1.message ); } catch ( e2 ) {}
+                  }
+               }
+            }
          }
          return { ref: ref, paths: paths };
       }

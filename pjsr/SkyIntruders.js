@@ -312,12 +312,27 @@ function siParseCoordinate( text, lo, hi )
    return { value: v };
 }
 
-function analyzeFrame( filePath, params )
+// Stamp the run-unique id on a frame's metadata: index in the run's input
+// list + base name (SIFrameMetaCore.frameId). meta.name keeps the base name
+// for everything the user reads.
+function siStampFrameId( meta, index, count )
+{
+   meta.id = SIFrameMetaCore.frameId( index, count, meta.name );
+   return meta;
+}
+
+// Stand-alone detection on one frame (the fallback when the set cannot be
+// registered). index/count give the frame its run-unique id.
+function analyzeFrame( filePath, params, index, count )
 {
    var r = withWindow( filePath, function( window )
    {
-      var meta = SIFrameMeta.read( window, filePath );
+      var meta = siStampFrameId( SIFrameMeta.read( window, filePath ), index, count );
       var det = SITrailDetect.detect( window.mainView.image, params );
+      // Unsolved frames get no sky coordinates — and no StarDetector pass
+      // whose every source would then project to null (the registered path
+      // gates the same way).
+      var solved = hasUsableWcs( meta.wcs.kind );
 
       var w = window.mainView.image.width, h = window.mainView.image.height;
       var margin = Math.max( 8, Math.round( 0.03 * Math.max( w, h ) ) );
@@ -330,8 +345,8 @@ function analyzeFrame( filePath, params )
          var tr = det.trails[ t ];
          tr.index = t;
          tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
-         tr.p1 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x1, tr.y1 ) : null;
-         tr.p2 = meta.wcs.imageToCelestial ? meta.wcs.imageToCelestial( tr.x2, tr.y2 ) : null;
+         tr.p1 = solved ? meta.wcs.imageToCelestial( tr.x1, tr.y1 ) : null;
+         tr.p2 = solved ? meta.wcs.imageToCelestial( tr.x2, tr.y2 ) : null;
       }
       var planeGroups = SIMeteors.groupPlanes( det.trails );
       for ( var g = 0; g < planeGroups.length; ++g )
@@ -352,7 +367,7 @@ function analyzeFrame( filePath, params )
       // Point sources for asteroid tracking — only useful when we can turn
       // pixels into sky coordinates, so gate on a working WCS.
       var blobs = [];
-      if ( meta.wcs.imageToCelestial && params.detectAsteroids )
+      if ( solved && params.detectAsteroids )
          blobs = extractPointSources( window.mainView.image, meta.wcs, params );
 
       return { meta: meta, trails: det.trails, stats: det.stats, blobs: blobs,
@@ -532,9 +547,11 @@ function analyzeNightSet( files, params, regDir )
       return null;
    }
 
-   // Pass A: metadata + binned copy of every registered frame.
+   // Pass A: metadata + binned copy of every registered frame. The timer
+   // brackets the open+bin only; every skip path still yields to the GUI.
    var entries = [];
    var binLen = -1;
+   var mismatched = 0;
    for ( var i = 0; i < files.length; ++i )
    {
       if ( reg.paths[ i ] == null )
@@ -556,11 +573,14 @@ function analyzeNightSet( files, params, regDir )
             if ( srcMeta != null )
                meta = srcMeta;
          }
-         return { meta: meta, binned: SITrailDetect.binned( win.mainView.image ) };
+         return { meta: siStampFrameId( meta, i, files.length ),
+                  binned: SITrailDetect.binned( win.mainView.image ) };
       } );
+      SIProf.end( "pass A: open+bin registered frames" );
+      processEvents();
       if ( opened == null )
       {
-         SIProf.end( "pass A: open+bin registered frames" );
+         console.warningln( "   registered copy could not be opened, skipped: " + files[ i ] );
          continue;
       }
       var meta = opened.meta;
@@ -575,14 +595,18 @@ function analyzeNightSet( files, params, regDir )
       if ( b.data.length !== binLen )
       {
          console.warningln( "   geometry mismatch, skipped: " + files[ i ] );
+         mismatched++;
          continue;
       }
       entries.push( { meta: meta, regPath: reg.paths[ i ], binned: b } );
-      SIProf.end( "pass A: open+bin registered frames" );
-      processEvents();
    }
    if ( entries.length < 3 )
+   {
+      console.warningln( format( "   only %d usable registered frame(s)%s — falling back to " +
+                                 "per-frame detection", entries.length,
+                                 mismatched > 0 ? format( " (%d geometry mismatch)", mismatched ) : "" ) );
       return null;
+   }
 
    // Static-sky model, two rounds: a first median gives a reference, then
    // each frame is photometrically normalized onto it (linear fit — sky
@@ -639,7 +663,7 @@ function analyzeNightSet( files, params, regDir )
             refWin = rw[ 0 ];
             for ( var rk = 1; rk < rw.length; ++rk )
                rw[ rk ].forceClose();
-            refMeta = SIFrameMeta.read( refWin, files[ 0 ] );
+            refMeta = siStampFrameId( SIFrameMeta.read( refWin, files[ 0 ] ), 0, files.length );
          }
       }
       catch ( e ) { refWin = null; reopenError = e.message; }
@@ -819,7 +843,7 @@ function analyzeNightSet( files, params, regDir )
             results[ idx[ p0 ] ] = { trails: trails, stats: det.stats, blobs: blobs,
                                      planeGroups: planeGroups };
             if ( trails.length > 0 )
-               console.writeln( format( "   %s: %d transient trail(s)%s", e.meta.id, trails.length,
+               console.writeln( format( "   %s: %d transient trail(s)%s", e.meta.name, trails.length,
                                         planeGroups.length > 0
                                            ? format( " — %d bundle(s)", planeGroups.length )
                                            : "" ) );
@@ -886,7 +910,7 @@ function analyzeNightSet( files, params, regDir )
       SIProf.end( "best-frame pick (FWHM on top 3)" );
       var bq = entries[ bestIndex ].quality || {};
       console.writeln( format( "Best frame for the result image: %s (FWHM %.1f px, %d peaks, sky %.0f ADU)",
-                               entries[ bestIndex ].meta.id, bestFwhm,
+                               entries[ bestIndex ].meta.name, bestFwhm,
                                bq.peaks || 0, bq.skyBgAdu || 0 ) );
 
       // Detector-internal split (dotted names = detail of "pass B: detection").
@@ -951,7 +975,7 @@ function buildMatchRequest( frames, observer, params, fovOverride )
       {
          console.warningln( format( "   frame %s: EXPTIME is %s — no exposure window, " +
                                     "skipped for satellite identification",
-                                    f.meta.id, String( f.meta.exposureSec ) ) );
+                                    f.meta.name, String( f.meta.exposureSec ) ) );
          continue;
       }
       // Registered sets share the reference frame's grid, so every frame's
@@ -1064,7 +1088,7 @@ function runAnalysisIn( files, params, run )
          console.writeln( format( "<b>[%d/%d]</b> ", i + 1, files.length ) + files[ i ] );
          try
          {
-            var r = analyzeFrame( files[ i ], params );
+            var r = analyzeFrame( files[ i ], params, i, files.length );
             frames.push( r );
             if ( r.trails.length > 0 )
                console.writeln( format( "   %d trail(s), background %.1f ADU, noise %.1f ADU",
@@ -1101,7 +1125,11 @@ function runAnalysisIn( files, params, run )
                                observerSource == "headers" ? "FITS headers" : "dialog fallback",
                                observer.latDeg, observer.lonDeg, observer.altM || 0 ) );
 
-   // TLE cross-match through the sidecar; degrade gracefully without it.
+   var frameNameById = {};
+   for ( var i = 0; i < frames.length; ++i )
+      frameNameById[ frames[ i ].meta.id ] = frames[ i ].meta.name;
+
+   // TLE cross-match; degrade gracefully when the catalog is unreachable.
    var matchResponse = null, tleInfo = null;
    if ( observer == null )
       console.warningln( SKYINTRUDERS_TITLE + ": no observer site in the FITS headers " +
@@ -1163,7 +1191,8 @@ function runAnalysisIn( files, params, run )
             else
                for ( var me = 0; me < ( matchResponse.errors || [] ).length; ++me )
                   console.warningln( format( "   frame %s: satellite matching failed — %s",
-                                             String( matchResponse.errors[ me ].frame ),
+                                             frameNameById[ matchResponse.errors[ me ].frame ] ||
+                                                String( matchResponse.errors[ me ].frame ),
                                              matchResponse.errors[ me ].message ) );
          }
       }
@@ -1172,7 +1201,9 @@ function runAnalysisIn( files, params, run )
          console.warningln( SKYINTRUDERS_TITLE + ": TLE matching unavailable — " + e.message );
       }
 
-   // Merge crossings + heuristics into events.
+   // Merge crossings + heuristics into events. Every per-frame map below is
+   // keyed on meta.id (run-unique: index + base name); meta.name is what
+   // reaches the user.
    var events = [];
    var crossingsByFrame = {};
    if ( matchResponse != null && !matchResponse.error )
@@ -1288,7 +1319,7 @@ function runAnalysisIn( files, params, run )
                                     lenDeg: Math.round( cLen*100 )/100 };
                         }
                      }
-                     fitInfo.diag.push( { frame: fr.meta.id.substring( 0, 19 ),
+                     fitInfo.diag.push( { frame: fr.meta.id,
                                           trail: trl.index,
                                           trailPA: Math.round( tPA*10 )/10,
                                           trailLenDeg: Math.round( tLen*100 )/100,
@@ -1454,7 +1485,7 @@ function runAnalysisIn( files, params, run )
                               noradId: crossings[ c0 ].noradId,
                               timeUtc: crossings[ c0 ].entryUtc ? new Date( crossings[ c0 ].entryUtc ) : null,
                               elevationDeg: crossings[ c0 ].elevationDeg,
-                              frameId: f.meta.id } );
+                              frameId: f.meta.id, frameName: f.meta.name } );
       var matchedIdx = {};
       for ( var c = 0; c < crossings.length; ++c )
          if ( crossings[ c ].matchedTrailIndex != null )
@@ -1477,7 +1508,7 @@ function runAnalysisIn( files, params, run )
                               ? new Date( crossings[ c ].shadowEntryUtc ) : null,
                            shadowExitUtc: crossings[ c ].shadowExitUtc
                               ? new Date( crossings[ c ].shadowExitUtc ) : null,
-                           frameId: f.meta.id } );
+                           frameId: f.meta.id, frameName: f.meta.name } );
             var tr0 = null;
             for ( var tt = 0; tt < f.trails.length; ++tt )
                if ( f.trails[ tt ].index === crossings[ c ].matchedTrailIndex )
@@ -1504,7 +1535,7 @@ function runAnalysisIn( files, params, run )
                         klass: kind,
                         name: null,
                         segments: pg.segments,
-                        frameId: f.meta.id } );
+                        frameId: f.meta.id, frameName: f.meta.name } );
          labeledTrails.push( { frameIndex: i,
                                x1: pg.x1, y1: pg.y1, x2: pg.x2, y2: pg.y2,
                                color: TRAIL_STYLE[ kind ],
@@ -1520,7 +1551,7 @@ function runAnalysisIn( files, params, run )
                            shower: cls.shower ? cls.shower.name : null,
                            confidence: cls.confidence,
                            reason: cls.reason,
-                           frameId: f.meta.id } );
+                           frameId: f.meta.id, frameName: f.meta.name } );
             var lb = langLabels[ cls.klass ] || langLabels.unknown;
             if ( cls.klass === "meteor" && cls.shower )
                lb += " (" + cls.shower.name + ")";
@@ -1583,12 +1614,19 @@ function runAnalysisIn( files, params, run )
             movers = [];
          }
          for ( var m = 0; m < movers.length; ++m )
+         {
+            for ( var mp = 0; mp < movers[ m ].points.length; ++mp )
+               movers[ m ].points[ mp ].frameName =
+                  frameNameById[ movers[ m ].points[ mp ].frame ] ||
+                  String( movers[ m ].points[ mp ].frame );
             events.push( { timeUtc: movers[ m ].points[ 0 ].t,
                            klass: "asteroid",
                            name: null,
                            rateArcsecPerMin: movers[ m ].rateArcsecPerMin,
                            nFrames: movers[ m ].points.length,
-                           frameId: movers[ m ].points[ 0 ].frame } );
+                           frameId: movers[ m ].points[ 0 ].frame,
+                           frameName: movers[ m ].points[ 0 ].frameName } );
+         }
       }
    }
 
@@ -1689,7 +1727,7 @@ function runAnalysisIn( files, params, run )
       }
    SIProf.end( "result image (stretch+annotate+save)" );
    // Frame-by-frame review aid: one annotated PNG per registered frame,
-   // with only that frame's trails drawn.
+   // with only that frame's trails drawn, named by the frame's id.
    if ( set != null && params.debugFrameOverlays )
       try
       {
@@ -1715,7 +1753,6 @@ function runAnalysisIn( files, params, run )
                var crsG = crossingsByFrame[ frames[ i ].meta.id ] || [];
                for ( var cg = 0; cg < crsG.length; ++cg )
                {
-                  var g1 = SISatMatch.core.tanForOrientation ? null : null;
                   var pA = crsG[ cg ].path.p1, pB = crsG[ cg ].path.p2;
                   var q1 = tanInvertForOverlay( fitTanForOverlay, pA );
                   var q2 = tanInvertForOverlay( fitTanForOverlay, pB );
@@ -1729,7 +1766,7 @@ function runAnalysisIn( files, params, run )
             }
             fbmp = SIRender.annotateTrails( fbmp, mine, { flagDir: flagAssetsDir() } );
             fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + run.token + "-" +
-                       i + ".png" );
+                       frames[ i ].meta.id.replace( /[^A-Za-z0-9_.-]+/g, "_" ) + ".png" );
             gc();
          }
       }
@@ -2495,6 +2532,8 @@ var SI_UI = {
       analyzeNight: "Analyze night", analyzeTreasure: "Hunt treasures",
       close: "Close",
       statusNone: "<i>No frames added yet.</i>",
+      dupNames: "Same file name in several folders (%1): frames are told apart by their " +
+                "position in the list.",
       statusOne: " frame ready.", statusMany: " frames ready.",
       working: "<i>Working\u2026</i>",
       treeNight: "Light frames",
@@ -2583,6 +2622,8 @@ var SI_UI = {
       analyzeNight: "Analyser la nuit", analyzeTreasure: "Chasser les tr\u00e9sors",
       close: "Fermer",
       statusNone: "<i>Aucune brute ajout\u00e9e.</i>",
+      dupNames: "M\u00eame nom de fichier dans plusieurs dossiers (%1) : les brutes sont " +
+                "distingu\u00e9es par leur position dans la liste.",
       statusOne: " brute pr\u00eate.", statusMany: " brutes pr\u00eates.",
       working: "<i>Travail en cours\u2026</i>",
       treeNight: "Brutes (lights)",
@@ -3658,6 +3699,32 @@ class SkyIntrudersDialog extends Dialog
             node.setText( 0, paths[ i ] );
          }
       this.updateStatus();
+      // Same base name from several folders: legal (the pipeline keys frames
+      // on their list position), but worth a word — the log and the report
+      // show base names, so two "Light_001.fits" lines may look alike.
+      var dups = this.duplicateBaseNames();
+      if ( dups.length > 0 )
+         this.updateStatus( "<span style=\"color:#e0a030;\">" +
+                            uiT( this.params.lang, "dupNames" ).replace( "%1", dups.join( ", " ) ) +
+                            "</span>" );
+   }
+
+   // Base names (case-insensitive) that occur more than once in the list.
+   duplicateBaseNames()
+   {
+      var seen = {}, dups = [], shown = {};
+      for ( var i = 0; i < this.files.length; ++i )
+      {
+         var base = String( this.files[ i ] ).split( "/" ).pop().split( "\\" ).pop();
+         var key = base.toLowerCase();
+         if ( seen[ key ] && !shown[ key ] )
+         {
+            dups.push( base );
+            shown[ key ] = true;
+         }
+         seen[ key ] = true;
+      }
+      return dups;
    }
 
    setBusy( busy )
@@ -3858,6 +3925,21 @@ function siConstructTest()
       out.coordOk = out.coordOk && ( d.params.observerLatDeg === null ) &&
                     ( d.latEdit.edit.text === "" ) &&
                     ( d.statusLabel.text.indexOf( uiT( "en", "latRange" ) ) >= 0 );
+
+      // Duplicate base names across folders: accepted, but flagged on the
+      // status line in the active language; a clean list clears the flag.
+      d.addFiles( [ "/a/Light_001.fits", "/b/Light_001.fits", "/b/Light_002.fits" ] );
+      out.dupNamesOk = ( d.files.length === 3 ) &&
+                       ( d.duplicateBaseNames().join( "," ) === "Light_001.fits" ) &&
+                       ( d.statusLabel.text.indexOf( "Light_001.fits" ) >= 0 ) &&
+                       ( d.statusLabel.text.indexOf( uiT( "en", "dupNames" ).split( "%1" )[ 0 ] ) >= 0 );
+      d.files = [];
+      d.fileTree.clear();
+      d.addFiles( [ "/a/Light_001.fits" ] );
+      out.dupNamesOk = out.dupNamesOk && ( d.statusLabel.text.indexOf( "Light_001.fits" ) < 0 );
+      d.files = [];
+      d.fileTree.clear();
+      d.updateStatus();
 
       // The report dialog must carry the no-site banner.
       var rd = new ReportDialog( { night: { dateLabel: "2026-01-01" },
