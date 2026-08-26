@@ -57,6 +57,18 @@ All notable changes to this project are documented here. The format is based on
   detection, the console now says so explicitly and the run downgrades to the
   header-based field-orientation fit, with the fit line labelled
   "(plate solve unavailable — orientation fit used instead)". Fixes #11.
+### Fixed
+
+- The night log now prints every time in UT with an explicit ` UT` suffix
+  (chronology, predicted crossers, rush hour), matching the composite overlay
+  instead of the computer's local clock. Same pass: the session exposure can
+  no longer read `1h60`, the stats and forum title agree in number (`1
+  satellite`, `one satellite crossed`, `nothing crossed`) and name the night
+  instead of "last night", FITS quotes are stripped from the `OBJECT` target,
+  operator labels are localized, and the predicted-crossers list is kept on
+  nights with no detected trail. The Node harness runs under `TZ=UTC` and
+  checks EN/FR golden markdown over a synthetic three-night history. Fixes
+  #10.
 
 ## [0.2.1] - 2026-08-17
 

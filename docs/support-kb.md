@@ -184,7 +184,7 @@ Per frame, in priority order:
 
 - **Date/time**: `DATE-OBS` — **no fallback**. A frame without it is excluded
   from satellite matching, the night is labelled `(undated)`, and log times show
-  `--:--`.
+  `--:--` instead of `HH:MM UT`.
 - **Exposure**: `EXPTIME`, else `EXPOSURE`. A frame without either is excluded
   from satellite matching.
 - **Latitude**: `SITELAT`, else `OBSGEO-B`, else `LAT-OBS`.
@@ -304,7 +304,14 @@ Ghost lines for predicted-but-unconfirmed passes are pale yellow (sunlit) or gre
   button in the report window reopens it.
 - A **night log** in markdown, shown in a window and printed to the console, with
   fun stats and a forum-ready post title. **Save report…** writes it next to the
-  frames.
+  frames. **Every time in the log is UT**, written `HH:MM UT` (chronology,
+  predicted crossers, rush hour), the same clock as the composite overlay —
+  never the computer's local time. The forum title names the night
+  (`… crossed my M 57 session (2026-07-10/11)`) rather than saying "last
+  night", and agrees in number: `one satellite crossed`, `4 satellites and one
+  meteor crossed`, `nothing crossed`. A night with no detected trail still
+  lists the **predicted crossers** when the orbit model puts cataloged
+  satellites in the field during the exposures.
 - **Personal records**, kept between sessions. They track three things only —
   most satellites, most Starlinks, most meteors in one night — and only fire when
   a night strictly beats every previous one. Re-analysing the same night
