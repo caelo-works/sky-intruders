@@ -26,6 +26,24 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Satellite matching no longer loses a satellite that enters or leaves the
+  Earth's shadow inside the field. The sunlit test used to run once, at the
+  crossing midpoint: when more than half of the pass was eclipsed the crossing
+  was rejected as a candidate, and the streak that fades out mid-frame — the
+  textbook shadow-entry trail — went to the meteor heuristic, sometimes with a
+  shower name attached. The flag is now evaluated at every fine sample, the
+  transition instant is refined by bisection between samples, and the trail is
+  matched on the lit sub-path (`path`, rate, range and elevation describe that
+  sub-path; `sunlitFraction`, `shadowEntryUtc` and `shadowExitUtc` are new
+  response fields). The night log then reads "entered Earth's shadow at
+  HH:MM:SS UT" / "left Earth's shadow at …" (FR "entré dans l'ombre de la
+  Terre à …" / "sorti de l'ombre de la Terre à …"), and the composite label
+  carries "into shadow …" / "out of shadow …". A crossing lit at no sample is
+  still listed as eclipsed and never matched. In the same pass the
+  orientation gate now compares position angles measured at the segment
+  midpoints instead of at one endpoint, which removed a ~6° spurious
+  misalignment at δ = 80° that depended on which end the detector labelled
+  first. Fixes #16.
 - `tests/treasure.test.js`: the "no external asset URLs" check was written
   as `A && B || C`, which the credit link made vacuously true; it now lists
   every `http(s)` URL in the report and requires all of them to be the

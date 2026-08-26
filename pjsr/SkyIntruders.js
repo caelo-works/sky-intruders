@@ -1265,7 +1265,7 @@ function runAnalysisIn( files, params, run )
                      if ( !trl.p1 || !trl.p2 )
                         continue;
                      var tMid = SISatMatch.core.midpointRaDec( trl.p1, trl.p2 );
-                     var tPA = SISatMatch.core.positionAngleDeg( trl.p1, trl.p2 );
+                     var tPA = SISatMatch.core.segmentPaDeg( trl.p1, trl.p2 );
                      var tLen = SISatMatch.core.angularSepDeg( trl.p1, trl.p2 );
                      var best = null;
                      for ( var c5 = 0; c5 < crs.length; ++c5 )
@@ -1273,11 +1273,11 @@ function runAnalysisIn( files, params, run )
                         var cMid = SISatMatch.core.midpointRaDec( crs[ c5 ].path.p1, crs[ c5 ].path.p2 );
                         var sep = SISatMatch.core.angularSepDeg( tMid, cMid );
                         var ad = SISatMatch.core.orientationDiffDeg(
-                           tPA, SISatMatch.core.positionAngleDeg( crs[ c5 ].path.p1, crs[ c5 ].path.p2 ) );
+                           tPA, SISatMatch.core.segmentPaDeg( crs[ c5 ].path.p1, crs[ c5 ].path.p2 ) );
                         var cLen = SISatMatch.core.angularSepDeg( crs[ c5 ].path.p1, crs[ c5 ].path.p2 );
                         if ( best == null || sep < best.sepDeg )
                         {
-                           var cPA5 = SISatMatch.core.positionAngleDeg( crs[ c5 ].path.p1, crs[ c5 ].path.p2 );
+                           var cPA5 = SISatMatch.core.segmentPaDeg( crs[ c5 ].path.p1, crs[ c5 ].path.p2 );
                            var rel5 = ( SISatMatch.core.positionAngleDeg( cMid, tMid ) - cPA5 )*Math.PI/180;
                            best = { name: crs[ c5 ].name || String( crs[ c5 ].noradId ),
                                     sunlit: !!crs[ c5 ].sunlit,
@@ -1394,6 +1394,13 @@ function runAnalysisIn( files, params, run )
       var cls = satClassCode( satcat[ crossing.noradId ] );
       if ( cls != null )
          parts.push( SAT_CLASS_LABEL[ fr ? "fr" : "en" ][ cls ] );
+      // shadow transition inside the field: the streak stops or starts here
+      if ( crossing.shadowEntryUtc )
+         parts.push( ( fr ? "entre dans l'ombre " : "into shadow " ) +
+                     String( crossing.shadowEntryUtc ).substring( 11, 19 ) + " UT" );
+      if ( crossing.shadowExitUtc )
+         parts.push( ( fr ? "sort de l'ombre " : "out of shadow " ) +
+                     String( crossing.shadowExitUtc ).substring( 11, 19 ) + " UT" );
       return parts.join( " \u00b7 " );
    }
 
@@ -1461,6 +1468,15 @@ function runAnalysisIn( files, params, run )
                            elevationDeg: crossings[ c ].elevationDeg,
                            angularRateDegPerSec: crossings[ c ].angularRateDegPerSec,
                            satClass: satClassCode( satcatInfo[ crossings[ c ].noradId ] ),
+                           // shadow transition inside the field (matched on
+                           // the lit sub-path): the report says so instead
+                           // of leaving a truncated streak to the meteor
+                           // heuristic
+                           sunlitFraction: crossings[ c ].sunlitFraction,
+                           shadowEntryUtc: crossings[ c ].shadowEntryUtc
+                              ? new Date( crossings[ c ].shadowEntryUtc ) : null,
+                           shadowExitUtc: crossings[ c ].shadowExitUtc
+                              ? new Date( crossings[ c ].shadowExitUtc ) : null,
                            frameId: f.meta.id } );
             var tr0 = null;
             for ( var tt = 0; tt < f.trails.length; ++tt )

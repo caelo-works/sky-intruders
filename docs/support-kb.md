@@ -290,6 +290,24 @@ Naming needs three things: **an observer site**, **fresh orbital elements**, and
   trustworthy. It then reports crossers as predictions only, and names nothing.
 - **Satellites in the Earth's shadow are never matched to a trail.** An eclipsed
   object cannot leave a streak, so the model refuses to explain one with it.
+  Since 0.2.2 this is judged along the whole crossing, not at its midpoint: a
+  satellite that **enters or leaves the shadow while inside the field** is
+  matched on the part of its path that was lit, and the night log says so —
+  *"entered Earth's shadow at HH:MM:SS UT"* / *"left Earth's shadow at
+  HH:MM:SS UT"* (FR *"entré dans l'ombre de la Terre à …"* / *"sorti de l'ombre
+  de la Terre à …"*); the composite label carries *"into shadow …"* / *"out of
+  shadow …"* (FR *"entre dans l'ombre …"* / *"sort de l'ombre …"*). A streak
+  that **fades out mid-frame at dusk or dawn** is therefore usually a named
+  satellite, not a meteor. On **0.2.1 and earlier** the same streak was
+  rejected as eclipsed and handed to the meteor heuristic, which could attach
+  a shower name to it — advise updating rather than trusting that label.
+  The shadow model itself is coarse (no penumbra): the instant is good to a
+  few tens of seconds, and the streak's brightness tapers over that span.
+- **Matching is the same whichever way a trail was measured.** Orientation is
+  compared at the middle of each segment, so a trail near the pole (δ > 60°)
+  is treated identically whether the detector listed its endpoints north-first
+  or south-first. On 0.2.1 and earlier, high-declination fields could lose or
+  gain a name on that accident alone.
 
 **Identification quality decays with the age of the orbital elements.**
 Elements are a prediction, and the prediction drifts — mostly along the track —
@@ -317,14 +335,20 @@ Each trail gets a class and a colour on the result image:
   classified object, or debris. **It is a correct result, not a failure.**
 - **meteor** (pink) — needs **two** cues out of: the trail stops inside the frame;
   its brightness varies strongly along its length; it aligns with an active
-  meteor shower's radiant. Radiant alignment **alone is never enough**.
+  meteor shower's radiant. Radiant alignment **alone is never enough**. A
+  satellite entering the Earth's shadow shows the first two cues too; since
+  0.2.2 it is named first (see 4.3) and only unexplained leftovers reach this
+  heuristic.
 - **airplane** (olive) — a parallel bundle whose brightness flickers (strobes).
 - **satellite train** (green) — a parallel bundle of steady brightness, typically
   a recent constellation launch.
 - **unknown** (pale grey) — no distinguishing cue.
 
 Ghost lines for predicted-but-unconfirmed passes are pale yellow (sunlit) or grey
-(in shadow), and only appear if the user ticked the corresponding box.
+(in shadow), and only appear if the user ticked the corresponding box. "In
+shadow" here means lit at **no** point of the crossing; a pass that was lit for
+any part of it is drawn yellow and carries the *"into shadow …"* / *"out of
+shadow …"* tag when it changed state in the field.
 
 ### 4.5 What you get at the end
 
