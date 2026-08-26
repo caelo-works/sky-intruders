@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-26
+
+**Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-26:
+GUI construction smoke test in both languages including the new Advanced
+group, the observer-site parser and the no-site banner; v8 runtime selftest
+7/7; the 13-frame reference night on the no-plate-solve path gives 12 trails,
+8 anchor pairs and the same 8 named satellites as a same-day replay of the
+0.2.1 tag on the same frames and elements (the identical output proves
+parity; the difference from the 0.2.1 release-day figures is elements age,
+as documented) — the only report differences are the UT clock and the
+localized operator labels; Node harness: 12 steps green including the new
+syntax check of the unbundled entry script, the `net` parsers and the EN/FR
+golden night logs; harness time 32 s → 19 s.
+
 ### Changed
 
 - The Release workflow now runs the Node test harness before building and
