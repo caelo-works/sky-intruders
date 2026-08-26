@@ -6,19 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-## [0.2.2] - 2026-08-26
+## [0.3.0] - 2026-08-26
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-26:
-GUI construction smoke test in both languages including the new Advanced
-group, the observer-site parser and the no-site banner; v8 runtime selftest
-7/7; the 13-frame reference night on the no-plate-solve path gives 12 trails,
-8 anchor pairs and the same 8 named satellites as a same-day replay of the
-0.2.1 tag on the same frames and elements (the identical output proves
-parity; the difference from the 0.2.1 release-day figures is elements age,
-as documented) — the only report differences are the UT clock and the
-localized operator labels; Node harness: 12 steps green including the new
-syntax check of the unbundled entry script, the `net` parsers and the EN/FR
-golden night logs; harness time 32 s → 19 s.
+GUI construction smoke test in both languages (Advanced group, observer
+parser, duplicate-name status, no-site banner); v8 runtime selftest 7/7; the
+13-frame reference night on the no-plate-solve path, compared with the 0.2.2
+build run the same day on the same frames and elements: the same 8 named
+satellites at the same confidences, one more anchor pair (9) and one more
+high-confidence name (DELTA 1 DEB), every trail at the same endpoints; the
+only reclassification is one trail now reported as an unidentified streak
+because its brightness variation is measured for real (0.46 against a local
+background; the previous estimator divided by the sky level and read ~0.05
+on every trail). A regression found on this gate — a faint trail lost after
+the refinement grid moved 0.8 px off the 1-px ridge — was diagnosed by
+replaying the captured detector inputs offline and fixed (`snapToRidge`)
+before the cut. Structural refactor pinned bit-for-bit by a 400-scenario
+assigner snapshot and geometry equivalence tests. Node harness: 17 steps
+green. Reference night runtime 250 s → 130 s.
 
 ### Changed
 
@@ -35,21 +40,6 @@ golden night logs; harness time 32 s → 19 s.
   (`SITleNet.fetchMergedTleText`) and the night event assembly
   (`pjsr/lib/NightEvents.js`) moved out of `runAnalysis` into Node-testable
   libraries. Fixes #19.
-- The Release workflow now runs the Node test harness before building and
-  refuses to publish on a red run; the harness also syntax-checks the
-  unbundled PJSR files (entry script, `Render.js`) and bundles `Net.js` with
-  unit tests for its TLE/SATCAT parsers. `docs/RELEASING.md` orders the steps
-  as tests → commit → push `main` → tag → push tag and uses a process-local
-  token instead of `gh auth switch`. Fixes #7.
-- Every first-party source under `pjsr/` now opens with an SPDX licence
-  identifier (`GPL-3.0-only`); the vendored `satellite.js` keeps its own
-  MIT notice.
-- The update package built by `scripts/build-update-package.sh` ships the
-  repository `LICENSE` next to the entry script (still a reproducible zip).
-- Node harness: the meteor slow-mover suite injects two synthetic rates
-  (0.5 and 3 arcsec/min) into the real storm pool instead of four, cutting
-  the harness run time by roughly half while keeping the zero-candidate
-  storm pin and the drift-artifact family test.
 - Documentation: `docs/ARCHITECTURE.md` rewritten against the code — the
   full module map (Geom, SatLabels, NightEvents, Render, Cosmology, Catalogs,
   Treasure, TreasureReport, the vendored satellite.js) with include order,
@@ -113,6 +103,69 @@ golden night logs; harness time 32 s → 19 s.
   `brightnessVariation`; the variation is floored at 6 × the per-sample
   noise so a trail invisible at full resolution no longer fires the 0.35
   flasher/meteor cue. Fixes #15.
+- Asteroid candidates: the shared-velocity veto no longer discards real
+  asteroid families. Main-belt asteroids in one ecliptic field near
+  opposition move in step (a few tenths of an arcsec/min, within ~10 % of
+  each other), and the previous rule — any 3 tracks within 25 % of one
+  velocity are a registration-drift artifact family — reported none of them.
+  A family is now vetoed on sensor evidence: when the blobs carry sensor
+  pixel coordinates (single-frame path), 3+ co-moving tracks are dropped only
+  if every member stays within 2 px of one sensor position; without pixels
+  (registered path, whose reference-grid pixels only restate the sky) the
+  blind rule requires 5+ tracks within max(0.2 arcsec/min, 8 % of the rate).
+  The Node harness injects three synthetic asteroids at ~0.4 arcsec/min into
+  the real storm pool (all three reported, with and without pixels), keeps
+  the storm pinned at zero and the drift-artifact family vetoed in both
+  branches, and checks that a pixel-stationary trio is still rejected. Fixes
+  #17. Fixes #17.
+- Frames are identified by their position in the input list plus their file
+  name (`NNN_<name>`) instead of the file name alone, so a night assembled
+  from several capture folders that reuse `Light_001.fits` no longer merges
+  two frames' satellite crossings, mover tracks or overlays into one.
+  Registered copies in the scratch folder are named `NNN_<name>_r.xisf`
+  (StarAlignment runs in as many batches as the largest name multiplicity,
+  one in the usual case), the per-frame debug overlays carry the same tag,
+  and the input list warns on duplicate file names in both languages. The
+  night log and console still show the plain file name. The single-frame
+  fallback no longer runs StarDetector on unsolved frames whose sources
+  could never be projected, and the pass-A profiler timer and GUI yield now
+  run on every skip path (a "geometry mismatch" drop is counted in the
+  fallback warning). Fixes #18.
+
+## [0.2.2] - 2026-08-26
+
+**Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-26:
+GUI construction smoke test in both languages including the new Advanced
+group, the observer-site parser and the no-site banner; v8 runtime selftest
+7/7; the 13-frame reference night on the no-plate-solve path gives 12 trails,
+8 anchor pairs and the same 8 named satellites as a same-day replay of the
+0.2.1 tag on the same frames and elements (the identical output proves
+parity; the difference from the 0.2.1 release-day figures is elements age,
+as documented) — the only report differences are the UT clock and the
+localized operator labels; Node harness: 12 steps green including the new
+syntax check of the unbundled entry script, the `net` parsers and the EN/FR
+golden night logs; harness time 32 s → 19 s.
+
+### Changed
+
+- The Release workflow now runs the Node test harness before building and
+  refuses to publish on a red run; the harness also syntax-checks the
+  unbundled PJSR files (entry script, `Render.js`) and bundles `Net.js` with
+  unit tests for its TLE/SATCAT parsers. `docs/RELEASING.md` orders the steps
+  as tests → commit → push `main` → tag → push tag and uses a process-local
+  token instead of `gh auth switch`. Fixes #7.
+- Every first-party source under `pjsr/` now opens with an SPDX licence
+  identifier (`GPL-3.0-only`); the vendored `satellite.js` keeps its own
+  MIT notice.
+- The update package built by `scripts/build-update-package.sh` ships the
+  repository `LICENSE` next to the entry script (still a reproducible zip).
+- Node harness: the meteor slow-mover suite injects two synthetic rates
+  (0.5 and 3 arcsec/min) into the real storm pool instead of four, cutting
+  the harness run time by roughly half while keeping the zero-candidate
+  storm pin and the drift-artifact family test.
+
+### Fixed
+
 - `tests/treasure.test.js`: the "no external asset URLs" check was written
   as `A && B || C`, which the credit link made vacuously true; it now lists
   every `http(s)` URL in the report and requires all of them to be the
@@ -163,21 +216,6 @@ golden night logs; harness time 32 s → 19 s.
   `si-frame-annotated-<token>-<n>.png`) so concurrent PixInsight instances do
   not collide. Fixes #6.
 
-- Asteroid candidates: the shared-velocity veto no longer discards real
-  asteroid families. Main-belt asteroids in one ecliptic field near
-  opposition move in step (a few tenths of an arcsec/min, within ~10 % of
-  each other), and the previous rule — any 3 tracks within 25 % of one
-  velocity are a registration-drift artifact family — reported none of them.
-  A family is now vetoed on sensor evidence: when the blobs carry sensor
-  pixel coordinates (single-frame path), 3+ co-moving tracks are dropped only
-  if every member stays within 2 px of one sensor position; without pixels
-  (registered path, whose reference-grid pixels only restate the sky) the
-  blind rule requires 5+ tracks within max(0.2 arcsec/min, 8 % of the rate).
-  The Node harness injects three synthetic asteroids at ~0.4 arcsec/min into
-  the real storm pool (all three reported, with and without pixels), keeps
-  the storm pinned at zero and the drift-artifact family vetoed in both
-  branches, and checks that a pixel-stationary trio is still rejected. Fixes
-  #17.
 - The "Detection threshold (σ)" slider now drives the threshold a normal night
   run actually uses (`diffKSigma`, on the registered difference image; default
   4.5, range 2.5–8) instead of the single-frame fallback value it silently
@@ -201,19 +239,6 @@ golden night logs; harness time 32 s → 19 s.
   console; the console also prints the site that was used and where it came
   from. Fixes #9.
 
-- Frames are identified by their position in the input list plus their file
-  name (`NNN_<name>`) instead of the file name alone, so a night assembled
-  from several capture folders that reuse `Light_001.fits` no longer merges
-  two frames' satellite crossings, mover tracks or overlays into one.
-  Registered copies in the scratch folder are named `NNN_<name>_r.xisf`
-  (StarAlignment runs in as many batches as the largest name multiplicity,
-  one in the usual case), the per-frame debug overlays carry the same tag,
-  and the input list warns on duplicate file names in both languages. The
-  night log and console still show the plain file name. The single-frame
-  fallback no longer runs StarDetector on unsolved frames whose sources
-  could never be projected, and the pass-A profiler timer and GUI yield now
-  run on every skip path (a "geometry mismatch" drop is counted in the
-  fallback warning). Fixes #18.
 
 ## [0.2.1] - 2026-08-17
 
