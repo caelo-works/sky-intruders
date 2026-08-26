@@ -25,12 +25,11 @@ All notable changes to this project are documented here. The format is based on
   storm pin and the drift-artifact family test.
 
 ### Fixed
+
 - `tests/treasure.test.js`: the "no external asset URLs" check was written
   as `A && B || C`, which the credit link made vacuously true; it now lists
   every `http(s)` URL in the report and requires all of them to be the
   caelo.works credit. Fixes #13.
-### Fixed
-
 - Treasure Hunt no longer mistakes a VizieR error answer for an empty field.
   A live error body (`#INFO Error=…`) carries the same comment banner as a
   genuine answer, so the previous comment-line check accepted it and the empty
@@ -45,7 +44,6 @@ All notable changes to this project are documented here. The format is based on
   query carries a deterministic sort (largest galaxies and nebulae first,
   brightest quasars and stars first) so the rows dropped by the cap are the
   least notable ones rather than an arbitrary index order. Fixes #12.
-### Fixed
 - Night trails: a single frame with a corrupt header (bad `DATE-OBS`, zero
   `EXPTIME`, a propagation exception) no longer aborts satellite matching for
   the whole night. Frames with a non-positive `EXPTIME` are skipped with a
@@ -57,8 +55,6 @@ All notable changes to this project are documented here. The format is based on
   detection, the console now says so explicitly and the run downgrades to the
   header-based field-orientation fit, with the fit line labelled
   "(plate solve unavailable — orientation fit used instead)". Fixes #11.
-### Fixed
-
 - The night log now prints every time in UT with an explicit ` UT` suffix
   (chronology, predicted crossers, rush hour), matching the composite overlay
   instead of the computer's local clock. Same pass: the session exposure can
@@ -69,8 +65,6 @@ All notable changes to this project are documented here. The format is based on
   nights with no detected trail. The Node harness runs under `TZ=UTC` and
   checks EN/FR golden markdown over a synthetic three-night history. Fixes
   #10.
-### Fixed
-
 - Night trails no longer leaks image windows or registered frames when the
   registered-difference analysis fails part-way. Every "open a file, use its
   first window, close it" site now goes through one `withWindow` helper with a
