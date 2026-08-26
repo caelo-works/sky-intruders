@@ -213,6 +213,116 @@ function gauss( rng )
    var expect = Math.sqrt( 1.4 * 1.4 + 0.9 * 0.9 );
    assert( Math.abs( withReal[ 0 ].rateArcsecPerMin - expect ) < 0.3,
            "mover rate recovered: " + withReal[ 0 ].rateArcsecPerMin );
+
+   // Same family with sensor pixel coordinates: the artifacts sit still on
+   // the sensor (centroid jitter only), the real mover walks across it.
+   function addPixels( frames )
+   {
+      for ( var k = 0; k < frames.length; ++k )
+         for ( var b = 0; b < frames[ k ].blobs.length; ++b )
+         {
+            var blob = frames[ k ].blobs[ b ];
+            if ( blob.fluxAdu == 900 )
+            {
+               blob.x = 1000 + b * 40 + 0.3 * gauss( rng );
+               blob.y = 800 + b * 25 + 0.3 * gauss( rng );
+            }
+            else if ( blob.fluxAdu == 500 )
+            {
+               blob.x = 1500 - 20 * k + 0.3 * gauss( rng );
+               blob.y = 900 + 13 * k + 0.3 * gauss( rng );
+            }
+            else
+            {
+               blob.x = 3000 * rng();
+               blob.y = 2000 * rng();
+            }
+         }
+      return frames;
+   }
+   var stormPx = M.findAsteroidCandidates( addPixels( buildFrames( false ) ), null, null );
+   assert.strictEqual( stormPx.length, 0, "pixel-stationary drift family vetoed, got " + stormPx.length );
+   var withRealPx = M.findAsteroidCandidates( addPixels( buildFrames( true ) ), null, null );
+   assert.strictEqual( withRealPx.length, 1, "pixel-moving real mover kept, got " + withRealPx.length );
+   assert( Math.abs( withRealPx[ 0 ].rateArcsecPerMin - expect ) < 0.3,
+           "mover rate recovered with pixels: " + withRealPx[ 0 ].rateArcsecPerMin );
+} )();
+
+( function testAsteroidFamilySurvives()
+{
+   // Issue #17: three main-belt asteroids in one ecliptic field near
+   // opposition move retrograde at nearly the same velocity (~0.4 arcsec/min,
+   // within 10 % of each other). Injected into the real storm pool, all
+   // three must be reported exactly once each — with or without pixels.
+   var raw = JSON.parse( fs.readFileSync(
+      path.join( __dirname, "fixtures", "movers", "night13-pool.json" ), "utf8" ) );
+   var vel = [ [ -0.38, 0.07 ], [ -0.40, 0.05 ], [ -0.42, 0.09 ] ]; // arcsec/min
+   var origin = [ [ 312.9, 31.6 ], [ 313.3, 31.4 ], [ 313.1, 31.9 ] ];
+   function build( withPixels )
+   {
+      var rng = makeRng( 17 );
+      var fr = raw.frames.map( function( f )
+      {
+         return { id: f.id, dateObs: new Date( f.dateObs ),
+                  blobs: f.blobs.map( function( b )
+                  {
+                     var blob = { raDeg: b[ 0 ], decDeg: b[ 1 ], fluxAdu: b[ 2 ] };
+                     if ( withPixels )
+                     {
+                        blob.x = 4000 * rng();
+                        blob.y = 3000 * rng();
+                     }
+                     return blob;
+                  } ) };
+      } );
+      var seg = fr.slice( 6 );
+      var t0 = seg[ 0 ].dateObs;
+      for ( var m = 0; m < vel.length; ++m )
+      {
+         var cd = Math.cos( origin[ m ][ 1 ] * Math.PI / 180 );
+         for ( var s = 0; s < seg.length; ++s )
+         {
+            var dt = ( seg[ s ].dateObs - t0 ) / 60000;
+            var dx = vel[ m ][ 0 ] * dt + 0.5 * gauss( rng );
+            var dy = vel[ m ][ 1 ] * dt + 0.5 * gauss( rng );
+            var blob = { raDeg: origin[ m ][ 0 ] + dx / 3600 / cd,
+                         decDeg: origin[ m ][ 1 ] + dy / 3600, fluxAdu: 400, asteroid: m };
+            if ( withPixels )
+            {
+               // 2 arcsec/px sensor: the asteroid walks across the grid.
+               blob.x = 1000 + 500 * m + dx / 2;
+               blob.y = 1200 + 300 * m + dy / 2;
+            }
+            seg[ s ].blobs.push( blob );
+         }
+      }
+      return fr;
+   }
+   for ( var mode = 0; mode < 2; ++mode )
+   {
+      var got = M.findAsteroidCandidates( build( mode == 1 ), null, null );
+      assert.strictEqual( got.length, 3, ( mode ? "with" : "without" ) +
+                          " pixels: three co-moving asteroids all reported, got " + got.length );
+      for ( var g = 0; g < got.length; ++g )
+      {
+         assert( got[ g ].points.length >= 4, "asteroid tracked over 4+ frames" );
+         assert( Math.abs( got[ g ].rateArcsecPerMin - 0.41 ) < 0.08,
+                 "asteroid rate ~0.4 arcsec/min: " + got[ g ].rateArcsecPerMin );
+      }
+   }
+
+   // Three pixel-stationary points at one velocity are still an artifact
+   // family even at this small size: the pixel evidence decides.
+   var frozen = build( true );
+   for ( var k = 6; k < frozen.length; ++k )
+      for ( var b = 0; b < frozen[ k ].blobs.length; ++b )
+         if ( frozen[ k ].blobs[ b ].asteroid != null )
+         {
+            frozen[ k ].blobs[ b ].x = 2000 + frozen[ k ].blobs[ b ].asteroid * 50 + 0.5 * ( k % 3 );
+            frozen[ k ].blobs[ b ].y = 1500 + frozen[ k ].blobs[ b ].asteroid * 50 - 0.5 * ( k % 2 );
+         }
+   var vetoed = M.findAsteroidCandidates( frozen, null, null );
+   assert.strictEqual( vetoed.length, 0, "pixel-stationary trio vetoed, got " + vetoed.length );
 } )();
 
 // --- report renders the new asteroid class --------------------------------

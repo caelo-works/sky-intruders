@@ -76,6 +76,21 @@ All notable changes to this project are documented here. The format is based on
   `si-frame-annotated-<token>-<n>.png`) so concurrent PixInsight instances do
   not collide. Fixes #6.
 
+- Asteroid candidates: the shared-velocity veto no longer discards real
+  asteroid families. Main-belt asteroids in one ecliptic field near
+  opposition move in step (a few tenths of an arcsec/min, within ~10 % of
+  each other), and the previous rule — any 3 tracks within 25 % of one
+  velocity are a registration-drift artifact family — reported none of them.
+  A family is now vetoed on sensor evidence: when the blobs carry sensor
+  pixel coordinates (single-frame path), 3+ co-moving tracks are dropped only
+  if every member stays within 2 px of one sensor position; without pixels
+  (registered path, whose reference-grid pixels only restate the sky) the
+  blind rule requires 5+ tracks within max(0.2 arcsec/min, 8 % of the rate).
+  The Node harness injects three synthetic asteroids at ~0.4 arcsec/min into
+  the real storm pool (all three reported, with and without pixels), keeps
+  the storm pinned at zero and the drift-artifact family vetoed in both
+  branches, and checks that a pixel-stationary trio is still rejected. Fixes
+  #17.
 - The "Detection threshold (σ)" slider now drives the threshold a normal night
   run actually uses (`diffKSigma`, on the registered difference image; default
   4.5, range 2.5–8) instead of the single-frame fallback value it silently

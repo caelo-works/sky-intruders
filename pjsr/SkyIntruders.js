@@ -1525,13 +1525,26 @@ function runAnalysisIn( files, params, run )
    var movers = [];
    if ( params.detectAsteroids && ( set == null || hasUsableWcs( set.refMeta.wcs.kind ) ) )
    {
+      // Sensor pixel coordinates let findMovers tell a registration-drift
+      // family (sensor-fixed points, still in pixels) from an asteroid
+      // family (moving in pixels). Only the single-frame path measures
+      // blobs on the frame's own grid; the registered path measures them
+      // on the reference grid, where pixels merely restate the sky, so it
+      // hands over sky coordinates only and the detector falls back to its
+      // blind family rule.
+      var sensorGrid = ( set == null );
       var blobsByFrame = [];
       for ( var i = 0; i < frames.length; ++i )
       {
          var skyBlobs = [];
          for ( var b2 = 0; b2 < ( frames[ i ].blobs || [] ).length; ++b2 )
-            if ( frames[ i ].blobs[ b2 ].raDeg != null )
-               skyBlobs.push( frames[ i ].blobs[ b2 ] );
+         {
+            var sb = frames[ i ].blobs[ b2 ];
+            if ( sb.raDeg == null )
+               continue;
+            skyBlobs.push( sensorGrid ? sb
+                                      : { raDeg: sb.raDeg, decDeg: sb.decDeg, fluxAdu: sb.fluxAdu } );
+         }
          if ( skyBlobs.length > 0 )
             blobsByFrame.push( { id: frames[ i ].meta.id, dateObs: frames[ i ].meta.dateObs,
                                  blobs: skyBlobs } );
