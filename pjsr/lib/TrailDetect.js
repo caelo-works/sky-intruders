@@ -1868,17 +1868,22 @@ var SITrailDetect = ( function()
                 ( !mask || SITrailCore.lineEdgeAffinity( mask, binnedSelf.width,
                                                          binnedSelf.height, run, 8 ) <= 0.35 );
       };
-      params.noiseOverride = { median: 0, sigma: sigmaDiff };
-      params.mask = mask;
+      // Local options object: the caller's params are never written to.
+      var opts = {};
+      if ( params )
+         for ( var key in params )
+            opts[key] = params[key];
+      opts.noiseOverride = { median: 0, sigma: sigmaDiff };
+      opts.mask = mask;
       tP = Date.now();
-      var core = SITrailCore.detectCore( diff, binnedSelf.width, binnedSelf.height, params, thinOnly );
+      var core = SITrailCore.detectCore( diff, binnedSelf.width, binnedSelf.height, opts, thinOnly );
       if ( prof ) prof.brightMs = ( prof.brightMs || 0 ) + ( Date.now() - tP );
 
       tP = Date.now();
       for ( var i = 0; i < core.trails.length; ++i )
          SITrailCore.eraseSegment( diff, binnedSelf.width, binnedSelf.height, core.trails[i], 5 );
       processEvents();
-      var faint = SITrailCore.detectFaintCore( diff, binnedSelf.width, binnedSelf.height, params );
+      var faint = SITrailCore.detectFaintCore( diff, binnedSelf.width, binnedSelf.height, opts );
       if ( prof ) prof.faintMs = ( prof.faintMs || 0 ) + ( Date.now() - tP );
       for ( var f = 0; f < faint.trails.length; ++f )
          core.trails.push( faint.trails[f] );
