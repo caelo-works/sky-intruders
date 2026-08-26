@@ -285,6 +285,7 @@ var SITleNet = ( function()
       parseSatcatInfo: parseSatcatInfo,
       parseSatcatOwners: parseSatcatOwners,
       countTlePairs: countTlePairs,
+      buildUrl: buildUrl,
       DEFAULT_BASE: DEFAULT_BASE,
       DEFAULT_SOURCES: DEFAULT_SOURCES
    };
