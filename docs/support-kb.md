@@ -101,7 +101,8 @@ The user will name things in their own language. This is the lookup.
 | Draw predicted crossers on the result image | Tracer les passages prédits sur l'image résultat |
 | Also draw shadow crossers | Tracer aussi les passages dans l'ombre |
 | Observer site — only if the FITS headers carry none | Site d'observation — seulement si les headers FITS n'en ont pas |
-| Lat (°): / Lon (°): / Alt (m): | Lat (°) : / Lon (°) : / Alt (m) : |
+| Lat (°, +N): / Lon (°, +E): / Alt (m): | Lat (°, +N) : / Lon (°, +E) : / Alt (m) : |
+| No observer site — satellites not identified. | Pas de site d'observation — satellites non identifiés. |
 | Max catalog rows / type: | Objets max / type de catalogue : |
 | Hunt for: | Chercher : |
 | Galaxies / Quasars / Planetary nebulae / Asteroids | Galaxies / Quasars / Nébuleuses planétaires / Astéroïdes |
@@ -152,10 +153,21 @@ why a user with nothing in the list can still get a result.
   an exposure but that no detected trail confirmed.
 - **Also draw shadow crossers** — default **off**. Same, for satellites the model
   puts inside the Earth's shadow — invisible by definition, drawn in grey.
-- **Observer site (Lat / Lon / Alt)** — empty by default. This is only a
-  **fallback**: if the frames carry site headers (`SITELAT`/`SITELONG`,
-  `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), those win and
-  these fields are ignored. Altitude is optional and defaults to 0 m.
+- **Observer site (Lat (°, +N) / Lon (°, +E) / Alt (m))** — empty by default.
+  This is only a **fallback**: if the frames carry site headers
+  (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), those
+  win and these fields are ignored. Altitude is optional and defaults to 0 m.
+  Sign convention is in the label: **north and east positive**, south and west
+  negative (Paris is `48.85` / `2.35`; New York is `40.71` / `-74.01`). The
+  fields accept a decimal with a **dot or a comma** (`48.85` and `48,85` are
+  the same) and the sexagesimal forms the headers use (`48 51 24`,
+  `-2:21:00`). A value outside ±90° / ±180° (or −500…9000 m) or an unreadable
+  one is **rejected**: the field is cleared and the status line at the bottom
+  says why (exact texts in 7.1). An accepted value is echoed normalized in the
+  field, and the field's tooltip shows it with its hemisphere ("Accepted:
+  48.8500° N"). (On **0.2.1 and earlier** a comma was silently truncated —
+  `48,85` became 48 — and any number was accepted; if a user on an old version
+  types French-style decimals, that is why their identifications are off.)
 - **Advanced** group:
   - **Single-frame threshold (σ)** — default **5.0**, range 3 to 12. Used
     **only** in the degraded per-frame path (fewer than 3 frames, or a set that
@@ -173,6 +185,12 @@ why a user with nothing in the list can still get a result.
 Without an observer site — from the headers *or* from these fields — **satellite
 identification is switched off entirely**. Trails are still detected, they simply
 cannot be named. This is the most common cause of "why is nothing identified?".
+Since 0.2.2 that state is visible: the status line at the bottom of the window
+and a banner at the top of the report window both read **"No observer site —
+satellites not identified."** (« Pas de site d'observation — satellites non
+identifiés. »); the banner adds which headers were looked for and tells the
+user to fill in Lat / Lon and run again. The console still prints the message
+in 7.2 as well, and on a run *with* a site prints where it came from.
 
 ### 3.4 Tab 2 — Treasure Hunt
 
@@ -553,6 +571,23 @@ The user will copy-paste. These are the messages, word for word.
 - *"Add one plate-solved image, or open one in PixInsight first."* — Hunt pressed
   in Treasure Hunt with an empty list **and** no active image window.
 - *"Cannot open <path>"* — the listed file could not be read.
+- *"No observer site — satellites not identified."* / « Pas de site
+  d'observation — satellites non identifiés. » — shown on the status line of the
+  main window after the run and as a banner at the top of the night report
+  window, with the hint *"The frames carry no site headers (SITELAT / SITELONG,
+  OBSGEO-B / OBSGEO-L, LAT-OBS / LONG-OBS) and the Observer site fields are
+  empty. Trails were detected but cannot be named: fill in Lat / Lon and run
+  again."* Same meaning as the console message in 7.2.
+- Observer-site field rejections, on the status line, the field cleared:
+  *"Latitude must be between −90 and +90° (+N). Field cleared."*, *"Longitude
+  must be between −180 and +180° (+E). Field cleared."*, *"Elevation must be
+  between −500 and 9000 m. Field cleared."*, *"Coordinate not understood — use
+  48.85, 48,85 or 48 51 24. Field cleared."* (French: « La latitude doit être
+  entre −90 et +90° (+N). Champ vidé. », « La longitude doit être entre −180 et
+  +180° (+E). Champ vidé. », « L'altitude doit être entre −500 et 9000 m. Champ
+  vidé. », « Coordonnée incomprise — écris 48,85, 48.85 ou 48 51 24. Champ
+  vidé. »). The user typed something outside the range or unreadable; the
+  parameter is empty until they re-enter it.
 
 ### 7.2 Console messages, Night trails
 
@@ -560,9 +595,13 @@ The user will copy-paste. These are the messages, word for word.
   dialog fallback — satellite identification disabled."* — **the number one
   cause of "nothing was identified"**. Trails are detected but cannot be named.
   Fix: any of the listed header pairs in the frames, or fill the Observer site
-  fields in the Night trails tab. (Versions 0.1.1 and earlier word this message
-  "no observer site (SITELAT/SITELONG headers or dialog fallback)" — same
-  meaning.)
+  fields in the Night trails tab. Since 0.2.2 the same state is also shown in
+  the window (7.1). (Versions 0.1.1 and earlier word this message "no observer
+  site (SITELAT/SITELONG headers or dialog fallback)" — same meaning.)
+- *"Observer site (FITS headers): lat +48.8500, lon +2.3500, alt 120 m"* / *"…
+  (dialog fallback): …"* — the site that was used and where it came from. The
+  first thing to check when names look wrong: a longitude with the wrong sign
+  shows here.
 - *"NNNN satellites, from cache (STALE — network unreachable)"* — every source
   for the orbital elements failed and expired ones were used. Names and positions
   may be wrong. Restore the internet, delete the `tle` cache folder, re-run.
@@ -633,8 +672,10 @@ observer on the wrong side of the planet, and **every satellite identification
 then fails**, with no error message.
 
 **Symptom:** "trails are detected, the site is filled in, and still nothing is
-named." Have the user check the sign of their longitude. Escalate if it is
-correct.
+named." Have the user check the sign of their longitude — the console line
+*"Observer site (…): lat …, lon …"* shows the value actually used, and the
+dialog fields are labelled **+N** / **+E** (east positive, so a French site
+is positive and an American one negative). Escalate if it is correct.
 
 ### 8.3 Trains and aircraft can be confused, and parallel satellites merged
 
@@ -703,7 +744,8 @@ files.
 |---|---|---|
 | "I installed it but there is no menu entry" | PixInsight not restarted, or the feature registry is stale | Restart PixInsight, then **Script → Feature Scripts… → Regenerate**. It lives under **Script → CaeloWorks → Sky Intruders**. |
 | "It found no trails at all" | Fewer than 3 frames, or fewer than 3 **per filter** | Difference detection needs at least 3 frames of the same filter. Check the console for *"filter group … has only N frame(s)"*. |
-| "Trails are found but nothing is identified" | **No observer site** — by far the most common | The frames need site headers (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), or the user fills Lat/Lon in the Night trails tab. Without a site, identification is switched off entirely. |
+| "Trails are found but nothing is identified" | **No observer site** — by far the most common | Since 0.2.2 the window says so: the status line and the report banner read **"No observer site — satellites not identified."** The frames need site headers (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), or the user fills Lat (+N) / Lon (+E) in the Night trails tab — decimal with dot or comma, or sexagesimal. Without a site, identification is switched off entirely. |
+| "I typed my latitude and it disappeared" | The value was out of range or unreadable | The status line said why (7.1). Latitude within ±90, longitude within ±180 (east positive), decimal with dot or comma, or `48 51 24`. On **0.2.1 and earlier** a comma was silently truncated instead (`48,85` → 48): update the script. |
 | "Still nothing is identified, and my site is filled in" | No plate solve, and the orientation fallback gave up (fewer than 3 matching trails) | Plate-solve at least the **first** frame in the list. |
 | "The satellite names look wrong" | Stale orbital elements, or a wrong longitude sign | Look for **`(STALE — network unreachable)`** in the console; if present, delete the `tle` folder in `.caeloworks/sky-intruders` and re-run. Then check the longitude sign. |
 | "It says 'unidentified satellite' / orange trail" | No catalog match — a fresh launch, a classified object, or debris | **This is a correct, honest answer, not a failure.** The script refuses to guess a name it cannot support. |

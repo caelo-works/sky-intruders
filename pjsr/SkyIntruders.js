@@ -291,6 +291,26 @@ function siRunToken()
           ( 1000 + Math.floor( Math.random()*9000 ) );
 }
 
+// Observer-site field parsing: decimal with a dot OR a comma (French locale
+// keyboards), or the sexagesimal forms FrameMeta already reads from headers
+// ("48 51 24", "-12:30:00"). Returns { value } inside [lo, hi], { value: null }
+// for an empty field, or { error: "range" | "syntax" }.
+function siParseCoordinate( text, lo, hi )
+{
+   var str = String( text == null ? "" : text ).trim();
+   if ( str.length == 0 )
+      return { value: null };
+   str = str.replace( /,/g, "." ).replace( /\u00b0/g, " " );
+   var v = Number( str );
+   if ( !isFinite( v ) )
+      v = SIFrameMetaCore.parseSexagesimal( str );
+   if ( v == null || !isFinite( v ) )
+      return { error: "syntax" };
+   if ( v < lo || v > hi )
+      return { error: "range" };
+   return { value: v };
+}
+
 function analyzeFrame( filePath, params )
 {
    var r = withWindow( filePath, function( window )
@@ -1013,17 +1033,27 @@ function runAnalysisIn( files, params, run )
    if ( frames.length == 0 )
       throw new Error( "no frame could be analyzed" );
 
-   // Observer site: headers first, dialog fallback second.
-   var observer = null;
+   // Observer site: headers first, dialog fallback second. observerSource
+   // ("headers" | "dialog" | null) travels with the result so the dialog and
+   // the report can show the state, not just the console.
+   var observer = null, observerSource = null;
    for ( var i = 0; i < frames.length; ++i )
       if ( frames[ i ].meta.observer != null )
       {
          observer = frames[ i ].meta.observer;
+         observerSource = "headers";
          break;
       }
    if ( observer == null && params.observerLatDeg != null && params.observerLonDeg != null )
+   {
       observer = { latDeg: params.observerLatDeg, lonDeg: params.observerLonDeg,
                    altM: params.observerAltM || 0 };
+      observerSource = "dialog";
+   }
+   if ( observer != null )
+      console.writeln( format( "Observer site (%s): lat %+.4f, lon %+.4f, alt %.0f m",
+                               observerSource == "headers" ? "FITS headers" : "dialog fallback",
+                               observer.latDeg, observer.lonDeg, observer.altM || 0 ) );
 
    // TLE cross-match through the sidecar; degrade gracefully without it.
    var matchResponse = null, tleInfo = null;
@@ -1631,6 +1661,7 @@ function runAnalysisIn( files, params, run )
 
    return { night: night, report: report, tleInfo: tleInfo, frames: frames,
             resultImagePath: resultImagePath, fitInfo: fitInfo,
+            observer: observer, observerSource: observerSource,
             registered: ( set != null ), timings: timings,
             totalMs: Date.now() - tRun };
 }
@@ -2357,7 +2388,18 @@ var SI_UI = {
                    "order: SITELAT / SITELONG, OBSGEO-B / OBSGEO-L, LAT-OBS / " +
                    "LONG-OBS — decimal or sexagesimal. Elevation: SITEELEV, " +
                    "OBSGEO-H, ALT-OBS.",
-      lat: "Lat (\u00b0):", lon: "Lon (\u00b0):", alt: "Alt (m):",
+      lat: "Lat (\u00b0, +N):", lon: "Lon (\u00b0, +E):", alt: "Alt (m):",
+      coordEmptyTip: "Decimal (48.85 or 48,85) or sexagesimal (48 51 24). North and East " +
+                     "positive, South and West negative.",
+      coordAccepted: "Accepted:",
+      coordSyntax: "Coordinate not understood \u2014 use 48.85, 48,85 or 48 51 24. Field cleared.",
+      latRange: "Latitude must be between \u221290 and +90\u00b0 (+N). Field cleared.",
+      lonRange: "Longitude must be between \u2212180 and +180\u00b0 (+E). Field cleared.",
+      altRange: "Elevation must be between \u2212500 and 9000 m. Field cleared.",
+      noSiteStatus: "No observer site \u2014 satellites not identified.",
+      noSiteHint: "The frames carry no site headers (SITELAT / SITELONG, OBSGEO-B / OBSGEO-L, " +
+                  "LAT-OBS / LONG-OBS) and the Observer site fields are empty. Trails were " +
+                  "detected but cannot be named: fill in Lat / Lon and run again.",
       treasureRows: "Max catalog rows / type:",
       treasureRowsTip: "Upper bound on objects fetched per catalog (galaxies, quasars, " +
                        "nebulae, asteroids) around your field.",
@@ -2433,7 +2475,19 @@ var SI_UI = {
                    "lus, dans l'ordre : SITELAT / SITELONG, OBSGEO-B / OBSGEO-L, " +
                    "LAT-OBS / LONG-OBS — d\u00e9cimal ou sexag\u00e9simal. \u00c9l\u00e9vation : " +
                    "SITEELEV, OBSGEO-H, ALT-OBS.",
-      lat: "Lat (\u00b0) :", lon: "Lon (\u00b0) :", alt: "Alt (m) :",
+      lat: "Lat (\u00b0, +N) :", lon: "Lon (\u00b0, +E) :", alt: "Alt (m) :",
+      coordEmptyTip: "D\u00e9cimal (48,85 ou 48.85) ou sexag\u00e9simal (48 51 24). Nord et Est " +
+                     "positifs, Sud et Ouest n\u00e9gatifs.",
+      coordAccepted: "Valeur retenue :",
+      coordSyntax: "Coordonn\u00e9e incomprise \u2014 \u00e9cris 48,85, 48.85 ou 48 51 24. Champ vid\u00e9.",
+      latRange: "La latitude doit \u00eatre entre \u221290 et +90\u00b0 (+N). Champ vid\u00e9.",
+      lonRange: "La longitude doit \u00eatre entre \u2212180 et +180\u00b0 (+E). Champ vid\u00e9.",
+      altRange: "L'altitude doit \u00eatre entre \u2212500 et 9000 m. Champ vid\u00e9.",
+      noSiteStatus: "Pas de site d'observation \u2014 satellites non identifi\u00e9s.",
+      noSiteHint: "Les brutes n'ont pas de headers de site (SITELAT / SITELONG, OBSGEO-B / " +
+                  "OBSGEO-L, LAT-OBS / LONG-OBS) et les champs Site d'observation sont vides. " +
+                  "Les tra\u00een\u00e9es sont d\u00e9tect\u00e9es mais ne peuvent pas \u00eatre nomm\u00e9es : " +
+                  "renseigne Lat / Lon et relance.",
       treasureRows: "Objets max / type de catalogue :",
       treasureRowsTip: "Plafond d'objets r\u00e9cup\u00e9r\u00e9s par catalogue (galaxies, quasars, " +
                        "n\u00e9buleuses, ast\u00e9ro\u00efdes) autour du champ.",
@@ -2748,12 +2802,26 @@ class ReportDialog extends Dialog
       this.titleLabel.margin = 6;
       this.titleLabel.frameStyle = FrameStyle.Box;
 
+      var L = ( params && params.lang ) || "en";
+
+      // No observer site: say it where the user looks, not only in the console.
+      this.siteLabel = null;
+      if ( result.observer == null )
+      {
+         this.siteLabel = new Label( this );
+         this.siteLabel.useRichText = true;
+         this.siteLabel.wordWrapping = true;
+         this.siteLabel.margin = 6;
+         this.siteLabel.frameStyle = FrameStyle.Box;
+         this.siteLabel.text = "<span style=\"color:#e0a030;\"><b>" + uiT( L, "noSiteStatus" ) +
+                               "</b></span> " + uiT( L, "noSiteHint" );
+      }
+
       this.textBox = new TextBox( this );
       this.textBox.readOnly = true;
       this.textBox.text = result.report.markdown;
       this.textBox.setMinSize( 640, 480 );
 
-      var L = ( params && params.lang ) || "en";
       this.saveButton = new PushButton( this );
       this.saveButton.text = uiT( L, "saveReport" );
       this.saveButton.icon = siIcon( this, ":/icons/save.png" );
@@ -2805,6 +2873,8 @@ class ReportDialog extends Dialog
       this.sizer.margin = 8;
       this.sizer.spacing = 8;
       this.sizer.add( this.titleLabel );
+      if ( this.siteLabel != null )
+         this.sizer.add( this.siteLabel );
       this.sizer.add( this.textBox, 100 );
       this.sizer.add( this.buttons );
       this.adjustToContents();
@@ -3000,12 +3070,12 @@ class SkyIntrudersDialog extends Dialog
       this.advancedGroup.sizer.add( this.tleAgeControl );
       this.advancedGroup.sizer.add( this.tleUrlRow );
 
-      this.latEdit = this.makeCoordEdit( "Lat (°):", params.observerLatDeg,
+      this.latEdit = this.makeCoordEdit( "Lat (°, +N):", params.observerLatDeg, -90, 90, "lat",
                                          ( v ) => { self.params.observerLatDeg = v; } );
-      this.lonEdit = this.makeCoordEdit( "Lon (°):", params.observerLonDeg,
+      this.lonEdit = this.makeCoordEdit( "Lon (°, +E):", params.observerLonDeg, -180, 180, "lon",
                                          ( v ) => { self.params.observerLonDeg = v; } );
-      this.altEdit = this.makeCoordEdit( "Alt (m):", params.observerAltM,
-                                         ( v ) => { self.params.observerAltM = v; } );
+      this.altEdit = this.makeCoordEdit( "Alt (m):", params.observerAltM, -500, 9000, "alt",
+                                         ( v ) => { self.params.observerAltM = ( v == null ) ? 0 : v; } );
       this.observerRow = new HorizontalSizer;
       this.observerRow.spacing = 10;
       this.observerRow.add( this.latEdit.sizer );
@@ -3341,6 +3411,9 @@ class SkyIntrudersDialog extends Dialog
       this.latEdit.label.text = uiT( L, "lat" );
       this.lonEdit.label.text = uiT( L, "lon" );
       this.altEdit.label.text = uiT( L, "alt" );
+      this.latEdit.echo( this.params.observerLatDeg );
+      this.lonEdit.echo( this.params.observerLonDeg );
+      this.altEdit.echo( this.params.observerAltM );
       this.treasureRows.label.text = uiT( L, "treasureRows" );
       this.treasureRows.toolTip = uiT( L, "treasureRowsTip" );
       this.huntLabel.text = uiT( L, "huntFor" );
@@ -3428,25 +3501,65 @@ class SkyIntrudersDialog extends Dialog
          : ( n + uiT( this.params.lang, ( n == 1 ) ? "statusOne" : "statusMany" ) );
    }
 
-   makeCoordEdit( label, value, apply )
+   // One observer-site field. kind: "lat" | "lon" | "alt" (picks the range
+   // message and the +N/+E echo). An out-of-range or unreadable entry is
+   // rejected: the field is cleared, the parameter set to null and the status
+   // line says why. An accepted value is echoed back normalized (decimal,
+   // dot) in the field and, with its hemisphere, in the field's tooltip.
+   makeCoordEdit( label, value, lo, hi, kind, apply )
    {
+      var self = this;
       var l = new Label( this );
       l.text = label;
       l.textAlignment = TextAlign.Right | TextAlign.VertCenter;
       var e = new Edit( this );
       e.setFixedWidth( this.font.width( "-000.000000" ) + 16 );
+      var ctl = { label: l, edit: e, kind: kind };
+      ctl.echo = function( v )
+      {
+         e.toolTip = ( v == null ) ? uiT( self.params.lang, "coordEmptyTip" )
+                                   : uiT( self.params.lang, "coordAccepted" ) + " " +
+                                     self.formatCoordinate( v, kind );
+      };
       if ( value != null )
          e.text = String( value );
+      ctl.echo( value );
       e.onEditCompleted = () =>
       {
-         var v = parseFloat( e.text );
-         apply( isNaN( v ) ? null : v );
+         var r = siParseCoordinate( e.text, lo, hi );
+         if ( r.error )
+         {
+            apply( null );
+            e.text = "";
+            ctl.echo( null );
+            self.updateStatus( "<span style=\"color:#e0a030;\">" +
+                               uiT( self.params.lang, ( r.error == "range" ) ? kind + "Range" : "coordSyntax" ) +
+                               "</span>" );
+            return;
+         }
+         apply( r.value );
+         e.text = ( r.value == null ) ? "" : String( Math.round( r.value*1e6 )/1e6 );
+         ctl.echo( r.value );
+         self.updateStatus();
       };
       var s = new HorizontalSizer;
       s.spacing = 4;
       s.add( l );
       s.add( e );
-      return { label: l, edit: e, sizer: s };
+      ctl.sizer = s;
+      return ctl;
+   }
+
+   // "48.8500° N" / "2.3500° E" / "120 m" — the echo of an accepted value.
+   formatCoordinate( v, kind )
+   {
+      if ( kind == "alt" )
+         return Math.round( v ) + " m";
+      var hemi = ( kind == "lat" ) ? ( v < 0 ? "S" : "N" ) : ( v < 0 ? "W" : "E" );
+      var a = Math.abs( v ).toFixed( 4 );
+      if ( this.params.lang == "fr" )
+         a = a.replace( ".", "," );
+      return a + "\u00b0 " + hemi;
    }
 
    addFiles( paths )
@@ -3493,11 +3606,17 @@ class SkyIntrudersDialog extends Dialog
       this.setBusy( true );
       console.show();
       console.writeln( "<b>" + SKYINTRUDERS_TITLE + "</b> — analyzing " + this.files.length + " frame(s)…" );
+      var postStatus = null;
       try
       {
          this.lastResult = runAnalysis( this.files, this.params );
          console.writeln( "" );
          console.writeln( this.lastResult.report.markdown );
+         // The "no site" state must survive the report dialog: it stays on
+         // the status line until the file list changes.
+         if ( this.lastResult.observer == null )
+            postStatus = "<span style=\"color:#e0a030;\">" +
+                         uiT( this.params.lang, "noSiteStatus" ) + "</span>";
          var dir = File.extractDrive( this.files[ 0 ] ) + File.extractDirectory( this.files[ 0 ] );
          ( new ReportDialog( this.lastResult, this.params, dir ) ).execute();
       }
@@ -3509,6 +3628,8 @@ class SkyIntrudersDialog extends Dialog
       finally
       {
          this.setBusy( false );
+         if ( postStatus != null )
+            this.updateStatus( postStatus );
       }
    }
 
@@ -3636,6 +3757,29 @@ function siConstructTest()
       d.tleUrlEdit.text = "";
       d.tleUrlEdit.onEditCompleted();
       out.advancedOk = out.advancedOk && ( d.params.tleBaseUrl === null );
+
+      // Observer site: decimal comma, sexagesimal, range rejection, echo.
+      d.latEdit.edit.text = "48,85";
+      d.latEdit.edit.onEditCompleted();
+      d.lonEdit.edit.text = "-2 21 00";
+      d.lonEdit.edit.onEditCompleted();
+      out.coordOk = ( d.params.observerLatDeg === 48.85 ) &&
+                    ( d.params.observerLonDeg === -2.35 ) &&
+                    ( d.latEdit.edit.toolTip.indexOf( "48.8500" ) >= 0 ) &&
+                    ( d.lonEdit.edit.toolTip.indexOf( "W" ) >= 0 );
+      d.latEdit.edit.text = "480";
+      d.latEdit.edit.onEditCompleted();
+      out.coordOk = out.coordOk && ( d.params.observerLatDeg === null ) &&
+                    ( d.latEdit.edit.text === "" ) &&
+                    ( d.statusLabel.text.indexOf( uiT( "en", "latRange" ) ) >= 0 );
+
+      // The report dialog must carry the no-site banner.
+      var rd = new ReportDialog( { night: { dateLabel: "2026-01-01" },
+                                   report: { redditTitle: "t", markdown: "m" },
+                                   observer: null, resultImagePath: null },
+                                 { lang: "fr" }, File.systemTempDirectory );
+      out.noSiteBannerOk = ( rd.siteLabel != null ) &&
+                           ( rd.siteLabel.text.indexOf( uiT( "fr", "noSiteStatus" ) ) >= 0 );
 
       // Exercise the result dialogs too (they are built on demand at runtime).
       var res = { summary: { counts: { galaxy: 2, quasar: 1, pne: 0, asteroid: 1 },

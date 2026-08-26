@@ -32,6 +32,16 @@ All notable changes to this project are documented here. The format is based on
   composite mode) and the max-combine composite is reachable through that key.
   Fixes #8.
 
+- The observer-site fields accept a decimal comma (`48,85` no longer becomes
+  48) and the sexagesimal forms the headers use, reject values outside
+  ±90° / ±180° with a message on the status line instead of taking them at
+  face value, carry the sign convention in their labels (+N / +E) and echo
+  the accepted value with its hemisphere. A run without any observer site now
+  says "No observer site — satellites not identified." on the status line and
+  as a banner in the report window, in both languages, not only in the
+  console; the console also prints the site that was used and where it came
+  from. Fixes #9.
+
 ## [0.2.1] - 2026-08-17
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-17:
