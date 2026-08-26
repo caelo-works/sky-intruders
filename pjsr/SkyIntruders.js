@@ -106,8 +106,61 @@ var DEFAULT_PARAMS = {
    treasureQuasars: true,
    treasurePne: true,
    treasureAsteroids: true,
-   treasureAccent: SI_DEFAULT_ACCENT
+   treasureAccent: SI_DEFAULT_ACCENT,
+   // --- settings.json only (no dialog control) ---------------------------
+   // Append the night to the personal records (history.json). Headless test
+   // runs switch it off so they never pollute the log.
+   saveHistory: true,
+   // Build the annotated night composite at all.
+   nightResultImage: true,
+   // Composite background: "best" = the sharpest/cleanest single frame (every
+   // trail of the night is drawn on top anyway); "max" = max-combine of the
+   // whole registered set — shows every streak in the pixels, and every
+   // frame's hot pixels with them.
+   nightResultCombine: "best",
+   // Diagnostics: one annotated PNG per registered frame in the temp folder,
+   // and per-trail nearest-candidate data in the result's fitInfo.diag.
+   debugFrameOverlays: false,
+   matchDiagnostics: false
 };
+
+// Keys whose default is null: the type a saved value must have to be taken.
+var NULLABLE_PARAM_TYPES = {
+   tleBaseUrl: "string",
+   observerLatDeg: "number",
+   observerLonDeg: "number"
+};
+
+// A saved value is accepted only when it has the default's type (finite for
+// numbers, arrays of strings for arrays); anything else keeps the default.
+function isAcceptableParam( key, def, v )
+{
+   if ( v === undefined )
+      return false;
+   if ( def === null )
+   {
+      if ( v === null )
+         return true;
+      var want = NULLABLE_PARAM_TYPES[ key ];
+      if ( want === undefined || typeof v !== want )
+         return false;
+      return ( want !== "number" ) || isFinite( v );
+   }
+   if ( Array.isArray( def ) )
+   {
+      if ( !Array.isArray( v ) )
+         return false;
+      for ( var i = 0; i < v.length; ++i )
+         if ( typeof v[ i ] !== "string" )
+            return false;
+      return true;
+   }
+   if ( typeof v !== typeof def )
+      return false;
+   if ( typeof v === "number" )
+      return isFinite( v );
+   return true;
+}
 
 function configDir()
 {
@@ -124,8 +177,10 @@ function loadParams()
       {
          var saved = JSON.parse( File.readTextFile( p ) );
          for ( var k in out )
-            if ( saved[ k ] !== undefined )
+            if ( isAcceptableParam( k, DEFAULT_PARAMS[ k ], saved[ k ] ) )
                out[ k ] = saved[ k ];
+         if ( out.nightResultCombine !== "best" && out.nightResultCombine !== "max" )
+            out.nightResultCombine = DEFAULT_PARAMS.nightResultCombine;
          // tleExtraGroups has no dialog control, so a saved value is a
          // frozen former default, not a user choice: upgrade the old
          // default in place so existing installs gain the full catalog.
@@ -2267,8 +2322,28 @@ var SI_UI = {
                     "is empty) and discover the galaxies, quasars, nebulae and passing " +
                     "asteroids hiding in your field.",
       kSigma: "Detection threshold (\u03c3):",
-      kSigmaTip: "Trail pixels must exceed the frame background by this many " +
-                 "robust sigmas. Lower catches fainter trails but risks noise.",
+      kSigmaTip: "Threshold on the registered DIFFERENCE image, where the static sky " +
+                 "is already subtracted \u2014 the one every normal run (3+ frames) " +
+                 "uses. Trail pixels must exceed the residual noise by this many " +
+                 "robust sigmas: lower catches fainter streaks but risks noise. " +
+                 "Default 4.5.",
+      advanced: "Advanced",
+      singleKSigma: "Single-frame threshold (\u03c3):",
+      singleKSigmaTip: "Used ONLY in the degraded per-frame path: fewer than 3 frames, " +
+                       "or a set that could not be registered. There the sky is not " +
+                       "subtracted, so the threshold is higher. Default 5.0.",
+      asteroids: "Flag slow movers as asteroid candidates",
+      asteroidsTip: "Search the point sources of plate-solved frames for objects " +
+                    "drifting coherently from frame to frame. Candidates, not " +
+                    "confirmed detections; untick to skip the search.",
+      tleAge: "Orbital data max age (h):",
+      tleAgeTip: "Cached satellite elements older than this are re-downloaded. " +
+                 "Raise it to work offline on a recent cache; predictions degrade " +
+                 "with age. Default 12.",
+      tleUrl: "Orbital data mirror URL:",
+      tleUrlTip: "Base URL of a CelesTrak-compatible mirror, tried first when set. " +
+                 "Leave empty for the default sources (CelesTrak, then the " +
+                 "CaeloWorks mirror).",
       predicted: "Draw predicted crossers on the result image",
       predictedTip: "Satellites the orbit propagation puts inside your field " +
                     "during an exposure but that no detected trail matched — " +
@@ -2322,8 +2397,29 @@ var SI_UI = {
                     "liste est vide) et d\u00e9couvre les galaxies, quasars, n\u00e9buleuses et " +
                     "ast\u00e9ro\u00efdes de passage cach\u00e9s dans ton champ.",
       kSigma: "Seuil de d\u00e9tection (\u03c3) :",
-      kSigmaTip: "Les pixels d'une tra\u00een\u00e9e doivent d\u00e9passer le fond de ce nombre de " +
-                 "sigmas robustes. Plus bas = tra\u00een\u00e9es plus faibles, mais risque de bruit.",
+      kSigmaTip: "Seuil sur l'image de DIFF\u00c9RENCE recal\u00e9e, o\u00f9 le ciel statique est " +
+                 "d\u00e9j\u00e0 soustrait \u2014 celui de toute analyse normale (3 brutes et plus). " +
+                 "Les pixels d'une tra\u00een\u00e9e doivent d\u00e9passer le bruit r\u00e9siduel de ce " +
+                 "nombre de sigmas robustes : plus bas = tra\u00een\u00e9es plus faibles, mais " +
+                 "risque de bruit. D\u00e9faut 4,5.",
+      advanced: "Avanc\u00e9",
+      singleKSigma: "Seuil brute par brute (\u03c3) :",
+      singleKSigmaTip: "Utilis\u00e9 SEULEMENT dans le mode d\u00e9grad\u00e9 brute par brute : moins " +
+                       "de 3 brutes, ou un lot impossible \u00e0 recaler. Le ciel n'y est pas " +
+                       "soustrait, d'o\u00f9 un seuil plus haut. D\u00e9faut 5,0.",
+      asteroids: "Signaler les objets lents comme candidats ast\u00e9ro\u00efdes",
+      asteroidsTip: "Cherche parmi les sources ponctuelles des brutes r\u00e9solues les objets " +
+                    "qui d\u00e9rivent de fa\u00e7on coh\u00e9rente d'une brute \u00e0 l'autre. Des " +
+                    "candidats, pas des d\u00e9tections confirm\u00e9es ; d\u00e9coche pour sauter " +
+                    "la recherche.",
+      tleAge: "\u00c2ge max des donn\u00e9es orbitales (h) :",
+      tleAgeTip: "Les \u00e9l\u00e9ments orbitaux en cache plus vieux que \u00e7a sont " +
+                 "ret\u00e9l\u00e9charg\u00e9s. Augmente-le pour travailler hors ligne sur un cache " +
+                 "r\u00e9cent ; les pr\u00e9dictions se d\u00e9gradent avec l'\u00e2ge. D\u00e9faut 12.",
+      tleUrl: "URL du miroir orbital :",
+      tleUrlTip: "URL de base d'un miroir compatible CelesTrak, essay\u00e9 en premier quand " +
+                 "il est renseign\u00e9. Vide = sources par d\u00e9faut (CelesTrak, puis le " +
+                 "miroir CaeloWorks).",
       predicted: "Tracer les passages pr\u00e9dits sur l'image r\u00e9sultat",
       predictedTip: "Satellites que la propagation orbitale place dans le champ pendant une " +
                     "pose mais qu'aucune tra\u00een\u00e9e d\u00e9tect\u00e9e n'a confirm\u00e9s — trac\u00e9s en " +
@@ -2848,15 +2944,61 @@ class SkyIntrudersDialog extends Dialog
       if ( MODES.indexOf( params.mode ) < 0 ) // settings may restore a removed mode
          params.mode = "night";
 
-      // Night page: detection threshold + observer site.
+      // Night page: detection threshold + observer site + advanced knobs.
+      // The slider drives diffKSigma — the threshold every normal (3+ frame)
+      // run uses on the registered difference image. The single-frame
+      // fallback threshold (kSigma) lives in the Advanced group.
       this.kSigmaControl = new NumericControl( this );
       this.kSigmaControl.label.text = "Detection threshold (σ):";
-      this.kSigmaControl.setRange( 3, 12 );
+      this.kSigmaControl.setRange( 2.5, 8 );
       this.kSigmaControl.setPrecision( 1 );
-      this.kSigmaControl.setValue( params.kSigma );
-      this.kSigmaControl.toolTip = "Trail pixels must exceed the frame background by this many " +
-                                   "robust sigmas. Lower catches fainter trails but risks noise.";
-      this.kSigmaControl.onValueUpdated = ( v ) => { self.params.kSigma = v; };
+      this.kSigmaControl.setValue( params.diffKSigma );
+      this.kSigmaControl.onValueUpdated = ( v ) => { self.params.diffKSigma = v; };
+
+      this.singleKSigmaControl = new NumericControl( this );
+      this.singleKSigmaControl.label.text = "Single-frame threshold (σ):";
+      this.singleKSigmaControl.setRange( 3, 12 );
+      this.singleKSigmaControl.setPrecision( 1 );
+      this.singleKSigmaControl.setValue( params.kSigma );
+      this.singleKSigmaControl.onValueUpdated = ( v ) => { self.params.kSigma = v; };
+
+      this.asteroidsCheck = new CheckBox( this );
+      this.asteroidsCheck.text = "Flag slow movers as asteroid candidates";
+      this.asteroidsCheck.checked = ( params.detectAsteroids !== false );
+      this.asteroidsCheck.onCheck = ( checked ) => { self.params.detectAsteroids = checked; };
+
+      this.tleAgeControl = new NumericControl( this );
+      this.tleAgeControl.label.text = "Orbital data max age (h):";
+      this.tleAgeControl.setRange( 1, 168 );
+      this.tleAgeControl.setPrecision( 0 );
+      this.tleAgeControl.setValue( params.tleMaxAgeHours );
+      this.tleAgeControl.onValueUpdated = ( v ) => { self.params.tleMaxAgeHours = Math.round( v ); };
+
+      this.tleUrlLabel = new Label( this );
+      this.tleUrlLabel.text = "Orbital data mirror URL:";
+      this.tleUrlLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
+      this.tleUrlEdit = new Edit( this );
+      this.tleUrlEdit.text = params.tleBaseUrl || "";
+      this.tleUrlEdit.onEditCompleted = () =>
+      {
+         var t = String( self.tleUrlEdit.text ).trim();
+         self.params.tleBaseUrl = ( t.length > 0 ) ? t : null;
+         self.tleUrlEdit.text = t;
+      };
+      this.tleUrlRow = new HorizontalSizer;
+      this.tleUrlRow.spacing = 4;
+      this.tleUrlRow.add( this.tleUrlLabel );
+      this.tleUrlRow.add( this.tleUrlEdit, 100 );
+
+      this.advancedGroup = new GroupBox( this );
+      this.advancedGroup.title = "Advanced";
+      this.advancedGroup.sizer = new VerticalSizer;
+      this.advancedGroup.sizer.margin = 8;
+      this.advancedGroup.sizer.spacing = 6;
+      this.advancedGroup.sizer.add( this.singleKSigmaControl );
+      this.advancedGroup.sizer.add( this.asteroidsCheck );
+      this.advancedGroup.sizer.add( this.tleAgeControl );
+      this.advancedGroup.sizer.add( this.tleUrlRow );
 
       this.latEdit = this.makeCoordEdit( "Lat (°):", params.observerLatDeg,
                                          ( v ) => { self.params.observerLatDeg = v; } );
@@ -2898,7 +3040,8 @@ class SkyIntrudersDialog extends Dialog
          this.kSigmaControl,
          this.predictedCheck,
          this.shadowCheck,
-         this.observerGroup
+         this.observerGroup,
+         this.advancedGroup
       ] );
 
       // Treasure page: catalog depth + a plate-solve reminder.
@@ -3180,6 +3323,15 @@ class SkyIntrudersDialog extends Dialog
       this.treasureHint.text = uiT( L, "hintTreasure" );
       this.kSigmaControl.label.text = uiT( L, "kSigma" );
       this.kSigmaControl.toolTip = uiT( L, "kSigmaTip" );
+      this.advancedGroup.title = uiT( L, "advanced" );
+      this.singleKSigmaControl.label.text = uiT( L, "singleKSigma" );
+      this.singleKSigmaControl.toolTip = uiT( L, "singleKSigmaTip" );
+      this.asteroidsCheck.text = uiT( L, "asteroids" );
+      this.asteroidsCheck.toolTip = uiT( L, "asteroidsTip" );
+      this.tleAgeControl.label.text = uiT( L, "tleAge" );
+      this.tleAgeControl.toolTip = uiT( L, "tleAgeTip" );
+      this.tleUrlLabel.text = uiT( L, "tleUrl" );
+      this.tleUrlEdit.toolTip = uiT( L, "tleUrlTip" );
       this.predictedCheck.text = uiT( L, "predicted" );
       this.predictedCheck.toolTip = uiT( L, "predictedTip" );
       this.shadowCheck.text = uiT( L, "shadow" );
@@ -3467,6 +3619,23 @@ function siConstructTest()
       out.langSwitchOk = ( out.frAnalyze !== out.enAnalyze ) &&
                          ( out.frAnalyze === uiT( "fr", modeKey ) ) &&
                          ( out.enAnalyze === uiT( "en", modeKey ) );
+
+      // Advanced group: every control must exist, carry its parameter and
+      // round-trip a value through the handlers the GUI would fire.
+      d.kSigmaControl.onValueUpdated( 3.5 );
+      d.singleKSigmaControl.onValueUpdated( 6 );
+      d.asteroidsCheck.onCheck( false );
+      d.tleAgeControl.onValueUpdated( 48 );
+      d.tleUrlEdit.text = " https://example.invalid/tle ";
+      d.tleUrlEdit.onEditCompleted();
+      out.advancedOk = ( d.params.diffKSigma === 3.5 ) && ( d.params.kSigma === 6 ) &&
+                       ( d.params.detectAsteroids === false ) &&
+                       ( d.params.tleMaxAgeHours === 48 ) &&
+                       ( d.params.tleBaseUrl === "https://example.invalid/tle" ) &&
+                       ( d.advancedGroup.title === uiT( "en", "advanced" ) );
+      d.tleUrlEdit.text = "";
+      d.tleUrlEdit.onEditCompleted();
+      out.advancedOk = out.advancedOk && ( d.params.tleBaseUrl === null );
 
       // Exercise the result dialogs too (they are built on demand at runtime).
       var res = { summary: { counts: { galaxy: 2, quasar: 1, pne: 0, asteroid: 1 },

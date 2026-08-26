@@ -93,6 +93,11 @@ The user will name things in their own language. This is the lookup.
 | Night trails | Traînées de nuit |
 | Treasure Hunt | Chasse au trésor |
 | Detection threshold (σ): | Seuil de détection (σ) : |
+| Advanced | Avancé |
+| Single-frame threshold (σ): | Seuil brute par brute (σ) : |
+| Flag slow movers as asteroid candidates | Signaler les objets lents comme candidats astéroïdes |
+| Orbital data max age (h): | Âge max des données orbitales (h) : |
+| Orbital data mirror URL: | URL du miroir orbital : |
 | Draw predicted crossers on the result image | Tracer les passages prédits sur l'image résultat |
 | Also draw shadow crossers | Tracer aussi les passages dans l'ombre |
 | Observer site — only if the FITS headers carry none | Site d'observation — seulement si les headers FITS n'en ont pas |
@@ -136,12 +141,12 @@ why a user with nothing in the list can still get a result.
 
 *"Who crossed your photo last night?" — detects the trails and names them.*
 
-- **Detection threshold (σ)** — default **5.0**, range 3 to 12. **Warning: on a
-  normal night run this slider does nothing.** The real detection happens on a
-  registered difference image, which uses its own fixed internal threshold.
-  The slider only takes effect in the degraded fallback path (fewer than 3
-  frames). Do not tell a user to lower it to catch a faint trail — it will not
-  help. This is a known interface trap.
+- **Detection threshold (σ)** — default **4.5**, range 2.5 to 8. The threshold
+  on the **registered difference image**, i.e. the one every normal run (3+
+  frames) uses. Lower catches fainter streaks at the price of noise; 3.5 is a
+  reasonable first step for a faint trail that was missed, below 3 expect false
+  positives. (On **0.2.1 and earlier** this slider drove the single-frame
+  threshold only and did nothing on a normal run — see 8.1.)
 - **Draw predicted crossers on the result image** — default **off**. Draws, as
   pale ghost lines, the satellites the orbit model puts inside the field during
   an exposure but that no detected trail confirmed.
@@ -151,6 +156,19 @@ why a user with nothing in the list can still get a result.
   **fallback**: if the frames carry site headers (`SITELAT`/`SITELONG`,
   `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), those win and
   these fields are ignored. Altitude is optional and defaults to 0 m.
+- **Advanced** group:
+  - **Single-frame threshold (σ)** — default **5.0**, range 3 to 12. Used
+    **only** in the degraded per-frame path (fewer than 3 frames, or a set that
+    could not be registered), where the sky is not subtracted. Irrelevant to a
+    normal run.
+  - **Flag slow movers as asteroid candidates** — default **on**. Unticking it
+    skips the slow-mover search entirely (see 8.6 for what a candidate means).
+  - **Orbital data max age (h)** — default **12**, range 1 to 168. Cached
+    satellite elements older than this are re-downloaded. Raising it lets a
+    user work offline on a recent cache; predictions degrade with age.
+  - **Orbital data mirror URL** — empty by default. Base URL of a
+    CelesTrak-compatible mirror, tried first when set; empty means the default
+    sources (CelesTrak, then the CaeloWorks mirror — see 6.2).
 
 Without an observer site — from the headers *or* from these fields — **satellite
 identification is switched off entirely**. Trails are still detected, they simply
@@ -442,7 +460,9 @@ some networks outright, so **a pause of 10 to 25 seconds before satellites
 resolve is normal**: that is CelesTrak timing out and the mirror taking over. It
 is not a bug and needs no action.
 
-Elements are cached for 12 hours.
+Elements are cached for 12 hours by default — the **Orbital data max age (h)**
+control in the Advanced group changes that, and **Orbital data mirror URL**
+points the first attempt at a mirror of the user's own.
 
 The download includes the **full GP catalog** (~31k objects) on top of the
 active and recent-launch groups. Versions **0.1.1 and earlier** covered roughly
@@ -469,7 +489,19 @@ unnamed.
 
 Everything lives in the user's home folder, under **`.caeloworks/sky-intruders`**:
 
-- **`settings.json`** — all dialog settings. Deleting it resets them to defaults.
+- **`settings.json`** — all dialog settings, plus a few keys with no control
+  that support may ask a user to set by hand (a value of the wrong type is
+  ignored and the default used): `saveHistory` (default `true` — `false` stops
+  the night being added to the personal records), `nightResultImage` (default
+  `true` — `false` skips the annotated composite), `nightResultCombine`
+  (`"best"`, the default, or `"max"` for a max-combine of the whole registered
+  set as the composite background — every streak in the pixels, and every
+  frame's hot pixels too), `debugFrameOverlays` (default `false` — `true`
+  writes one annotated PNG per registered frame, `si-frame-annotated-<run
+  token>-<n>.png`, to the temp folder) and `matchDiagnostics` (default
+  `false` — `true` records, for every unnamed trail, the nearest predicted
+  crossing and how far it missed the tolerances). Deleting the file resets
+  everything to defaults.
 - **`history.json`** — the personal records. **Deleting it destroys them
   permanently.**
 - **`tle/`** — the satellite element cache. **Deleting this folder is the standard
@@ -583,16 +615,15 @@ The user will copy-paste. These are the messages, word for word.
 > **update the script**, then delete the `treasure-cache` folder inside
 > `.caeloworks/sky-intruders` once to clear any cached false empties.
 
-### 8.1 The detection threshold slider does nothing on a normal night run
+### 8.1 The detection threshold slider did nothing on a normal night run (0.2.1 and earlier)
 
-The **Detection threshold (σ)** slider in the Night trails tab does **not** affect
-a normal run. Detection happens on a registered difference image, which uses its
-own fixed internal threshold; the slider only applies to the degraded fallback
-path used when there are fewer than three frames.
-
-**Do not tell a user to lower it to catch a faint trail.** It will change
-nothing, and they will lose confidence in the advice. If they need more
-sensitivity, there is currently no setting for it — escalate.
+On **0.2.1 and earlier** the **Detection threshold (σ)** slider only drove the
+single-frame fallback threshold; a normal run (3+ frames) used a fixed internal
+threshold of 4.5 on the registered difference image, so dragging the slider
+changed nothing. **Fixed:** the slider now drives that difference-image
+threshold (default 4.5, range 2.5–8), and the single-frame value moved to the
+Advanced group. If a user on an old version reports the slider does nothing,
+the answer is **update the script**.
 
 ### 8.2 Longitude sign is taken at face value
 
@@ -682,7 +713,7 @@ files.
 | "It says below the noise but I can see the object" | Working as intended in most cases | The object must beat its local surroundings and 12 decoy apertures. Objects on nebulosity or in dense star fields legitimately fail. A blown-out saturated core can also trigger it — that one is a real bug, escalate. |
 | "I got exactly 400 objects" | The per-catalog row cap | Raise **Max catalog rows / type**. |
 | "The map shows far fewer objects than the summary" | Deliberate — the chart is curated | The counts are complete; only the most notable below-noise objects are drawn. |
-| "Lowering the σ slider changed nothing" | **Known bug** — the slider does not affect a normal night run | Confirm it. Do not blame the user. Escalate. |
+| "Lowering the σ slider changed nothing" | Version **0.2.1 or earlier** — the slider did not affect a normal night run | Update the script. On the current version the slider drives the real threshold; going from 4.5 to 3.5 is a visible change. |
 | "PixInsight warns about an unsigned repository" | Expected — not signed yet | Safe to accept. |
 | "It takes 20 seconds before it finds any satellites" | CelesTrak timing out, mirror taking over | Normal. No action needed. |
 
@@ -691,8 +722,8 @@ files.
 ## 10. Escalating
 
 **Stop and hand over to a human** when: the user reports one of the known bugs
-above (the dead σ slider, a saturated core called "below the noise", a merged
-train); when they have lost data (a
+above (a saturated core called "below the noise", a merged train, a σ slider
+that does nothing on an up-to-date version); when they have lost data (a
 deleted `history.json` cannot be recovered); when the answer is not in this
 document. **Do not improvise a threshold, a file path, or a compatibility claim.**
 

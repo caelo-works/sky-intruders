@@ -19,6 +19,19 @@ All notable changes to this project are documented here. The format is based on
   `si-frame-annotated-<token>-<n>.png`) so concurrent PixInsight instances do
   not collide. Fixes #6.
 
+- The "Detection threshold (σ)" slider now drives the threshold a normal night
+  run actually uses (`diffKSigma`, on the registered difference image; default
+  4.5, range 2.5–8) instead of the single-frame fallback value it silently
+  fed before. A new **Advanced** group on the Night trails tab exposes the
+  single-frame threshold, the asteroid-candidate search toggle, the orbital
+  data max age and a mirror URL, in both languages. `saveHistory`,
+  `nightResultImage`, `nightResultCombine`, `debugFrameOverlays` and
+  `matchDiagnostics` are declared in the defaults with the values the code
+  implied, so they can be set from `settings.json`; loaded values are now
+  type-checked (finite numbers, arrays of strings, `"best"`/`"max"` for the
+  composite mode) and the max-combine composite is reachable through that key.
+  Fixes #8.
+
 ## [0.2.1] - 2026-08-17
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-17:
