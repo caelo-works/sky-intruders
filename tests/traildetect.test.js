@@ -316,3 +316,146 @@ console.log("traildetect: clamped-residual noise override OK");
 }
 
 console.log("traildetect: high-pass flattening OK");
+
+// ---------------------------------------------------------------------------
+// Bright-pass angular refinement: an edge-to-edge trail at a non-integer
+// angle used to come back as 2-3 collinear fragments (1-degree Hough bins,
+// 1-px walk tolerance); it must be ONE trail with true endpoints.
+
+{
+   const W = 1500, H = 1000;
+   let s0 = 123456789, s1 = 362436069, s2 = 521288629, s3 = 88675123;
+   const rnd = () => { let tt = s0^(s0<<11); s0=s1; s1=s2; s2=s3; s3=(s3^(s3>>>19))^(tt^(tt>>>8)); return (s3>>>0)/4294967296; };
+   const gauss = () => { let s = 0; for (let i = 0; i < 12; i++) s += rnd(); return s - 6; };
+   for (const ang of [30.5, 37.3, 0.5, 120.2]) {
+      const a = new Float32Array(W*H);
+      for (let i = 0; i < a.length; i++) a[i] = 100 + 10*gauss();
+      // 1-px edge-to-edge line through the centre, S/N 25
+      const th = ang*Math.PI/180, ux = Math.cos(th), uy = Math.sin(th);
+      const cx = W/2, cy = H/2;
+      let tmin = -1e9, tmax = 1e9;
+      if (Math.abs(ux) > 1e-9) { const t1 = (0 - cx)/ux, t2 = (W - 1 - cx)/ux; tmin = Math.max(tmin, Math.min(t1, t2)); tmax = Math.min(tmax, Math.max(t1, t2)); }
+      if (Math.abs(uy) > 1e-9) { const t1 = (0 - cy)/uy, t2 = (H - 1 - cy)/uy; tmin = Math.max(tmin, Math.min(t1, t2)); tmax = Math.min(tmax, Math.max(t1, t2)); }
+      for (let t = tmin; t <= tmax; t += 0.5)
+         a[Math.round(cy + uy*t)*W + Math.round(cx + ux*t)] = 350;
+      const res = T.detectCore(a, W, H, PARAMS);
+      assert.strictEqual(res.trails.length, 1,
+         `${ang} deg: expected one trail, got ${res.trails.map(t => Math.round(t.lengthPx))}`);
+      const t = res.trails[0];
+      const err = endpointError(t, cx + ux*tmin, cy + uy*tmin, cx + ux*tmax, cy + uy*tmax);
+      assert.ok(err <= 4, `${ang} deg: endpoints off by ${err.toFixed(2)} px (limit 4)`);
+      assert.ok(angleDiff(t.angleDeg, ang) <= 0.3, `${ang} deg: angle ${t.angleDeg.toFixed(2)}`);
+   }
+}
+
+console.log("traildetect: bright-pass angular refinement OK");
+
+// ---------------------------------------------------------------------------
+// mergeDuplicateTrails: collinear fragments join into the union extent,
+// overlapping near-duplicates keep the longest, distant collinear segments
+// (train members) and parallel pairs stay separate.
+
+{
+   const seg = (x1, y1, x2, y2, extra) => Object.assign({
+      x1, y1, x2, y2, lengthPx: Math.hypot(x2 - x1, y2 - y1),
+      angleDeg: ((Math.atan2(y2 - y1, x2 - x1)*180/Math.PI) + 180) % 180,
+      fill: 1, score: 0.5 }, extra || {});
+   // two fragments of one horizontal trail, 5-px gap, 1 px across
+   let out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(205, 101, 400, 101)], 20);
+   assert.strictEqual(out.length, 1, "collinear fragments merge");
+   assert.ok(Math.abs(out[0].lengthPx - 400) < 1.5, `union length ${out[0].lengthPx}`);
+   assert.ok(Math.min(out[0].x1, out[0].x2) < 0.5 && Math.max(out[0].x1, out[0].x2) > 399.5, "union extent");
+   // three fragments chain into one
+   out = T.mergeDuplicateTrails([seg(0, 50, 100, 50), seg(210, 50, 300, 50), seg(104, 50, 205, 50)], 20);
+   assert.strictEqual(out.length, 1, "fragment chain merges");
+   // gap beyond the bound: separate trails (a train)
+   out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(260, 100, 400, 100)], 20);
+   assert.strictEqual(out.length, 2, "distant collinear segments stay separate");
+   // parallel, 8 px apart, overlapping: near-duplicate, keep the longest
+   out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(50, 108, 300, 108)], 20);
+   assert.strictEqual(out.length, 1, "overlapping near-duplicates collapse");
+   assert.ok(Math.abs(out[0].lengthPx - 250) < 1e-9, "the longest survives");
+   // parallel, 30 px apart: a real pair
+   out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(0, 130, 200, 130)], 20);
+   assert.strictEqual(out.length, 2, "a real parallel pair is untouched");
+   // a bright fragment joined to a faint one is not flagged faint
+   out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(203, 100, 400, 100, { faint: true })], 20);
+   assert.strictEqual(out.length, 1);
+   assert.strictEqual(out[0].faint, false, "bright+faint union is not faint");
+}
+
+console.log("traildetect: duplicate / fragment merge OK");
+
+// ---------------------------------------------------------------------------
+// Photometry against a local annulus background: width measured on trails
+// of FWHM 3 / 8 / 14 px (14 must exceed the 12-px veto, 8 must not), a
+// profile with no half-max crossing inside the +-16 px window yields the
+// null sentinel, a uniform
+// trail over a sky gradient with stars on it stays below the 0.35 flasher
+// cue, a real flasher stays above it, and noise alone does not fire it.
+
+{
+   const W = 600, H = 400;
+   let s0 = 123456789, s1 = 362436069, s2 = 521288629, s3 = 88675123;
+   const rnd = () => { let tt = s0^(s0<<11); s0=s1; s1=s2; s2=s3; s3=(s3^(s3>>>19))^(tt^(tt>>>8)); return (s3>>>0)/4294967296; };
+   const gauss = () => { let s = 0; for (let i = 0; i < 12; i++) s += rnd(); return s - 6; };
+   const seg = { x1: 40, y1: 60, x2: 560, y2: 340 };
+   const dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1, len = Math.hypot(dx, dy), ux = dx/len, uy = dy/len;
+   const frame = (fwhm, amp, opts) => {
+      opts = opts || {};
+      const a = new Float32Array(W*H);
+      for (let y = 0; y < H; y++)
+         for (let x = 0; x < W; x++)
+            a[y*W + x] = 0.10 + 0.10*x/W + 0.05*y/H + 0.004*gauss(); // sky + gradient + noise
+      const sig = fwhm/2.3548;
+      for (let y = 0; y < H; y++)
+         for (let x = 0; x < W; x++) {
+            const t = (x - seg.x1)*ux + (y - seg.y1)*uy;
+            if (t < 0 || t > len) continue;
+            const d = -(x - seg.x1)*uy + (y - seg.y1)*ux;
+            let A = amp;
+            if (opts.flashPeriod) A = (Math.floor(t/opts.flashPeriod) % 2 === 0) ? amp : 0;
+            a[y*W + x] += A*Math.exp(-d*d/(2*sig*sig));
+            if (opts.shoulder && d >= 1 && d <= 40) a[y*W + x] += 0.8*amp; // plateau on one side
+         }
+      if (opts.stars)
+         for (let k = 0; k < opts.stars; k++) {
+            const t = len*(k + 0.5)/opts.stars, cx = Math.round(seg.x1 + ux*t), cy = Math.round(seg.y1 + uy*t);
+            for (let yy = -2; yy <= 2; yy++)
+               for (let xx = -2; xx <= 2; xx++)
+                  a[(cy + yy)*W + cx + xx] += 0.5*Math.exp(-(xx*xx + yy*yy)/2);
+         }
+      return a;
+   };
+   const measure = a => T.measureTrail((x, y) => a[y*W + x], W, H, seg);
+
+   const w3 = measure(frame(3, 0.3)), w8 = measure(frame(8, 0.3)), w14 = measure(frame(14, 0.3));
+   assert.ok(Math.abs(w3.widthPx - 3) <= 1.2, `fwhm 3 measured ${w3.widthPx}`);
+   assert.ok(Math.abs(w8.widthPx - 8) <= 1.2, `fwhm 8 measured ${w8.widthPx}`);
+   assert.ok(w8.widthPx <= 12, "an 8-px trail is kept by the 12-px veto");
+   assert.ok(Math.abs(w14.widthPx - 14) <= 1.5, `fwhm 14 measured ${w14.widthPx}`);
+   assert.ok(w14.widthPx > 12, "a 14-px band is vetoed");
+   assert.ok(Math.abs(w3.meanFlux - 0.3) < 0.03, `flux is background-subtracted (${w3.meanFlux})`);
+
+   const band = measure(frame(40, 0.3));
+   assert.ok(band.widthPx > 12, `a 40-px band is vetoed (${band.widthPx})`);
+   // trail against a plateau: no half-max crossing on that side inside the
+   // window -> the sentinel, which the caller's veto treats as "too wide"
+   const shoulder = measure(frame(3, 0.3, { shoulder: true }));
+   assert.strictEqual(shoulder.widthPx, null, "no crossing inside the window yields the null sentinel");
+
+   const steady = measure(frame(3, 0.3, { stars: 5 }));
+   assert.ok(steady.brightnessVariation < 0.15,
+      `steady trail over gradient + stars: variation ${steady.brightnessVariation}`);
+   const flasher = measure(frame(3, 0.3, { flashPeriod: 30 }));
+   assert.ok(flasher.brightnessVariation > 0.35, `flasher: variation ${flasher.brightnessVariation}`);
+   const noise = measure(frame(3, 0));
+   assert.ok(noise.brightnessVariation < 0.35, `noise alone must not fire the cue (${noise.brightnessVariation})`);
+   assert.ok(noise.widthPx === null || noise.widthPx <= 12, "noise alone is not vetoed as broad");
+
+   // fwhmOfProfile: missing crossing -> null, not a clipped number
+   assert.strictEqual(T.fwhmOfProfile([0, 1, 1, 1, 1, 1, 1], 0), null, "no right crossing -> null");
+   assert.ok(Math.abs(T.fwhmOfProfile([0, 0, 2, 4, 2, 0, 0], 0, 3) - 2) < 1e-9, "explicit bg and peak index");
+}
+
+console.log("traildetect: annulus-background photometry + width veto OK");

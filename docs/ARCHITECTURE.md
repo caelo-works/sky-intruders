@@ -93,7 +93,12 @@ as a faint streak — so the static sky is removed first:
    (`subtractModel`): only transients survive, so the threshold can drop to
    `diffKSigma` (default 3.5) and catch the faint streaks narrowband filters
    leave. Trails land directly in the reference frame's pixel grid.
-5. Width veto: residual trails wider than 12 px FWHM are dropped (cloud bands).
+5. Width veto: residual trails whose full-resolution FWHM exceeds 12 px are
+   dropped (cloud bands, stacking artefacts). The FWHM is measured on a
+   ±16 px perpendicular profile against the lower of the two outer-annulus
+   (|o| ≥ 10 px) backgrounds, median over 8 stations; a profile with no
+   half-max crossing inside the window reports `widthPx = null`, which the
+   veto also drops. A 6–9 px bright satellite trail is kept.
 
 **Single-frame path (fallback).** As before:
 
@@ -109,10 +114,25 @@ as a faint streak — so the static sky is removed first:
 5. **Contiguity validation** (kills star-alignment false positives): a candidate
    line must have a contiguous above-threshold run ≥ minLength with ≥60% fill;
    stars along a chance line are sparse, trails are continuous.
-6. Accept → record endpoints (scaled back to full-res pixels), erase a corridor
-   around the line and iterate (multi-trail, cap 10).
-7. Photometry at full res: flux sampled along the segment, perpendicular FWHM
-   width, brightness-variation index (meteor cue).
+6. Each Hough peak is refined to sub-degree / sub-pixel (θ, ρ) about a point
+   on the coarse line before the walk, so an edge-to-edge trail at a
+   non-integer angle stays one run instead of 2–3 fragments (1° bins drift
+   ~13 px across a 1500-px frame).
+7. Accept → record endpoints (scaled back to full-res pixels), erase a corridor
+   around the accepted **segment only** (other collinear runs — train
+   members, flasher dashes — are re-proposed) and iterate (multi-trail, cap 10).
+8. Merge: overlapping near-duplicates (bright and faint pass on one streak)
+   keep the longest; collinear fragments within 4 binned px across, 2° in
+   direction and a gap ≤ 3 % of the diagonal become one trail with the union
+   extent. Farther collinear segments stay separate trails.
+9. Photometry at full res (`SITrailCore.measureTrail`): at 64 stations the
+   peak within ±1 px of the line minus the local annulus background;
+   `meanFluxAdu` is the mean excess, `brightnessVariation` is
+   MAD / max(median, 6 × per-sample noise) of the station excesses — sky
+   level and gradients cancel, a star crossing the trail only touches its
+   own station, and a trail below the full-resolution noise reads ~0.2, under
+   the 0.35 flasher/meteor cue (a flasher's alternating dashes read ~0.45+).
+   Perpendicular FWHM width as in step 5.
 
 ## Matching contracts (internal JS interfaces)
 
