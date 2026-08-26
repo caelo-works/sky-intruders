@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- The Release workflow now runs the Node test harness before building and
+  refuses to publish on a red run; the harness also syntax-checks the
+  unbundled PJSR files (entry script, `Render.js`) and bundles `Net.js` with
+  unit tests for its TLE/SATCAT parsers. `docs/RELEASING.md` orders the steps
+  as tests → commit → push `main` → tag → push tag and uses a process-local
+  token instead of `gh auth switch`. Fixes #7.
+
 ## [0.2.1] - 2026-08-17
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-17:
