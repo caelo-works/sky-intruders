@@ -61,31 +61,7 @@ var SICatalogs = ( function()
    {
       // "13 26 27.7865", "-00 25 49", "+47.19" -> value in the leading
       // field's unit, sign honored. Returns null when unparseable.
-      var str = trimStr( s );
-      if ( str.length === 0 )
-         return null;
-      var neg = false;
-      var c0 = str.charAt( 0 );
-      if ( c0 === '+' || c0 === '-' )
-      {
-         neg = ( c0 === '-' );
-         str = trimStr( str.substring( 1 ) );
-      }
-      var parts = str.split( /[\s:]+/ );
-      if ( parts.length < 1 || parts.length > 3 )
-         return null;
-      var value = 0, scale = 1;
-      for ( var i = 0; i < parts.length; ++i )
-      {
-         if ( parts[ i ].length === 0 )
-            return null;
-         var f = Number( parts[ i ] );
-         if ( !isFinite( f ) || f < 0 )
-            return null;
-         value += f*scale;
-         scale /= 60;
-      }
-      return neg ? -value : value;
+      return SIGeom.parseSexagesimal( s );
    }
 
    function normRa( ra )
@@ -483,15 +459,6 @@ var SICatalogs = ( function()
       catch ( e ) {}
    }
 
-   function pause( ms )
-   {
-      if ( typeof msleep == "function" ) { msleep( ms ); return; }
-      var until = Date.now() + ms;
-      while ( Date.now() < until )
-         if ( typeof processEvents == "function" )
-            processEvents();
-   }
-
    function warn( msg )
    {
       try { console.warningln( "Treasure/Catalogs: " + msg ); } catch ( e ) {}
@@ -598,7 +565,7 @@ var SICatalogs = ( function()
       for ( var a = 1; a <= attempts; ++a )
       {
          if ( a > 1 )
-            pause( 1000*( 1 << ( a - 1 ) ) );
+            SINet.pause( 1000*( 1 << ( a - 1 ) ) );
          try
          {
             var r = SINet.getText( url, ( opts.timeoutSec > 0 ) ? opts.timeoutSec : 30 );

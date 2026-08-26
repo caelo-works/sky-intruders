@@ -2,9 +2,9 @@
 /*
  * FrameMeta.js — SIFrameMeta: per-frame FITS/XISF metadata and WCS.
  *
- * SIFrameMetaCore holds the pure math — sexagesimal parsing, DATE-OBS
- * parsing, gnomonic (TAN) projection, FOV geometry — and runs under plain
- * Node for testing. SIFrameMeta.read( window, filePath ) is the
+ * SIFrameMetaCore holds the pure logic — keyword parsing, DATE-OBS
+ * parsing, FOV geometry (the spherical math itself lives in SIGeom) — and
+ * runs under plain Node for testing. SIFrameMeta.read( window, filePath ) is the
  * PixInsight-facing entry; it probes the window's astrometric solution
  * defensively and falls back to manual TAN, then to an approximate FOV.
  */
@@ -29,37 +29,9 @@ var SIFrameMetaCore = ( function()
 
    function parseSexagesimal( s )
    {
-      // "48 51 24", "-12 30 00", "12:34:56.7", "+48.85", "20 30.5" — returns
-      // a value in the unit of the leading field, or null. The sign is read
-      // from the string (parseFloat alone loses the sign of "-0 30 00").
-      if ( s === null || s === undefined )
-         return null;
-      var str = String( s ).trim();
-      if ( str.length === 0 )
-         return null;
-      var neg = false;
-      var c0 = str.charAt( 0 );
-      if ( c0 === '+' || c0 === '-' )
-      {
-         neg = ( c0 === '-' );
-         str = str.substring( 1 ).trim();
-      }
-      var parts = str.split( /[\s:]+/ );
-      if ( parts.length < 1 || parts.length > 3 )
-         return null;
-      var value = 0;
-      var scale = 1;
-      for ( var i = 0; i < parts.length; ++i )
-      {
-         if ( parts[i].length === 0 )
-            return null;
-         var f = Number( parts[i] );
-         if ( !isFinite( f ) || f < 0 )
-            return null;
-         value += f*scale;
-         scale /= 60;
-      }
-      return neg ? -value : value;
+      // "48 51 24", "-12 30 00", "12:34:56.7", "+48.85" -> value in the unit
+      // of the leading field, or null (SIGeom).
+      return SIGeom.parseSexagesimal( s );
    }
 
    function parseHoursToDeg( s )
@@ -158,51 +130,14 @@ var SIFrameMetaCore = ( function()
 
    function tanImageToCelestial( tan, x, y )
    {
-      // Gnomonic deprojection. x,y are 0-based image pixel coordinates
-      // (FITS pixel = image pixel + 1). Returns { raDeg, decDeg } or null.
-      var dp1 = ( x + 1 ) - tan.crpix1;
-      var dp2 = ( y + 1 ) - tan.crpix2;
-      var xi = ( tan.cd11*dp1 + tan.cd12*dp2 )*DEG;  // radians
-      var eta = ( tan.cd21*dp1 + tan.cd22*dp2 )*DEG;
-
-      var ra0 = tan.crval1*DEG;
-      var dec0 = tan.crval2*DEG;
-      var sinD0 = Math.sin( dec0 ), cosD0 = Math.cos( dec0 );
-
-      var denom = Math.sqrt( 1 + xi*xi + eta*eta );
-      var dec = Math.asin( ( sinD0 + eta*cosD0 )/denom );
-      var ra = ra0 + Math.atan2( xi, cosD0 - eta*sinD0 );
-
-      var raDeg = ra/DEG;
-      raDeg -= 360*Math.floor( raDeg/360 );  // normalize to [0,360)
-      return { raDeg: raDeg, decDeg: dec/DEG };
+      // Gnomonic deprojection, 0-based image pixels -> { raDeg, decDeg }.
+      return SIGeom.tanImageToCelestial( tan, x, y );
    }
 
    function tanCelestialToImage( tan, raDeg, decDeg )
    {
-      // Forward gnomonic projection + inverse CD matrix. Returns { x, y }
-      // in 0-based image pixels, or null (singular matrix, behind plane).
-      var ra0 = tan.crval1*DEG;
-      var dec0 = tan.crval2*DEG;
-      var ra = raDeg*DEG;
-      var dec = decDeg*DEG;
-      var dRA = ra - ra0;
-      var sinD0 = Math.sin( dec0 ), cosD0 = Math.cos( dec0 );
-      var sinD = Math.sin( dec ), cosD = Math.cos( dec );
-
-      var D = sinD*sinD0 + cosD*cosD0*Math.cos( dRA );
-      if ( D <= 0 )
-         return null; // more than 90 degrees from the tangent point
-
-      var xi = ( cosD*Math.sin( dRA )/D )/DEG;                       // degrees
-      var eta = ( ( sinD*cosD0 - cosD*sinD0*Math.cos( dRA ) )/D )/DEG;
-
-      var det = tan.cd11*tan.cd22 - tan.cd12*tan.cd21;
-      if ( det === 0 )
-         return null;
-      var dp1 = ( tan.cd22*xi - tan.cd12*eta )/det;
-      var dp2 = ( tan.cd11*eta - tan.cd21*xi )/det;
-      return { x: tan.crpix1 + dp1 - 1, y: tan.crpix2 + dp2 - 1 };
+      // Forward gnomonic projection -> { x, y } 0-based pixels, or null.
+      return SIGeom.tanCelestialToImage( tan, raDeg, decDeg );
    }
 
    // ------------------------------------------------------------------------
@@ -210,26 +145,14 @@ var SIFrameMetaCore = ( function()
 
    function angularSeparationDeg( ra1, dec1, ra2, dec2 )
    {
-      // Haversine — stable for both small and large separations.
-      var dRA = ( ra2 - ra1 )*DEG;
-      var dDec = ( dec2 - dec1 )*DEG;
-      var a = Math.sin( dDec/2 )*Math.sin( dDec/2 ) +
-              Math.cos( dec1*DEG )*Math.cos( dec2*DEG )*Math.sin( dRA/2 )*Math.sin( dRA/2 );
-      return 2*Math.atan2( Math.sqrt( a ), Math.sqrt( 1 - a ) )/DEG;
+      return SIGeom.angularSepDeg( ra1, dec1, ra2, dec2 );
    }
 
    function positionAngleDeg( ra1, dec1, ra2, dec2 )
    {
       // Position angle of point 2 as seen from point 1, degrees east of
       // north, normalized to (-180, 180].
-      var dRA = ( ra2 - ra1 )*DEG;
-      var d1 = dec1*DEG, d2 = dec2*DEG;
-      var y = Math.sin( dRA )*Math.cos( d2 );
-      var x = Math.cos( d1 )*Math.sin( d2 ) - Math.sin( d1 )*Math.cos( d2 )*Math.cos( dRA );
-      var pa = Math.atan2( y, x )/DEG;
-      if ( pa <= -180 ) pa += 360;
-      if ( pa > 180 ) pa -= 360;
-      return pa;
+      return SIGeom.positionAngleSignedDeg( ra1, dec1, ra2, dec2 );
    }
 
    function fovFromProjector( project, width, height )

@@ -8,7 +8,8 @@
  * everything else — TLE validation, Meeus sun direction, cylindrical
  * Earth-shadow test, WGS84 geodetic observer ECI, topocentric directions,
  * gnomonic FOV test, crossing scan and score-ordered trail assignment —
- * is self-contained here. Request and response shapes are inherited
+ * lives here, on top of the shared spherical math in SIGeom and the
+ * median in SIStats. Request and response shapes are inherited
  * verbatim from the Go engine (docs/ARCHITECTURE.md, matching contracts):
  * match() returns either a full response with error: null, or a bare
  * { error: "..." } object; it never throws on bad catalog or request data.
@@ -154,27 +155,14 @@ var SISatMatch = ( function()
 
    function angularSepDeg( a, b )
    {
-      // Great-circle separation, haversine form (stable at small angles).
-      var ra1 = a.raDeg*DEG2RAD, de1 = a.decDeg*DEG2RAD;
-      var ra2 = b.raDeg*DEG2RAD, de2 = b.decDeg*DEG2RAD;
-      var sd = Math.sin( ( de2 - de1 )/2 );
-      var sr = Math.sin( ( ra2 - ra1 )/2 );
-      var h = sd*sd + Math.cos( de1 )*Math.cos( de2 )*sr*sr;
-      return 2*Math.asin( Math.min( 1, Math.sqrt( h ) ) )*RAD2DEG;
+      // Great-circle separation, haversine form (SIGeom).
+      return SIGeom.angularSepDeg( a.raDeg, a.decDeg, b.raDeg, b.decDeg );
    }
 
    function positionAngleDeg( a, b )
    {
       // Bearing of b as seen from a, east of north, in [0, 360).
-      var ra1 = a.raDeg*DEG2RAD, de1 = a.decDeg*DEG2RAD;
-      var ra2 = b.raDeg*DEG2RAD, de2 = b.decDeg*DEG2RAD;
-      var dra = ra2 - ra1;
-      var y = Math.sin( dra )*Math.cos( de2 );
-      var x = Math.cos( de1 )*Math.sin( de2 ) - Math.sin( de1 )*Math.cos( de2 )*Math.cos( dra );
-      var pa = Math.atan2( y, x )*RAD2DEG;
-      if ( pa < 0 )
-         pa += 360;
-      return pa;
+      return SIGeom.positionAngleDeg( a.raDeg, a.decDeg, b.raDeg, b.decDeg );
    }
 
    function orientationDiffDeg( pa1, pa2 )
@@ -947,20 +935,8 @@ var SISatMatch = ( function()
 
    function tanProject( tan, x, y )
    {
-      // Gnomonic deprojection, 0-based pixels (mirror of FrameMeta's math,
-      // local so SatMatch stays self-contained under Node).
-      var dp1 = ( x + 1 ) - tan.crpix1;
-      var dp2 = ( y + 1 ) - tan.crpix2;
-      var xi = ( tan.cd11*dp1 + tan.cd12*dp2 )*DEG2RAD;
-      var eta = ( tan.cd21*dp1 + tan.cd22*dp2 )*DEG2RAD;
-      var ra0 = tan.crval1*DEG2RAD, dec0 = tan.crval2*DEG2RAD;
-      var sinD0 = Math.sin( dec0 ), cosD0 = Math.cos( dec0 );
-      var denom = Math.sqrt( 1 + xi*xi + eta*eta );
-      var dec = Math.asin( ( sinD0 + eta*cosD0 )/denom );
-      var ra = ra0 + Math.atan2( xi, cosD0 - eta*sinD0 );
-      var raDeg = ra*RAD2DEG;
-      raDeg -= 360*Math.floor( raDeg/360 );
-      return { raDeg: raDeg, decDeg: dec*RAD2DEG };
+      // Gnomonic deprojection, 0-based pixels -> { raDeg, decDeg } (SIGeom).
+      return SIGeom.tanImageToCelestial( tan, x, y );
    }
 
    function scoreOrientation( tan, frames, sepTol, angTol )
@@ -1025,15 +1001,6 @@ var SISatMatch = ( function()
       return { total: total, pairs: pairs };
    }
 
-   function medianOfArray( a )
-   {
-      if ( a.length === 0 )
-         return 0;
-      var s = a.slice().sort( function( x, y ) { return x - y; } );
-      var m = Math.floor( s.length/2 );
-      return ( s.length % 2 !== 0 ) ? s[m] : ( s[m - 1] + s[m] )/2;
-   }
-
    function fitOrientation( frames, field, options )
    {
       var o = options || {};
@@ -1096,8 +1063,8 @@ var SISatMatch = ( function()
          if ( dxs.length > 0 )
          {
             var cosD = Math.cos( base.decDeg*DEG2RAD );
-            ctr = { raDeg: base.raDeg + ( cosD !== 0 ? medianOfArray( dxs )/cosD : 0 ),
-                    decDeg: base.decDeg + medianOfArray( dys ) };
+            ctr = { raDeg: base.raDeg + ( cosD !== 0 ? SIStats.arrayMedian( dxs )/cosD : 0 ),
+                    decDeg: base.decDeg + SIStats.arrayMedian( dys ) };
          }
          var refined = best;
          for ( var r2 = -20; r2 <= 20; ++r2 )

@@ -15,6 +15,7 @@
 /* beautify ignore:start */
 #engine v8
 #include "../pjsr/lib/vendor/satellite.js"
+#include "../pjsr/lib/Geom.js"
 #include "../pjsr/lib/Stats.js"
 #include "../pjsr/lib/FrameMeta.js"
 #include "../pjsr/lib/TrailDetect.js"

@@ -37,39 +37,6 @@ var SITleNet = ( function()
       return pairs;
    }
 
-   function pause( ms )
-   {
-      if ( typeof msleep == "function" )
-      {
-         msleep( ms );
-         return;
-      }
-      var until = Date.now() + ms;
-      while ( Date.now() < until )
-         if ( typeof processEvents == "function" )
-            processEvents();
-   }
-
-   function httpGet( url, timeoutSec )
-   {
-      var T = new NetworkTransfer;
-      var chunks = [];
-      T.onDownloadDataAvailable = function( data )
-      {
-         chunks.push( data );
-         return true;
-      };
-      if ( typeof T.setConnectionTimeout == "function" )
-         T.setConnectionTimeout( timeoutSec );
-      T.setURL( url );
-      var ok = T.download();
-      var text = "";
-      for ( var i = 0; i < chunks.length; ++i )
-         text += chunks[ i ].toString();
-      return { ok: ok, code: T.responseCode, text: text,
-               error: String( T.errorInformation || "" ) };
-   }
-
    function readMeta( path )
    {
       try
@@ -106,7 +73,7 @@ var SITleNet = ( function()
          var url = buildUrl( sources[ i ], group );
          if ( url == null )
             continue;
-         var r = httpGet( url, timeoutSec );
+         var r = SINet.getText( url, timeoutSec );
          if ( !r.ok || ( r.code != 0 && r.code != 200 ) )
          {
             lastError = r.error || ( "HTTP " + r.code );
@@ -155,7 +122,7 @@ var SITleNet = ( function()
       var got = fetchPass( sources, group, 10 );
       if ( got.error )
       {
-         pause( 1500 );
+         SINet.pause( 1500 );
          got = fetchPass( sources, group, 25 );
       }
       if ( !got.error )
@@ -209,7 +176,7 @@ var SITleNet = ( function()
          {
             for ( var i = 0; i < SATCAT_SOURCES.length; ++i )
             {
-               var r = httpGet( SATCAT_SOURCES[ i ], pass == 0 ? 15 : 30 );
+               var r = SINet.getText( SATCAT_SOURCES[ i ], pass == 0 ? 15 : 30 );
                if ( r.ok && ( r.code == 0 || r.code == 200 ) &&
                     r.text.indexOf( "NORAD_CAT_ID" ) >= 0 )
                {
@@ -223,7 +190,7 @@ var SITleNet = ( function()
                }
             }
             if ( pass == 0 )
-               pause( 1500 );
+               SINet.pause( 1500 );
          }
          if ( meta != null && File.exists( path ) )
             return { path: path, fromCache: true, stale: true };
@@ -295,10 +262,10 @@ var SITleNet = ( function()
 // ---------------------------------------------------------------------------
 
 /*
- * SINet — a generic text getter over NetworkTransfer, shared by the Treasure
- * Hunt catalog queries. Same chunk-accumulate pattern as SITleNet's private
- * httpGet, exposed as a public one-shot call. Callers own retry/backoff and
- * payload validation.
+ * SINet — the one HTTP text getter over NetworkTransfer (TLE/SATCAT fetches
+ * above, Treasure Hunt catalog queries) plus the GUI-friendly pause the
+ * retry loops sleep with. Callers own retry/backoff and payload validation.
+ * Defined after SITleNet in this file; SITleNet only calls it at run time.
  */
 var SINet = ( function()
 {
@@ -324,5 +291,18 @@ var SINet = ( function()
                error: String( T.errorInformation || "" ) };
    }
 
-   return { getText: getText };
+   function pause( ms )
+   {
+      if ( typeof msleep == "function" )
+      {
+         msleep( ms );
+         return;
+      }
+      var until = Date.now() + ms;
+      while ( Date.now() < until )
+         if ( typeof processEvents == "function" )
+            processEvents();
+   }
+
+   return { getText: getText, pause: pause };
 } )();

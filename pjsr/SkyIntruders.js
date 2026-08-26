@@ -22,6 +22,7 @@
 // NEVER write slash-star inside a comment (preprocessor trap:
 // it swallows everything to the next star-slash).
 #include "lib/vendor/satellite.js"
+#include "lib/Geom.js"
 #include "lib/Stats.js"
 #include "lib/FrameMeta.js"
 #include "lib/TrailDetect.js"
@@ -497,7 +498,7 @@ function frameQuality( image )
             fwhms.push( ( fx + fy )/2 );
       }
       return { starCount: stars.length,
-               fwhmPx: ( fwhms.length > 4 ) ? SITrailCore.medianOf( fwhms ) : 0 };
+               fwhmPx: ( fwhms.length > 4 ) ? SIStats.arrayMedian( fwhms ) : 0 };
    }
    catch ( e )
    {
@@ -596,7 +597,7 @@ function analyzeNightSet( files, params, regDir )
       for ( var bs = 0; bs < b.data.length; bs += 7 )
          if ( b.data[ bs ] > 1e-6 )
             bgSub.push( b.data[ bs ] );
-      b.skyBg = SITrailCore.medianOf( bgSub )*65535;
+      b.skyBg = SIStats.arrayMedian( bgSub )*65535;
       if ( binLen < 0 )
          binLen = b.data.length;
       if ( b.data.length !== binLen )
@@ -883,7 +884,7 @@ function analyzeNightSet( files, params, regDir )
          for ( var i = 0; i < entries.length; ++i )
             if ( entries[ i ].quality && entries[ i ].quality[ key ] > 0 )
                v.push( entries[ i ].quality[ key ] );
-         return ( v.length > 0 ) ? SITrailCore.medianOf( v ) : 0;
+         return ( v.length > 0 ) ? SIStats.arrayMedian( v ) : 0;
       }
       var mPeaks = medianOfKey( "peaks" ), mBg = medianOfKey( "skyBgAdu" );
       var ranked = [];
@@ -1035,22 +1036,7 @@ function nightLabel( frames )
 // predicted-crosser ghost overlay).
 function tanInvertForOverlay( tan, p )
 {
-   var DEG = Math.PI/180;
-   var ra0 = tan.crval1*DEG, dec0 = tan.crval2*DEG;
-   var ra = p.raDeg*DEG, dec = p.decDeg*DEG;
-   var dRA = ra - ra0;
-   var sinD0 = Math.sin( dec0 ), cosD0 = Math.cos( dec0 );
-   var sinD = Math.sin( dec ), cosD = Math.cos( dec );
-   var D = sinD*sinD0 + cosD*cosD0*Math.cos( dRA );
-   if ( D <= 0 )
-      return null;
-   var xi = ( cosD*Math.sin( dRA )/D )/DEG;
-   var eta = ( ( sinD*cosD0 - cosD*sinD0*Math.cos( dRA ) )/D )/DEG;
-   var det = tan.cd11*tan.cd22 - tan.cd12*tan.cd21;
-   if ( det === 0 )
-      return null;
-   return { x: tan.crpix1 + ( tan.cd22*xi - tan.cd12*eta )/det - 1,
-            y: tan.crpix2 + ( tan.cd11*eta - tan.cd21*xi )/det - 1 };
+   return SIGeom.tanCelestialToImage( tan, p.raDeg, p.decDeg );
 }
 
 function runAnalysis( files, params )
@@ -1280,9 +1266,9 @@ function runAnalysisIn( files, params, run )
                var fr = frames[ i ];
                for ( var t = 0; t < fr.trails.length; ++t )
                {
-                  fr.trails[ t ].p1 = SISatMatch.core.tanProject(
+                  fr.trails[ t ].p1 = SIGeom.tanImageToCelestial(
                      fit.tan, fr.trails[ t ].x1, fr.trails[ t ].y1 );
-                  fr.trails[ t ].p2 = SISatMatch.core.tanProject(
+                  fr.trails[ t ].p2 = SIGeom.tanImageToCelestial(
                      fit.tan, fr.trails[ t ].x2, fr.trails[ t ].y2 );
                }
                var assignable = [];
@@ -1854,8 +1840,8 @@ function loadChartContext( meta, width, height, maxStars, maxDsos, cone )
       for ( var i = 0; i < rows.length; ++i )
       {
          if ( maxSep !== null &&
-              SIFrameMetaCore.angularSeparationDeg( cone.raDeg, cone.decDeg,
-                                           rows[ i ].raDeg, rows[ i ].decDeg ) > maxSep )
+              SIGeom.angularSepDeg( cone.raDeg, cone.decDeg,
+                                    rows[ i ].raDeg, rows[ i ].decDeg ) > maxSep )
             continue;
          var p = null;
          try { p = meta.wcs.celestialToImage( rows[ i ].raDeg, rows[ i ].decDeg ); }

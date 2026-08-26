@@ -34,6 +34,7 @@ BUILD="$ROOT/tests/build"
 MODULE="$BUILD/module.js"
 VENDOR_SGP4="$ROOT/pjsr/lib/vendor/satellite.js"
 LIBS=(
+   "$ROOT/pjsr/lib/Geom.js"
    "$ROOT/pjsr/lib/Stats.js"
    "$ROOT/pjsr/lib/FrameMeta.js"
    "$ROOT/pjsr/lib/TrailDetect.js"
@@ -81,6 +82,7 @@ EOF
    cat <<'EOF'
 
 module.exports = {
+   SIGeom: SIGeom,
    SIStats: SIStats,
    SIFrameMetaCore: SIFrameMetaCore,
    SITrailCore: SITrailCore,

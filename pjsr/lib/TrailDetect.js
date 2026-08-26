@@ -27,25 +27,17 @@ var SITrailCore = ( function()
    };
 
    // ------------------------------------------------------------------------
-   // Array statistics (local so the core stays self-contained under Node)
+   // Array statistics (SIStats; short local names for the many call sites)
 
    function medianOf( arr )
    {
-      if ( arr.length === 0 )
-         return 0;
-      var s = Array.prototype.slice.call( arr ).sort( function( a, b ) { return a - b; } );
-      var mid = Math.floor( s.length/2 );
-      return ( s.length % 2 !== 0 ) ? s[mid] : ( s[mid - 1] + s[mid] )/2;
+      return SIStats.arrayMedian( arr );
    }
 
    function madOf( arr )
    {
-      // Sigma-equivalent MAD (x1.4826), like SIStats.arrayMAD.
-      var med = medianOf( arr );
-      var dev = [];
-      for ( var i = 0; i < arr.length; ++i )
-         dev.push( Math.abs( arr[i] - med ) );
-      return medianOf( dev )*1.4826;
+      // Sigma-equivalent MAD (x1.4826).
+      return SIStats.arrayMAD( arr );
    }
 
    function meanOf( arr )
