@@ -45,8 +45,12 @@ pjsr/lib/Report.js           night log, fun stats, personal records, Reddit mark
    (default max-age 12 h), base URL overridable (mirrors).
 3. `SISatMatch.match` — for each frame's exposure window, propagate the catalog,
    find satellites crossing the FOV, match them to detected trails by angular
-   separation + orientation + rate; flags sunlit vs eclipsed. A FOV without a
-   known rotation (frame not plate-solved) is tested as its bounding circle.
+   separation + orientation + rate. The sunlit test runs at every sample of
+   the crossing: a satellite that enters or leaves the Earth's shadow inside
+   the field is matched on its lit sub-path and the transition instant is
+   reported; only a crossing lit at no sample is flagged eclipsed. A FOV
+   without a known rotation (frame not plate-solved) is tested as its
+   bounding circle.
 4. Frames without WCS: `SISatMatch.fitOrientation` recovers the field rotation
    and mirror parity by brute force against the sunlit crossings (center and
    plate scale come from the pointing headers; the fit also corrects the
@@ -145,7 +149,8 @@ Response:
       "path": { "p1": { "raDeg": 299.7, "decDeg": 44.8 },
                 "p2": { "raDeg": 300.5, "decDeg": 45.6 } },
       "angularRateDegPerSec": 0.31, "rangeKm": 812, "elevationDeg": 42.5,
-      "sunlit": true,
+      "sunlit": true, "sunlitFraction": 0.62,
+      "shadowEntryUtc": "2026-07-03T02:13:46Z", "shadowExitUtc": null,
       "matchedTrailIndex": 0, "matchScore": 0.93,
       "sepDeg": 0.04, "angleDiffDeg": 2.1
     } ]
@@ -153,13 +158,35 @@ Response:
 }
 ```
 
-Matching: a crossing matches a trail when the great-circle midpoint separation ≤
-`matchMaxSepDeg` (TLE epoch drift allowance) and path orientation differs ≤
-`matchMaxAngleDiffDeg` (mod 180°); score = 0.4·separation + 0.3·angle +
-0.3·path-length agreement, conflicts resolved globally by score order. Only sunlit
-crossings above the horizon are match candidates; eclipsed crossers are still
-listed (`"sunlit": false`) since they explain nothing visible. Directions are TEME
-vs J2000 WCS (~0.35° precession in 2026) — absorbed by `matchMaxSepDeg`.
+Matching: a crossing matches a trail when the trail midpoint sits within
+`matchMaxSepDeg` *across* the predicted track and within `alongTolDeg` *along*
+it (TLE error is dominantly along-track), and the two orientations agree within
+`matchMaxAngleDiffDeg` (mod 180°). Orientations are position angles measured at
+each segment's **midpoint** (`segmentPaDeg`), not at an endpoint: an endpoint
+position angle carries the convergence of meridians (5.9° over a 1° segment at
+δ = 80°), which made the gate depend on which end the trail detector labelled
+`p1`. Score = 0.4·cross-track + 0.3·angle + 0.2·path-length agreement +
+0.1·along-track, conflicts resolved globally by score order.
+
+Sunlit handling: `isSunlit` (cylindrical shadow, no penumbra — ±tens of seconds
+near the terminator) is evaluated at **every fine sample** of the crossing.
+`sunlitFraction` is the lit share of the in-FOV run (time-weighted); `sunlit`
+is `sunlitFraction > 0`. When the flag flips between two samples the instant is
+refined by bisection (6 SGP4 calls, ~step/64) and reported as `shadowEntryUtc`
+(lit → dark) or `shadowExitUtc` (dark → lit), `null` otherwise. For a
+partially lit crossing `path`, `angularRateDegPerSec`, `rangeKm` and
+`elevationDeg` describe the **lit sub-path** — the only part that can leave a
+streak — while `entryUtc`/`exitUtc` remain the FOV entry and exit. Only
+crossings with `sunlit: true` are match candidates (strict and loose assigners,
+orientation fit); a crossing lit at no sample keeps its full in-FOV path and is
+listed with `"sunlit": false` for the ghost layer. Downstream, a matched
+crossing with a transition becomes a satellite event carrying
+`shadowEntryUtc`/`shadowExitUtc`, worded in the night log as *"entered Earth's
+shadow at HH:MM:SS UT"* / *"left Earth's shadow at HH:MM:SS UT"* (FR: *"entré
+dans l'ombre de la Terre à …"* / *"sorti de l'ombre de la Terre à …"*) and on
+the composite as *"into shadow HH:MM:SS UT"* / *"out of shadow HH:MM:SS UT"*
+(FR: *"entre dans l'ombre …"* / *"sort de l'ombre …"*). Directions are rotated
+TEME → J2000 before comparison with the plate-solved WCS.
 
 ## Persistent data
 

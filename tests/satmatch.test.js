@@ -400,3 +400,147 @@ console.log("satmatch: 7 propagation steps within tolerance; match replay == ref
 
    console.log("satmatch: per-frame error isolation OK");
 }
+
+// ---------------------------------------------------------------------------
+// Shadow transitions inside the field. The fixture object (NORAD 06251)
+// enters the Earth's shadow about 40 min after the fixture window; the
+// observer is placed at its subpoint at that instant and the field centered
+// on it, so the crossing straddles the terminator. The crossing must be KEPT
+// as a candidate, matched on its lit sub-path, with the shadow-entry time
+// refined below the sampling step; the same pass caught entirely in shadow
+// must still be rejected.
+
+{
+   const sunlitAt = t => {
+      const pv = core.propagateAt(entry, t);
+      return core.isSunlit(pv.pos, core.sunDirection(core.jdayOfMs(t)));
+   };
+   // truth: bracket the lit -> dark flip on a 10 s scan, then bisect to 1 ms
+   let tFlip = null, prev = sunlitAt(startMs);
+   for (let dt = 10; dt < 7200 && tFlip === null; dt += 10) {
+      const t = startMs + dt * 1000;
+      const now = sunlitAt(t);
+      if (prev && !now) tFlip = t;
+      prev = now;
+   }
+   assert.ok(tFlip !== null, "fixture object must enter the shadow within two hours");
+   let a = tFlip - 10000, b = tFlip;
+   while (b - a > 1) { const m = (a + b) / 2; if (sunlitAt(m)) a = m; else b = m; }
+   const tTruth = b; // first dark instant, ms
+
+   // observer at the subpoint, field centered on the topocentric direction
+   const siteFor = t => {
+      const pv = core.propagateAt(entry, t);
+      const jd = core.jdayOfMs(t);
+      let lon = (Math.atan2(pv.pos.y, pv.pos.x) - core.gmstRad(jd)) * 180 / Math.PI;
+      lon = ((lon % 360) + 540) % 360 - 180;
+      const r = Math.sqrt(pv.pos.x ** 2 + pv.pos.y ** 2 + pv.pos.z ** 2);
+      const obs = { latDeg: Math.asin(pv.pos.z / r) * 180 / Math.PI, lonDeg: lon, altM: 0 };
+      const dir = core.topocentricRaDec(pv.pos, core.observerEci(obs, jd).pos, jd);
+      return { obs, dir };
+   };
+   const STEP = 0.5;
+   const frameAround = (tCenter, id, trails) => {
+      const s = siteFor(tCenter);
+      return {
+         observer: s.obs,
+         frames: [{ id, startUtc: core.formatRfc3339Ms(tCenter - 30000), exposureSec: 60,
+                    fov: { raDeg: s.dir.raDeg, decDeg: s.dir.decDeg, widthDeg: 10, heightDeg: 8,
+                           rotationDeg: 0, hasWcs: true },
+                    trails: trails || [] }],
+         options: { stepSec: STEP, matchMaxSepDeg: 0.2, matchMaxAngleDiffDeg: 12 }
+      };
+   };
+   const crossingOf = res => {
+      assert.strictEqual(res.error, null, JSON.stringify(res.error));
+      assert.strictEqual(res.frames[0].crossings.length, 1, "exactly one crossing");
+      return res.frames[0].crossings[0];
+   };
+
+   // 1. terminator inside the field: kept, lit sub-path, refined entry time
+   const straddle = crossingOf(SISatMatch.match(frameAround(tTruth, "straddle"), tleText, "delta"));
+   assert.strictEqual(straddle.sunlit, true, "partially lit crossing stays a candidate");
+   assert.ok(straddle.sunlitFraction > 0.3 && straddle.sunlitFraction < 0.7,
+      `sunlitFraction ${straddle.sunlitFraction} should be near 0.5 (terminator at mid-crossing)`);
+   assert.ok(straddle.shadowEntryUtc !== null, "shadowEntryUtc must be reported");
+   assert.strictEqual(straddle.shadowExitUtc, null, "no shadow exit in this window");
+   const dtShadow = Math.abs(core.parseRfc3339Ms(straddle.shadowEntryUtc) - Math.floor(tTruth / 1000) * 1000);
+   assert.ok(dtShadow <= 1000,
+      `shadow entry ${straddle.shadowEntryUtc} vs truth ${core.formatRfc3339Ms(tTruth)} (>1 s; step ${STEP} s)`);
+   // the lit sub-path ends where the satellite goes dark, not at the FOV edge
+   const dirAtTruth = siteFor(tTruth).dir;
+   const endOff = core.angularSepDeg(straddle.path.p2, dirAtTruth);
+   assert.ok(endOff < 1.5 * straddle.angularRateDegPerSec * STEP + 0.05,
+      `lit path must end at the shadow entry (off by ${endOff} deg)`);
+   assert.ok(core.parseRfc3339Ms(straddle.exitUtc) > core.parseRfc3339Ms(straddle.shadowEntryUtc),
+      "FOV exit comes after the shadow entry");
+
+   // a trail that ends where the satellite entered the shadow is a match
+   const litTrail = [{ index: 0, p1: straddle.path.p1, p2: straddle.path.p2,
+                       pixLength: 0, meanFluxAdu: 0, widthPx: 0, brightnessVariation: 0.6 }];
+   const matched = crossingOf(SISatMatch.match(frameAround(tTruth, "straddle-match", litTrail), tleText, "delta"));
+   assert.strictEqual(matched.matchedTrailIndex, 0, "trail ending at shadow entry must match");
+   assert.ok(matched.matchScore > 0.9, `lit sub-path self-match score ${matched.matchScore}`);
+
+   // 2. the same pass 40 s later, entirely in shadow: reported, never matched
+   const darkReq = frameAround(tTruth + 40000, "dark");
+   const dark = crossingOf(SISatMatch.match(darkReq, tleText, "delta"));
+   assert.strictEqual(dark.sunlit, false, "fully eclipsed crossing is not a candidate");
+   assert.strictEqual(dark.sunlitFraction, 0);
+   assert.strictEqual(dark.shadowEntryUtc, null);
+   assert.strictEqual(dark.shadowExitUtc, null);
+   darkReq.frames[0].trails = [{ index: 0, p1: dark.path.p1, p2: dark.path.p2,
+                                 pixLength: 0, meanFluxAdu: 0, widthPx: 0, brightnessVariation: 0 }];
+   const darkTry = crossingOf(SISatMatch.match(darkReq, tleText, "delta"));
+   assert.strictEqual(darkTry.matchedTrailIndex, null, "eclipsed crossing explains no streak");
+
+   // 3. control: 60 s earlier, fully lit — fraction 1, no transition
+   const lit = crossingOf(SISatMatch.match(frameAround(tTruth - 60000, "lit"), tleText, "delta"));
+   assert.strictEqual(lit.sunlit, true);
+   assert.strictEqual(lit.sunlitFraction, 1);
+   assert.strictEqual(lit.shadowEntryUtc, null);
+   assert.strictEqual(lit.shadowExitUtc, null);
+
+   console.log("satmatch: shadow entry inside the field — fraction " +
+      straddle.sunlitFraction.toFixed(2) + ", entry " + straddle.shadowEntryUtc +
+      " (truth " + core.formatRfc3339Ms(tTruth) + "), matched on the lit sub-path; dark pass rejected");
+}
+
+// ---------------------------------------------------------------------------
+// Orientation gate at high declination: position angles are measured at the
+// segment midpoints, so a trail listed with reversed endpoints agrees with
+// the crossing to numerical precision. Measured at an endpoint (the old
+// gate), the convergence of meridians alone reads ~5.9 deg at dec 80.
+
+{
+   const p1 = { raDeg: 10, decDeg: 80 }, p2 = { raDeg: 16, decDeg: 80 };
+   const endpointAsym = core.orientationDiffDeg(core.positionAngleDeg(p1, p2), core.positionAngleDeg(p2, p1));
+   assert.ok(endpointAsym > 5, `endpoint PAs disagree by ${endpointAsym} deg at dec 80 (the bug being fixed)`);
+   const midAsym = core.orientationDiffDeg(core.segmentPaDeg(p1, p2), core.segmentPaDeg(p2, p1));
+   assert.ok(midAsym < 1e-6, `midpoint PAs must agree regardless of endpoint order (${midAsym})`);
+
+   const opt = core.normalizedOptions({});
+   const mkCross = () => [{ noradId: 80, name: "POLAR", sunlit: true,
+                            path: { p1, p2 }, matchedTrailIndex: null }];
+   // reversed trail, nudged 0.05 deg in dec
+   const reversed = { index: 0, p1: { raDeg: 16, decDeg: 80.05 }, p2: { raDeg: 10, decDeg: 80.05 } };
+   const forward = { index: 0, p1: { raDeg: 10, decDeg: 80.05 }, p2: { raDeg: 16, decDeg: 80.05 } };
+   let crsR = mkCross(), crsF = mkCross();
+   core.assignTrails(crsR, { trails: [reversed] }, opt);
+   core.assignTrails(crsF, { trails: [forward] }, opt);
+   assert.strictEqual(crsR[0].matchedTrailIndex, 0, "reversed high-dec trail matches");
+   assert.strictEqual(crsF[0].matchedTrailIndex, 0, "forward high-dec trail matches");
+   assert.ok(crsR[0].angleDiffDeg < 0.01 && crsF[0].angleDiffDeg < 0.01,
+      `angle diff symmetric and near zero (${crsR[0].angleDiffDeg}, ${crsF[0].angleDiffDeg})`);
+   assert.ok(Math.abs(crsR[0].matchScore - crsF[0].matchScore) < 1e-6, "same score either way");
+
+   // loose assigner: same symmetry
+   crsR = mkCross(); crsF = mkCross();
+   core.assignTrailsLoose(crsR, { trails: [reversed] }, {});
+   core.assignTrailsLoose(crsF, { trails: [forward] }, {});
+   assert.strictEqual(crsR[0].matchedTrailIndex, 0);
+   assert.strictEqual(crsF[0].matchedTrailIndex, 0);
+   assert.ok(Math.abs(crsR[0].angleDiffDeg - crsF[0].angleDiffDeg) < 1e-6, "loose gate symmetric");
+
+   console.log("satmatch: high-declination orientation gate symmetric (midpoint PAs)");
+}
