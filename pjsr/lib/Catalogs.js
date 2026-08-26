@@ -5,7 +5,7 @@
  * SINet with a per-field disk cache.
  *
  * PURE (Node-testable): vizierUrl, skybotUrl, parseVizierTsv, parseSkybot,
- * hasCommentLine, skybotFlag.
+ * hasCommentLine, isVizierBody, vizierError, vizierTruncated, skybotFlag.
  * PI-only: queryGalaxies/queryQuasars/queryPne/queryAsteroids (SINet + File).
  * The query layer returns NULL when the catalog did not answer — callers must
  * treat null as "unreachable", never as an empty field — and only genuine
@@ -26,15 +26,18 @@ var SICatalogs = ( function()
    var VIZIER_BASE = "https://vizier.cds.unistra.fr/viz-bin/asu-tsv";
    var SKYBOT_BASE = "https://ssp.imcce.fr/webservices/skybot/api/conesearch.php";
 
+   // `sort` is the VizieR -sort column ('-' prefix = descending). The row cap
+   // (-out.max) is a hard truncation, so the order decides WHICH rows survive
+   // it: largest / brightest first makes a truncated answer the useful one.
    var SOURCE = {
-      galaxy: { source: "VII/237", cols: [ "PGC", "logD25" ] },
-      quasar: { source: "VII/294", cols: [ "Name", "z", "Rmag" ] },
-      pne:    { source: "V/127A/mash1", cols: [ "PNG", "Name", "MajDiam", "MinDiam" ] },
+      galaxy: { source: "VII/237", cols: [ "PGC", "logD25" ], sort: "-logD25" },
+      quasar: { source: "VII/294", cols: [ "Name", "z", "Rmag" ], sort: "Rmag" },
+      pne:    { source: "V/127A/mash1", cols: [ "PNG", "Name", "MajDiam", "MinDiam" ], sort: "-MajDiam" },
       // Principal stars of the chart. Hipparcos, NOT the original HD
       // catalog: HD positions are epoch-1900 values rounded to 0.1 time-min
       // (tens of arcsec off — markers visibly miss their stars). Hipparcos
       // is milliarcsecond and carries the HD cross-id for display names.
-      hipstar: { source: "I/239/hip_main", cols: [ "HIP", "HD", "Vmag", "SpType" ] }
+      hipstar: { source: "I/239/hip_main", cols: [ "HIP", "HD", "Vmag", "SpType" ], sort: "Vmag" }
    };
 
    // ------------------------------------------------------------------------
@@ -93,10 +96,12 @@ var SICatalogs = ( function()
    // ------------------------------------------------------------------------
    // URL builders (pure)
 
-   function vizierUrl( source, raDeg, decDeg, radiusDeg, cols, max )
+   function vizierUrl( source, raDeg, decDeg, radiusDeg, cols, max, sort )
    {
       // VizieR asu-tsv cone search. The `+` between RA and Dec decodes to a
       // space server-side, so a negative Dec keeps its own leading minus.
+      // `sort` (optional) is a -sort column; it makes the -out.max truncation
+      // deterministic instead of "whatever order the index returns".
       var colList = ( cols instanceof Array ) ? cols.join( "," ) : String( cols );
       var ra = normRa( Number( raDeg ) );
       var c = ra + "+" + Number( decDeg );
@@ -106,7 +111,9 @@ var SICatalogs = ( function()
          "&-c.rd=" + Number( radiusDeg ) +
          "&-out.add=_RAJ,_DEJ" +
          "&-out=" + colList +
-         "&-out.max=" + ( ( max > 0 ) ? Math.floor( max ) : 1000 );
+         "&-out.max=" + ( ( max > 0 ) ? Math.floor( max ) : 1000 ) +
+         ( ( sort !== undefined && sort !== null && String( sort ).length > 0 ) ?
+            "&-sort=" + String( sort ) : "" );
    }
 
    function skybotUrl( raDeg, decDeg, radiusDeg, epoch )
@@ -179,8 +186,8 @@ var SICatalogs = ( function()
       // A genuine catalog body (VizieR banner/INFO lines, SkyBoT Flag/Ticket
       // lines) always carries '#'-comment lines, even for an empty field. An
       // outage body — an HTML page from a proxy or captive portal, an empty
-      // 200 — has none. This is the gate that separates "the catalog said
-      // empty" from "something else answered in its place".
+      // 200 — has none. Necessary but NOT sufficient for VizieR: its own
+      // error bodies carry the banner too — see isVizierBody / vizierError.
       if ( text === null || text === undefined )
          return false;
       var lines = String( text ).split( /\r?\n/ );
@@ -188,6 +195,48 @@ var SICatalogs = ( function()
          if ( lines[ i ].charAt( 0 ) === '#' )
             return true;
       return false;
+   }
+
+   function vizierError( text )
+   {
+      // VizieR reports its own failures as a comment line:
+      //   '#INFO\tError=Table or Catalog not found: ...'
+      // inside an otherwise normal-looking banner (Date, Coosys, INFO lines)
+      // with no data section at all. Returns the message, or null.
+      if ( text === null || text === undefined )
+         return null;
+      var m = String( text ).match( /^#INFO[ \t]+Error=[ \t]*([^\r\n]*)/m );
+      return ( m !== null ) ? trimStr( m[ 1 ] ) : null;
+   }
+
+   function isVizierBody( text )
+   {
+      // Positive gate for a VizieR asu-tsv answer. '#'-comment lines alone
+      // are not proof: an error body carries the full banner too. A genuine
+      // answer — even for an empty field — always has the data section: a
+      // '#RESOURCE=' line and/or the column-header line with the _RAJ/_DEJ
+      // positions we asked for. And it never carries '#INFO Error='.
+      if ( text === null || text === undefined )
+         return false;
+      if ( vizierError( text ) !== null )
+         return false;
+      var lines = String( text ).split( /\r?\n/ );
+      for ( var i = 0; i < lines.length; ++i )
+      {
+         var line = lines[ i ];
+         if ( line.indexOf( "#RESOURCE=" ) === 0 )
+            return true;
+         if ( line.charAt( 0 ) !== '#' && line.indexOf( "_RAJ" ) >= 0 &&
+              line.indexOf( "_DEJ" ) >= 0 && line.indexOf( "\t" ) >= 0 )
+            return true;
+      }
+      return false;
+   }
+
+   function vizierTruncated( rows, max )
+   {
+      // -out.max is a hard cap: an answer that fills it may have lost rows.
+      return ( max > 0 ) && ( rows instanceof Array ) && ( rows.length >= max );
    }
 
    function skybotFlag( text )
@@ -459,15 +508,17 @@ var SICatalogs = ( function()
       var max = ( opts.max > 0 ) ? opts.max : 1000;
       var maxAge = ( opts.maxAgeHours > 0 ) ? opts.maxAgeHours : 720;
       // "v2": earlier builds could cache an outage body as an empty field for
-      // 30 days; the version bump orphans any such poisoned entries.
-      var key = cacheKey( [ kind, "v2", round3( raDeg ), round3( decDeg ), round3( radiusDeg ), max ] );
+      // 30 days. "v3": v2 still accepted a VizieR '#INFO Error=' body (it has
+      // comment lines) and cached it as empty; the -sort also changes which
+      // rows survive the cap. Each bump orphans the entries written before it.
+      var key = cacheKey( [ kind, "v3", round3( raDeg ), round3( decDeg ), round3( radiusDeg ), max ] );
       if ( opts.useCache !== false )
       {
          var cached = readCache( key, maxAge );
          if ( cached !== null )
             return cached;
       }
-      var url = vizierUrl( spec.source, raDeg, decDeg, radiusDeg, spec.cols, max );
+      var url = vizierUrl( spec.source, raDeg, decDeg, radiusDeg, spec.cols, max, spec.sort );
       var rows = [];
       try
       {
@@ -477,12 +528,20 @@ var SICatalogs = ( function()
             warn( kind + " query failed: " + ( r.error || ( "HTTP " + r.code ) ) );
             return null;
          }
-         if ( !hasCommentLine( r.text ) )
+         var verr = vizierError( r.text );
+         if ( verr !== null )
+         {
+            warn( kind + " query failed: catalog reported an error: " + verr );
+            return null;
+         }
+         if ( !isVizierBody( r.text ) )
          {
             warn( kind + " query failed: response is not catalog output (outage page?)" );
             return null;
          }
          var parsed = parseVizierTsv( r.text );
+         if ( vizierTruncated( parsed, max ) )
+            warn( kind + " catalog answer truncated at " + max + " rows (raise 'Max catalog rows' to see more)" );
          for ( var i = 0; i < parsed.length; ++i )
             rows.push( coerce( parsed[ i ] ) );
       }
@@ -577,6 +636,9 @@ var SICatalogs = ( function()
       parseVizierTsv: parseVizierTsv,
       parseSkybot: parseSkybot,
       hasCommentLine: hasCommentLine,
+      isVizierBody: isVizierBody,
+      vizierError: vizierError,
+      vizierTruncated: vizierTruncated,
       skybotFlag: skybotFlag,
       parseNgcIcCsv: parseNgcIcCsv,
       parseNamedStarsCsv: parseNamedStarsCsv,
