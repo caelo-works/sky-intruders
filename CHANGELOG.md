@@ -8,6 +8,19 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- Structural refactor, no behaviour change: the spherical geometry every
+  library carried a copy of (great-circle separation, position angle, TAN
+  projection, sexagesimal parser) now lives once in `pjsr/lib/Geom.js`
+  (`SIGeom`), the median/MAD copies delegate to `SIStats`, the two
+  `pause()` and the second HTTP getter collapse into `SINet`;
+  `assignTrails` / `assignTrailsLoose` are one `assignTrailsCore` with
+  named rescue thresholds (values unchanged, both modes pinned bit-for-bit
+  on a generated snapshot); `detectDiff` no longer writes to the caller's
+  params; the satellite label/flag/nature formatting
+  (`pjsr/lib/SatLabels.js`), the TLE group merge
+  (`SITleNet.fetchMergedTleText`) and the night event assembly
+  (`pjsr/lib/NightEvents.js`) moved out of `runAnalysis` into Node-testable
+  libraries. Fixes #19.
 - The Release workflow now runs the Node test harness before building and
   refuses to publish on a red run; the harness also syntax-checks the
   unbundled PJSR files (entry script, `Render.js`) and bundles `Net.js` with

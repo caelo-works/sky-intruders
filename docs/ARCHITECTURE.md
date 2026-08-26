@@ -18,6 +18,9 @@ SGP4, 24 tests under `-race`) and the JS engine must replay them within toleranc
 
 ```
 pjsr/SkyIntruders.js         entry: feature-id, dialogs, run orchestration
+pjsr/lib/Geom.js             shared spherical geometry: great-circle separation,
+                             position angle, TAN projection both ways, sexagesimal
+                             parser (the only copy — every lib delegates here)
 pjsr/lib/Stats.js            robust stats (median/MAD, histogram MAD, clipped stats)
 pjsr/lib/FrameMeta.js        FITS/XISF metadata: DATE-OBS→Date, EXPTIME, observer
                              site, WCS (astrometric solution when solved, manual
@@ -26,13 +29,21 @@ pjsr/lib/TrailDetect.js      per-frame trail finder (binning → MAD threshold �
                              Hough → contiguity validation → endpoints + photometry)
 pjsr/lib/Net.js              TLE download via NetworkTransfer: disk cache, retries
                              with backoff, TLE payload validation, stale-cache
-                             fallback when the network is unreachable
+                             fallback when the network is unreachable; primary +
+                             extra group merge with NORAD dedup; SINet, the one
+                             HTTP text getter every fetch goes through
 pjsr/lib/SatMatch.js         the matching engine: TLE parse/validate, SGP4 (via
                              vendored satellite.js), Meeus sun + cylindrical Earth
                              shadow, observer ECI, topocentric RA/Dec, gnomonic FOV
                              crossing scan, score-ordered trail assignment
 pjsr/lib/vendor/satellite.js satellite-js 5.0.0 UMD (unmodified, MIT)
 pjsr/lib/Meteors.js          IAU major-shower table + meteor/asteroid heuristics
+pjsr/lib/SatLabels.js        satellite naming on the image/events: operator flag
+                             (SATCAT owner, name heuristic), object nature, telemetry
+                             sub-line, trail colours and fallback labels
+pjsr/lib/NightEvents.js      event assembly, frame by frame: matched satellites,
+                             airplane/train bundles, classified leftovers, predicted
+                             passes, drawn segments, clean-frame/exposure counts
 pjsr/lib/Report.js           night log, fun stats, personal records, Reddit markdown
 ```
 
