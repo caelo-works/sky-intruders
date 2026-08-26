@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Night trails no longer leaks image windows or registered frames when the
+  registered-difference analysis fails part-way. Every "open a file, use its
+  first window, close it" site now goes through one `withWindow` helper with a
+  `try/finally` (the plate-solved reference window keeps its extended lifetime
+  until the projections are done), and the registration scratch directory is
+  wiped in a `finally` of `runAnalysis` on every exit path. The scratch
+  directory, the night result PNG and the per-frame debug overlays carry a
+  per-run token (`si-night-reg-<token>`, `SkyIntruders-night-<date>-<token>.png`,
+  `si-frame-annotated-<token>-<n>.png`) so concurrent PixInsight instances do
+  not collide. Fixes #6.
+
 ## [0.2.1] - 2026-08-17
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-17:

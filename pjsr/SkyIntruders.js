@@ -202,17 +202,44 @@ var SIProf = ( function()
 // ---------------------------------------------------------------------------
 // Analysis pipeline.
 
-function analyzeFrame( filePath, params )
+// Open an image file, hand its first window to fn and close it whatever
+// happens (extra windows of a multi-image file are closed up front). Returns
+// fn's value, or null when the file yields no window. Every open-first-
+// close-the-rest site goes through here so no exception can strand a
+// full-resolution window in the workspace.
+function withWindow( path, fn )
 {
-   var windows = ImageWindow.open( filePath );
-   if ( windows.length == 0 )
-      throw new Error( "cannot open " + filePath );
-   var window = windows[ 0 ];
+   var wins = ImageWindow.open( path );
+   if ( wins.length == 0 )
+      return null;
+   for ( var i = 1; i < wins.length; ++i )
+      try { wins[ i ].forceClose(); } catch ( e ) {}
    try
    {
-      for ( var i = 1; i < windows.length; ++i )
-         windows[ i ].forceClose();
+      return fn( wins[ 0 ] );
+   }
+   finally
+   {
+      try { wins[ 0 ].forceClose(); } catch ( e ) {}
+   }
+}
 
+// A per-run token for scratch names in the system temp directory, so two
+// PixInsight instances (or a headless test set beside the GUI) never share
+// a registration directory or overwrite each other's result PNG.
+function siRunToken()
+{
+   var d = new Date();
+   function p2( n ) { return ( n < 10 ? "0" : "" ) + n; }
+   return String( d.getFullYear() ) + p2( d.getMonth() + 1 ) + p2( d.getDate() ) + "-" +
+          p2( d.getHours() ) + p2( d.getMinutes() ) + p2( d.getSeconds() ) + "-" +
+          ( 1000 + Math.floor( Math.random()*9000 ) );
+}
+
+function analyzeFrame( filePath, params )
+{
+   var r = withWindow( filePath, function( window )
+   {
       var meta = SIFrameMeta.read( window, filePath );
       var det = SITrailDetect.detect( window.mainView.image, params );
 
@@ -254,11 +281,10 @@ function analyzeFrame( filePath, params )
 
       return { meta: meta, trails: det.trails, stats: det.stats, blobs: blobs,
                planeGroups: planeGroups, srcW: w, srcH: h };
-   }
-   finally
-   {
-      window.forceClose();
-   }
+   } );
+   if ( r == null )
+      throw new Error( "cannot open " + filePath );
+   return r;
 }
 
 // Extract the brightest compact sources in pixel coordinates. Capped so the
@@ -333,6 +359,9 @@ function clearDirectory( dir )
          while ( ff.next() );
       for ( var i = 0; i < victims.length; ++i )
          File.remove( victims[ i ] );
+      // Per-run scratch directories would otherwise pile up in the temp
+      // folder; a directory that still holds something is simply left alone.
+      try { File.removeDirectory( dir ); } catch ( e2 ) {}
    }
    catch ( e ) {}
 }
@@ -401,12 +430,13 @@ function countBinnedPeaks( data, width, height )
    return n;
 }
 
-function analyzeNightSet( files, params )
+// regDir: this run's private registration scratch directory (created by
+// StarAlignment, wiped by runAnalysis's finally whatever happens here).
+function analyzeNightSet( files, params, regDir )
 {
    if ( files.length < 3 )
       return null;
 
-   var regDir = File.systemTempDirectory + "/si-night-reg";
    clearDirectory( regDir );
    console.writeln( format( "Registering %d frames on a common grid (StarAlignment)…",
                             files.length ) );
@@ -437,29 +467,28 @@ function analyzeNightSet( files, params )
          continue;
       }
       SIProf.start( "pass A: open+bin registered frames" );
-      var wins = ImageWindow.open( reg.paths[ i ] );
-      if ( wins.length == 0 )
+      var opened = withWindow( reg.paths[ i ], function( win )
+      {
+         var meta = SIFrameMeta.read( win, files[ i ] );
+         if ( meta.dateObs == null || meta.exposureSec == null )
+         {
+            // registration output lost the headers — read them from the source
+            var srcMeta = withWindow( files[ i ], function( ow )
+            {
+               return SIFrameMeta.read( ow, files[ i ] );
+            } );
+            if ( srcMeta != null )
+               meta = srcMeta;
+         }
+         return { meta: meta, binned: SITrailDetect.binned( win.mainView.image ) };
+      } );
+      if ( opened == null )
       {
          SIProf.end( "pass A: open+bin registered frames" );
          continue;
       }
-      var win = wins[ 0 ];
-      for ( var k = 1; k < wins.length; ++k )
-         wins[ k ].forceClose();
-      var meta = SIFrameMeta.read( win, files[ i ] );
-      if ( meta.dateObs == null || meta.exposureSec == null )
-      {
-         // registration output lost the headers — read them from the source
-         var ow = ImageWindow.open( files[ i ] );
-         if ( ow.length > 0 )
-         {
-            meta = SIFrameMeta.read( ow[ 0 ], files[ i ] );
-            for ( var k2 = 0; k2 < ow.length; ++k2 )
-               ow[ k2 ].forceClose();
-         }
-      }
-      var b = SITrailDetect.binned( win.mainView.image );
-      win.forceClose();
+      var meta = opened.meta;
+      var b = opened.binned;
       var bgSub = [];
       for ( var bs = 0; bs < b.data.length; bs += 7 )
          if ( b.data[ bs ] > 1e-6 )
@@ -544,244 +573,253 @@ function analyzeNightSet( files, params )
       return x <= margin || y <= margin || x >= refW - margin || y >= refH - margin;
    }
 
-   var results = new Array( entries.length );
-   var detProfile = {};
-
-   for ( var gi = 0; gi < groupNames.length; ++gi )
+   // Everything below projects trail endpoints through refMeta.wcs, which
+   // may run through the live reference window: keep it open until the
+   // fov() cache is warm, and release it on every path, exception included.
+   try
    {
-      var idx = groups[ groupNames[ gi ] ];
-      if ( idx.length < 3 )
-      {
-         console.warningln( format( "   filter group '%s' has only %d frame(s) — " +
-                                    "3+ are needed for difference detection; skipped.",
-                                    groupNames[ gi ], idx.length ) );
-         for ( var s0 = 0; s0 < idx.length; ++s0 )
-            results[ idx[ s0 ] ] = { trails: [], stats: {}, planeGroups: [] };
-         continue;
-      }
+      var results = new Array( entries.length );
+      var detProfile = {};
 
-      var arrays = [];
-      for ( var a0 = 0; a0 < idx.length; ++a0 )
-         arrays.push( entries[ idx[ a0 ] ].binned.data );
-      // 60% of the group: N-1 forced the strict intersection of every
-      // pointing — on a multi-night session the one-night border zones
-      // (where trails live too) were masked out entirely. At 60% the
-      // population seams still involve enough frames for a solid median,
-      // and the per-frame ringing masks handle the frame edges.
-      var minCover = Math.max( 3, Math.ceil( idx.length*0.6 ) );
-      SIProf.start( "model: median + normalize" );
-      var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
-      for ( var a1 = 0; a1 < idx.length; ++a1 )
+      for ( var gi = 0; gi < groupNames.length; ++gi )
       {
-         var lf = SITrailCore.linearFitToModel( arrays[ a1 ], stack0.model, stack0.valid );
-         SITrailCore.applyLinear( arrays[ a1 ], lf.a, lf.b );
-         processEvents();
-      }
-      var stack = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
-      var model = stack.model;
-      // 6 px: past the Lanczos ringing at every resampled frame's coverage
-      // boundary, spread a few px by the intra-night dither.
-      var mask = SITrailCore.erodeMask( stack.valid, entries[ idx[ 0 ] ].binned.width,
-                                        entries[ idx[ 0 ] ].binned.height, 6 );
-      SIProf.end( "model: median + normalize" );
-
-      for ( var p0 = 0; p0 < idx.length; ++p0 )
-      {
-         var e = entries[ idx[ p0 ] ];
-         SIProf.start( "pass B: reopen frames" );
-         var wins2 = ImageWindow.open( e.regPath );
-         SIProf.end( "pass B: reopen frames" );
-         if ( wins2.length == 0 )
+         var idx = groups[ groupNames[ gi ] ];
+         if ( idx.length < 3 )
          {
-            results[ idx[ p0 ] ] = { trails: [], stats: {}, planeGroups: [] };
+            console.warningln( format( "   filter group '%s' has only %d frame(s) — " +
+                                       "3+ are needed for difference detection; skipped.",
+                                       groupNames[ gi ], idx.length ) );
+            for ( var s0 = 0; s0 < idx.length; ++s0 )
+               results[ idx[ s0 ] ] = { trails: [], stats: {}, planeGroups: [] };
             continue;
          }
-         var win2 = wins2[ 0 ];
-         for ( var k3 = 1; k3 < wins2.length; ++k3 )
-            wins2[ k3 ].forceClose();
 
-         // Per-frame mask: the global coverage mask AND the frame's OWN
-         // coverage eroded — Lanczos ringing at a resampled frame's boundary
-         // lives a few nonzero pixels INSIDE its coverage, invisible to the
-         // global mask and strong enough to pose as an edge-hugging trail.
-         var fv = new Uint8Array( e.binned.data.length );
-         for ( var m2 = 0; m2 < fv.length; ++m2 )
-            fv[ m2 ] = ( e.binned.data[ m2 ] > 1e-6 ) ? 1 : 0;
-         fv = SITrailCore.erodeMask( fv, e.binned.width, e.binned.height, 6 );
-         var frameMask = new Uint8Array( fv.length );
-         for ( var m3 = 0; m3 < fv.length; ++m3 )
-            frameMask[ m3 ] = ( mask[ m3 ] && fv[ m3 ] ) ? 1 : 0;
-
-         var diffParams = JSON.parse( JSON.stringify( params ) );
-         diffParams.profile = detProfile;
-         if ( params.diffKSigma > 0 )
-            diffParams.kSigma = params.diffKSigma;
-         // A satellite train alone can leave 10+ parallel streaks in one sub —
-         // never let a bundle exhaust the slots and mask a lone trail.
-         diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
-         SIProf.start( "pass B: detection (diff)" );
-         var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, frameMask );
-         SIProf.end( "pass B: detection (diff)" );
-         SIProf.start( "pass B: frame quality (binned peaks)" );
-         e.quality = { peaks: countBinnedPeaks( e.binned.data, e.binned.width, e.binned.height ),
-                       skyBgAdu: e.binned.skyBg };
-         SIProf.end( "pass B: frame quality (binned peaks)" );
-
-         var trails = [];
-         for ( var t = 0; t < det.trails.length; ++t )
+         var arrays = [];
+         for ( var a0 = 0; a0 < idx.length; ++a0 )
+            arrays.push( entries[ idx[ a0 ] ].binned.data );
+         // 60% of the group: N-1 forced the strict intersection of every
+         // pointing — on a multi-night session the one-night border zones
+         // (where trails live too) were masked out entirely. At 60% the
+         // population seams still involve enough frames for a solid median,
+         // and the per-frame ringing masks handle the frame edges.
+         var minCover = Math.max( 3, Math.ceil( idx.length*0.6 ) );
+         SIProf.start( "model: median + normalize" );
+         var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
+         for ( var a1 = 0; a1 < idx.length; ++a1 )
          {
-            var tr = det.trails[ t ];
-            // Width veto: a real streak is a thin line; residual cloud bands
-            // and stacking artifacts that survive the median are broad.
-            if ( tr.widthPx > 12 )
+            var lf = SITrailCore.linearFitToModel( arrays[ a1 ], stack0.model, stack0.valid );
+            SITrailCore.applyLinear( arrays[ a1 ], lf.a, lf.b );
+            processEvents();
+         }
+         var stack = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
+         var model = stack.model;
+         // 6 px: past the Lanczos ringing at every resampled frame's coverage
+         // boundary, spread a few px by the intra-night dither.
+         var mask = SITrailCore.erodeMask( stack.valid, entries[ idx[ 0 ] ].binned.width,
+                                           entries[ idx[ 0 ] ].binned.height, 6 );
+         SIProf.end( "model: median + normalize" );
+
+         for ( var p0 = 0; p0 < idx.length; ++p0 )
+         {
+            var e = entries[ idx[ p0 ] ];
+            SIProf.start( "pass B: reopen frames" );
+            var opened2 = withWindow( e.regPath, function( win2 )
+            {
+               SIProf.end( "pass B: reopen frames" );
+
+               // Per-frame mask: the global coverage mask AND the frame's OWN
+               // coverage eroded — Lanczos ringing at a resampled frame's boundary
+               // lives a few nonzero pixels INSIDE its coverage, invisible to the
+               // global mask and strong enough to pose as an edge-hugging trail.
+               var fv = new Uint8Array( e.binned.data.length );
+               for ( var m2 = 0; m2 < fv.length; ++m2 )
+                  fv[ m2 ] = ( e.binned.data[ m2 ] > 1e-6 ) ? 1 : 0;
+               fv = SITrailCore.erodeMask( fv, e.binned.width, e.binned.height, 6 );
+               var frameMask = new Uint8Array( fv.length );
+               for ( var m3 = 0; m3 < fv.length; ++m3 )
+                  frameMask[ m3 ] = ( mask[ m3 ] && fv[ m3 ] ) ? 1 : 0;
+
+               var diffParams = JSON.parse( JSON.stringify( params ) );
+               diffParams.profile = detProfile;
+               if ( params.diffKSigma > 0 )
+                  diffParams.kSigma = params.diffKSigma;
+               // A satellite train alone can leave 10+ parallel streaks in one sub —
+               // never let a bundle exhaust the slots and mask a lone trail.
+               diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
+               SIProf.start( "pass B: detection (diff)" );
+               var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, frameMask );
+               SIProf.end( "pass B: detection (diff)" );
+               SIProf.start( "pass B: frame quality (binned peaks)" );
+               e.quality = { peaks: countBinnedPeaks( e.binned.data, e.binned.width, e.binned.height ),
+                             skyBgAdu: e.binned.skyBg };
+               SIProf.end( "pass B: frame quality (binned peaks)" );
+
+               var trails = [];
+               for ( var t = 0; t < det.trails.length; ++t )
+               {
+                  var tr = det.trails[ t ];
+                  // Width veto: a real streak is a thin line; residual cloud bands
+                  // and stacking artifacts that survive the median are broad.
+                  if ( tr.widthPx > 12 )
+                     continue;
+                  tr.index = trails.length;
+                  tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
+                  if ( hasUsableWcs( refMeta.wcs.kind ) )
+                  {
+                     tr.p1 = refMeta.wcs.imageToCelestial( tr.x1, tr.y1 );
+                     tr.p2 = refMeta.wcs.imageToCelestial( tr.x2, tr.y2 );
+                  }
+                  else
+                  {
+                     tr.p1 = null;
+                     tr.p2 = null;
+                  }
+                  trails.push( tr );
+               }
+
+               // Movers need trustworthy astrometry — see runAnalysis: registered
+               // sets without a real WCS skip the asteroid search entirely.
+               var blobs = [];
+               if ( params.detectAsteroids && hasUsableWcs( refMeta.wcs.kind ) )
+               {
+                  var pix = extractPixelSources( win2.mainView.image, params.maxSources );
+                  for ( var s = 0; s < pix.length; ++s )
+                  {
+                     var sky = refMeta.wcs.imageToCelestial( pix[ s ].x, pix[ s ].y );
+                     if ( sky != null )
+                        blobs.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
+                                      fluxAdu: pix[ s ].fluxAdu, x: pix[ s ].x, y: pix[ s ].y } );
+                  }
+               }
+
+               return { det: det, trails: trails, blobs: blobs };
+            } );
+            if ( opened2 == null )
+            {
+               SIProf.end( "pass B: reopen frames" );
+               results[ idx[ p0 ] ] = { trails: [], stats: {}, planeGroups: [] };
                continue;
-            tr.index = trails.length;
-            tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
-            if ( hasUsableWcs( refMeta.wcs.kind ) )
-            {
-               tr.p1 = refMeta.wcs.imageToCelestial( tr.x1, tr.y1 );
-               tr.p2 = refMeta.wcs.imageToCelestial( tr.x2, tr.y2 );
             }
-            else
-            {
-               tr.p1 = null;
-               tr.p2 = null;
-            }
-            trails.push( tr );
-         }
+            var det = opened2.det, trails = opened2.trails, blobs = opened2.blobs;
+            e.binned.data = null; // release the big array, keep the metadata
 
-         // Movers need trustworthy astrometry — see runAnalysis: registered
-         // sets without a real WCS skip the asteroid search entirely.
-         var blobs = [];
-         if ( params.detectAsteroids && hasUsableWcs( refMeta.wcs.kind ) )
+            // Parallel bundles: several near-parallel segments in ONE frame are a
+            // single object — an airplane (strobing lights: strong brightness
+            // variation along the marks) or a satellite train (fresh launch, not
+            // yet cataloged: steady parallel streaks). Grouped before matching so
+            // they never get individual satellite names.
+            var planeGroups = SIMeteors.groupPlanes( trails );
+            for ( var g = 0; g < planeGroups.length; ++g )
+            {
+               var pg = planeGroups[ g ];
+               var vars = [];
+               for ( var gi2 = 0; gi2 < pg.indices.length; ++gi2 )
+               {
+                  trails[ pg.indices[ gi2 ] ].planeGroup = g;
+                  var bv = trails[ pg.indices[ gi2 ] ].brightnessVariation;
+                  if ( bv != null )
+                     vars.push( bv );
+               }
+               vars.sort( function( a, b ) { return a - b; } );
+               var medVar = ( vars.length > 0 ) ? vars[ vars.length >> 1 ] : 0;
+               pg.kind = ( medVar > 0.3 ) ? "plane" : "train";
+            }
+
+            results[ idx[ p0 ] ] = { trails: trails, stats: det.stats, blobs: blobs,
+                                     planeGroups: planeGroups };
+            if ( trails.length > 0 )
+               console.writeln( format( "   %s: %d transient trail(s)%s", e.meta.id, trails.length,
+                                        planeGroups.length > 0
+                                           ? format( " — %d bundle(s)", planeGroups.length )
+                                           : "" ) );
+            processEvents();
+            gc();
+         }
+      }
+
+      var frames = [];
+      for ( var fi2 = 0; fi2 < entries.length; ++fi2 )
+      {
+         var r0 = results[ fi2 ] || { trails: [], stats: {}, planeGroups: [] };
+         frames.push( { meta: entries[ fi2 ].meta, trails: r0.trails, stats: r0.stats,
+                        blobs: r0.blobs || [], planeGroups: r0.planeGroups,
+                        srcW: refW, srcH: refH } );
+      }
+      var regPaths = [];
+      for ( var i = 0; i < entries.length; ++i )
+         regPaths.push( entries[ i ].regPath );
+
+      // Best frame, two stages: rank everything by the cheap indicators
+      // (peak count = transparency, sky background), then measure the real
+      // star FWHM at full resolution on the top 3 only.
+      SIProf.start( "best-frame pick (FWHM on top 3)" );
+      function medianOfKey( key )
+      {
+         var v = [];
+         for ( var i = 0; i < entries.length; ++i )
+            if ( entries[ i ].quality && entries[ i ].quality[ key ] > 0 )
+               v.push( entries[ i ].quality[ key ] );
+         return ( v.length > 0 ) ? SITrailCore.medianOf( v ) : 0;
+      }
+      var mPeaks = medianOfKey( "peaks" ), mBg = medianOfKey( "skyBgAdu" );
+      var ranked = [];
+      for ( var i = 0; i < entries.length; ++i )
+      {
+         var q = entries[ i ].quality || {};
+         ranked.push( { i: i,
+                        light: ( ( q.skyBgAdu > 0 && mBg > 0 ) ? 0.5*q.skyBgAdu/mBg : 0.75 )
+                             - ( ( q.peaks > 0 && mPeaks > 0 ) ? q.peaks/mPeaks : 0 ) } );
+      }
+      ranked.sort( function( a, b ) { return a.light - b.light; } );
+      var bestIndex = ranked[ 0 ].i, bestFwhm = 0, bestScore = Infinity;
+      for ( var r5 = 0; r5 < Math.min( 3, ranked.length ); ++r5 )
+      {
+         var cand = ranked[ r5 ].i;
+         var fq = withWindow( entries[ cand ].regPath, function( cw )
          {
-            var pix = extractPixelSources( win2.mainView.image, params.maxSources );
-            for ( var s = 0; s < pix.length; ++s )
-            {
-               var sky = refMeta.wcs.imageToCelestial( pix[ s ].x, pix[ s ].y );
-               if ( sky != null )
-                  blobs.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
-                                fluxAdu: pix[ s ].fluxAdu, x: pix[ s ].x, y: pix[ s ].y } );
-            }
-         }
-
-         win2.forceClose();
-         e.binned.data = null; // release the big array, keep the metadata
-
-         // Parallel bundles: several near-parallel segments in ONE frame are a
-         // single object — an airplane (strobing lights: strong brightness
-         // variation along the marks) or a satellite train (fresh launch, not
-         // yet cataloged: steady parallel streaks). Grouped before matching so
-         // they never get individual satellite names.
-         var planeGroups = SIMeteors.groupPlanes( trails );
-         for ( var g = 0; g < planeGroups.length; ++g )
+            return frameQuality( cw.mainView.image );
+         } );
+         if ( fq == null )
+            continue;
+         entries[ cand ].quality.fwhmPx = fq.fwhmPx;
+         entries[ cand ].quality.starCount = fq.starCount;
+         var score = ( fq.fwhmPx > 0 ? fq.fwhmPx : 9 ) + ranked[ r5 ].light;
+         if ( score < bestScore )
          {
-            var pg = planeGroups[ g ];
-            var vars = [];
-            for ( var gi2 = 0; gi2 < pg.indices.length; ++gi2 )
-            {
-               trails[ pg.indices[ gi2 ] ].planeGroup = g;
-               var bv = trails[ pg.indices[ gi2 ] ].brightnessVariation;
-               if ( bv != null )
-                  vars.push( bv );
-            }
-            vars.sort( function( a, b ) { return a - b; } );
-            var medVar = ( vars.length > 0 ) ? vars[ vars.length >> 1 ] : 0;
-            pg.kind = ( medVar > 0.3 ) ? "plane" : "train";
+            bestScore = score;
+            bestIndex = cand;
+            bestFwhm = fq.fwhmPx;
          }
-
-         results[ idx[ p0 ] ] = { trails: trails, stats: det.stats, blobs: blobs,
-                                  planeGroups: planeGroups };
-         if ( trails.length > 0 )
-            console.writeln( format( "   %s: %d transient trail(s)%s", e.meta.id, trails.length,
-                                     planeGroups.length > 0
-                                        ? format( " — %d bundle(s)", planeGroups.length )
-                                        : "" ) );
-         processEvents();
          gc();
       }
-   }
+      SIProf.end( "best-frame pick (FWHM on top 3)" );
+      var bq = entries[ bestIndex ].quality || {};
+      console.writeln( format( "Best frame for the result image: %s (FWHM %.1f px, %d peaks, sky %.0f ADU)",
+                               entries[ bestIndex ].meta.id, bestFwhm,
+                               bq.peaks || 0, bq.skyBgAdu || 0 ) );
 
-   var frames = [];
-   for ( var fi2 = 0; fi2 < entries.length; ++fi2 )
-   {
-      var r0 = results[ fi2 ] || { trails: [], stats: {}, planeGroups: [] };
-      frames.push( { meta: entries[ fi2 ].meta, trails: r0.trails, stats: r0.stats,
-                     blobs: r0.blobs || [], planeGroups: r0.planeGroups,
-                     srcW: refW, srcH: refH } );
-   }
-   var regPaths = [];
-   for ( var i = 0; i < entries.length; ++i )
-      regPaths.push( entries[ i ].regPath );
+      // Detector-internal split (dotted names = detail of "pass B: detection").
+      if ( detProfile.subtractMs ) SIProf.add( ".detect: subtract+flatten", detProfile.subtractMs );
+      if ( detProfile.brightMs ) SIProf.add( ".detect: bright pass", detProfile.brightMs );
+      if ( detProfile.faintMs ) SIProf.add( ".detect: faint pass", detProfile.faintMs );
+      if ( detProfile.faintHoughMs ) SIProf.add( ".detect: faint hough+normalize", detProfile.faintHoughMs );
+      if ( detProfile.faintRefineMs ) SIProf.add( ".detect: faint refine", detProfile.faintRefineMs );
+      if ( detProfile.photometryMs ) SIProf.add( ".detect: photometry", detProfile.photometryMs );
+      if ( detProfile.faintIters ) SIProf.add( ".detect: faint iterations (count)", detProfile.faintIters );
 
-   // Best frame, two stages: rank everything by the cheap indicators
-   // (peak count = transparency, sky background), then measure the real
-   // star FWHM at full resolution on the top 3 only.
-   SIProf.start( "best-frame pick (FWHM on top 3)" );
-   function medianOfKey( key )
-   {
-      var v = [];
-      for ( var i = 0; i < entries.length; ++i )
-         if ( entries[ i ].quality && entries[ i ].quality[ key ] > 0 )
-            v.push( entries[ i ].quality[ key ] );
-      return ( v.length > 0 ) ? SITrailCore.medianOf( v ) : 0;
+      return { frames: frames, refMeta: refMeta, refW: refW, refH: refH,
+               regPaths: regPaths, regDir: regDir, bestIndex: bestIndex };
    }
-   var mPeaks = medianOfKey( "peaks" ), mBg = medianOfKey( "skyBgAdu" );
-   var ranked = [];
-   for ( var i = 0; i < entries.length; ++i )
+   finally
    {
-      var q = entries[ i ].quality || {};
-      ranked.push( { i: i,
-                     light: ( ( q.skyBgAdu > 0 && mBg > 0 ) ? 0.5*q.skyBgAdu/mBg : 0.75 )
-                          - ( ( q.peaks > 0 && mPeaks > 0 ) ? q.peaks/mPeaks : 0 ) } );
-   }
-   ranked.sort( function( a, b ) { return a.light - b.light; } );
-   var bestIndex = ranked[ 0 ].i, bestFwhm = 0, bestScore = Infinity;
-   for ( var r5 = 0; r5 < Math.min( 3, ranked.length ); ++r5 )
-   {
-      var cand = ranked[ r5 ].i;
-      var cw = ImageWindow.open( entries[ cand ].regPath );
-      if ( cw.length == 0 )
-         continue;
-      for ( var k6 = 1; k6 < cw.length; ++k6 )
-         cw[ k6 ].forceClose();
-      var fq = frameQuality( cw[ 0 ].mainView.image );
-      cw[ 0 ].forceClose();
-      entries[ cand ].quality.fwhmPx = fq.fwhmPx;
-      entries[ cand ].quality.starCount = fq.starCount;
-      var score = ( fq.fwhmPx > 0 ? fq.fwhmPx : 9 ) + ranked[ r5 ].light;
-      if ( score < bestScore )
+      // Warm the fov() cache while the reference window is still live (fov is
+      // the only refMeta.wcs use left after this return), then release it.
+      if ( refWin != null )
       {
-         bestScore = score;
-         bestIndex = cand;
-         bestFwhm = fq.fwhmPx;
+         try { refMeta.wcs.fov(); } catch ( e ) {}
+         try { refWin.forceClose(); } catch ( e ) {}
       }
-      gc();
    }
-   SIProf.end( "best-frame pick (FWHM on top 3)" );
-   var bq = entries[ bestIndex ].quality || {};
-   console.writeln( format( "Best frame for the result image: %s (FWHM %.1f px, %d peaks, sky %.0f ADU)",
-                            entries[ bestIndex ].meta.id, bestFwhm,
-                            bq.peaks || 0, bq.skyBgAdu || 0 ) );
-
-   // Detector-internal split (dotted names = detail of "pass B: detection").
-   if ( detProfile.subtractMs ) SIProf.add( ".detect: subtract+flatten", detProfile.subtractMs );
-   if ( detProfile.brightMs ) SIProf.add( ".detect: bright pass", detProfile.brightMs );
-   if ( detProfile.faintMs ) SIProf.add( ".detect: faint pass", detProfile.faintMs );
-   if ( detProfile.faintHoughMs ) SIProf.add( ".detect: faint hough+normalize", detProfile.faintHoughMs );
-   if ( detProfile.faintRefineMs ) SIProf.add( ".detect: faint refine", detProfile.faintRefineMs );
-   if ( detProfile.photometryMs ) SIProf.add( ".detect: photometry", detProfile.photometryMs );
-   if ( detProfile.faintIters ) SIProf.add( ".detect: faint iterations (count)", detProfile.faintIters );
-
-   // Warm the fov() cache while the reference window is still live (fov is the
-   // only refMeta.wcs use left after this return), then release the window.
-   if ( refWin != null )
-   {
-      try { refMeta.wcs.fov(); } catch ( e ) {}
-      try { refWin.forceClose(); } catch ( e ) {}
-   }
-   return { frames: frames, refMeta: refMeta, refW: refW, refH: refH,
-            regPaths: regPaths, regDir: regDir, bestIndex: bestIndex };
 }
 
 function buildMatchRequest( frames, observer, params, fovOverride )
@@ -863,6 +901,23 @@ function tanInvertForOverlay( tan, p )
 
 function runAnalysis( files, params )
 {
+   // One private scratch area per run; wiped on every exit path — the early
+   // returns and the registration failures the pipeline recovers from
+   // included — so no registered XISF set is ever left in the temp folder.
+   var run = { token: siRunToken() };
+   run.regDir = File.systemTempDirectory + "/si-night-reg-" + run.token;
+   try
+   {
+      return runAnalysisIn( files, params, run );
+   }
+   finally
+   {
+      clearDirectory( run.regDir );
+   }
+}
+
+function runAnalysisIn( files, params, run )
+{
    SIProf.reset();
    var tRun = Date.now();
    // Registered-difference analysis first (3+ frames of one field); fall
@@ -870,7 +925,7 @@ function runAnalysis( files, params )
    var set = null;
    try
    {
-      set = analyzeNightSet( files, params );
+      set = analyzeNightSet( files, params, run.regDir );
    }
    catch ( e )
    {
@@ -1434,20 +1489,17 @@ function runAnalysis( files, params )
             // Default: the best single frame (sharpest/cleanest) as the
             // background; every trail of the night is drawn on top anyway,
             // all frames sharing the reference grid.
-            var bw = ImageWindow.open( set.regPaths[ set.bestIndex ] );
-            if ( bw.length > 0 )
+            bmp = withWindow( set.regPaths[ set.bestIndex ], function( bw )
             {
-               for ( var k5 = 1; k5 < bw.length; ++k5 )
-                  bw[ k5 ].forceClose();
-               bmp = SIRender.stretchedBitmap( bw[ 0 ].mainView.image );
-               bw[ 0 ].forceClose();
-            }
+               return SIRender.stretchedBitmap( bw.mainView.image );
+            } );
          }
          if ( bmp != null )
          {
             bmp = SIRender.annotateTrails( bmp, labeledTrails.concat( predictedItems ),
                                            { flagDir: flagAssetsDir() } );
-            resultImagePath = File.systemTempDirectory + "/SkyIntruders-night-result.png";
+            resultImagePath = File.systemTempDirectory + "/SkyIntruders-night-" +
+                              night.dateLabel.replace( "/", "-" ) + "-" + run.token + ".png";
             bmp.save( resultImagePath );
 
             try
@@ -1473,12 +1525,12 @@ function runAnalysis( files, params )
          SIProf.start( "debug frame overlays" );
          for ( var i = 0; i < frames.length; ++i )
          {
-            var wins3 = ImageWindow.open( set.regPaths[ i ] );
-            if ( wins3.length == 0 )
+            var fbmp = withWindow( set.regPaths[ i ], function( w3 )
+            {
+               return SIRender.stretchedBitmap( w3.mainView.image );
+            } );
+            if ( fbmp == null )
                continue;
-            for ( var k4 = 1; k4 < wins3.length; ++k4 )
-               wins3[ k4 ].forceClose();
-            var fbmp = SIRender.stretchedBitmap( wins3[ 0 ].mainView.image );
             var mine = [];
             for ( var lt = 0; lt < labeledTrails.length; ++lt )
                if ( labeledTrails[ lt ].frameIndex === i )
@@ -1505,8 +1557,8 @@ function runAnalysis( files, params )
                }
             }
             fbmp = SIRender.annotateTrails( fbmp, mine, { flagDir: flagAssetsDir() } );
-            fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + i + ".png" );
-            wins3[ 0 ].forceClose();
+            fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + run.token + "-" +
+                       i + ".png" );
             gc();
          }
       }
@@ -1515,9 +1567,6 @@ function runAnalysis( files, params )
          console.warningln( SKYINTRUDERS_TITLE + ": frame overlays failed — " + e.message );
       }
    SIProf.end( "debug frame overlays" );
-
-   if ( set != null )
-      clearDirectory( set.regDir );
 
    SIProf.add( "(untimed rest)", Math.max( 0, ( Date.now() - tRun ) -
       ( function() { var s = 0, t = SIProf.table(); for ( var i = 0; i < t.length; ++i )
@@ -3313,35 +3362,34 @@ class SkyIntrudersDialog extends Dialog
 
    runTreasure()
    {
-      // Input: the first listed image, else the active window.
-      var window = null, filePath = null, opened = false;
+      // Input: the first listed image (opened for the duration of the hunt
+      // and closed whatever happens), else the active window.
+      var self = this;
       if ( this.files.length > 0 )
       {
-         var wins = ImageWindow.open( this.files[ 0 ] );
-         if ( wins.length == 0 )
+         var path = this.files[ 0 ];
+         var r = withWindow( path, function( window )
          {
-            ( new MessageBox( uiT( this.params.lang, "cannotOpen" ) + " " + this.files[ 0 ],
+            self.runTreasureOn( window, path );
+            return true;
+         } );
+         if ( r == null )
+            ( new MessageBox( uiT( this.params.lang, "cannotOpen" ) + " " + path,
                               SKYINTRUDERS_TITLE, StdIcon.Error, StdButton.Ok ) ).execute();
-            return;
-         }
-         for ( var i = 1; i < wins.length; ++i )
-            wins[ i ].forceClose();
-         window = wins[ 0 ];
-         filePath = this.files[ 0 ];
-         opened = true;
+         return;
       }
-      else
+      var window = ImageWindow.activeWindow;
+      if ( window == null || window.isNull )
       {
-         window = ImageWindow.activeWindow;
-         if ( window == null || window.isNull )
-         {
-            ( new MessageBox( uiT( this.params.lang, "needImage" ),
-                              SKYINTRUDERS_TITLE, StdIcon.Information, StdButton.Ok ) ).execute();
-            return;
-         }
-         filePath = window.filePath || window.mainView.id;
+         ( new MessageBox( uiT( this.params.lang, "needImage" ),
+                           SKYINTRUDERS_TITLE, StdIcon.Information, StdButton.Ok ) ).execute();
+         return;
       }
+      this.runTreasureOn( window, window.filePath || window.mainView.id );
+   }
 
+   runTreasureOn( window, filePath )
+   {
       saveParams( this.params );
       this.setBusy( true );
       console.show();
@@ -3371,8 +3419,6 @@ class SkyIntrudersDialog extends Dialog
       }
       finally
       {
-         if ( opened && window != null )
-            try { window.forceClose(); } catch ( e2 ) {}
          this.setBusy( false );
       }
    }

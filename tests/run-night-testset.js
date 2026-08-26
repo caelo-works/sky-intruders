@@ -7,7 +7,8 @@
  *
  * Results:
  *   <system-temp>/si-night-testset.json      (events, trails, fit, report)
- *   <system-temp>/SkyIntruders-night-result.png  (written by runAnalysis)
+ *   <system-temp>/SkyIntruders-night-<date>-<run token>.png  (written by
+ *   runAnalysis; the exact path is in the JSON's resultImagePath)
  *
  * Run:
  *   powershell: $env:SI_HEADLESS_LIB='1'; & <PI-exe> -n --automation-mode

@@ -298,8 +298,15 @@ Ghost lines for predicted-but-unconfirmed passes are pale yellow (sunlit) or gre
   no status (typically classified objects). The same tag appears on the night
   log's satellite lines. It comes from the public satellite catalog; if that
   download failed for the session, the tag is simply absent — not an error.
-- The same composite as a **PNG in the system temp folder**. The **Open image**
-  button in the report window reopens it.
+- The same composite as a **PNG in the system temp folder**, named
+  `SkyIntruders-night-<date>-<run token>.png` (the token is the run's start
+  time plus a random number, so two runs — or two PixInsight instances — never
+  overwrite each other's image). The **Open image** button in the report window
+  reopens it. The registered frames themselves live in a private scratch folder
+  `si-night-reg-<run token>` in the same temp folder for the duration of the
+  run and are deleted when it ends — on success, on a fallback to per-frame
+  detection, and on an error alike. A leftover `si-night-reg-…` folder means
+  PixInsight itself was killed mid-run; it is safe to delete.
 - A **night log** in markdown, shown in a window and printed to the console, with
   fun stats and a forum-ready post title. **Save report…** writes it next to the
   frames.
