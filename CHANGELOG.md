@@ -36,6 +36,16 @@ All notable changes to this project are documented here. The format is based on
   collinear fragments separated by at most 3 % of the diagonal into one
   trail with the union extent. A crossing trail is now returned at full
   length instead of the half beyond the crossing. Fixes #14.
+- Night trails: the 12-px width veto now works. The perpendicular profile
+  used to hold 7 samples, so the measured FWHM could never exceed 6 px and
+  the veto never fired; it now spans ±16 px with a robust background from
+  the outer annulus (each side separately), reports `widthPx = null` when
+  no half-max crossing exists inside the window, and the veto drops both
+  cases (`WIDTH_VETO_PX`). Photometry moved into `SITrailCore.measureTrail`
+  and subtracts a per-station local background before `meanFluxAdu` and
+  `brightnessVariation`; the variation is floored at 6 × the per-sample
+  noise so a trail invisible at full resolution no longer fires the 0.35
+  flasher/meteor cue. Fixes #15.
 - `tests/treasure.test.js`: the "no external asset URLs" check was written
   as `A && B || C`, which the credit link made vacuously true; it now lists
   every `http(s)` URL in the report and requires all of them to be the

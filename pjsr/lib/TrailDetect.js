@@ -1500,43 +1500,223 @@ var SITrailCore = ( function()
    }
 
    // ------------------------------------------------------------------------
-   // Photometry helpers
+   // Photometry (full-resolution, pure: sample( x, y ) supplied by the caller)
 
-   function fwhmOfProfile( profile )
+   var PHOT = {
+      profileHalf: 16,      // perpendicular profile spans +-16 px
+      annulusInner: 10,     // local background: median of |o| in [10, 16]
+      coreHalf: 6,          // the peak is searched within +-6 px of the line
+      stations: 64,         // flux / variation stations along the trail
+      widthStations: 8,     // FWHM stations
+      probeHalf: 1          // flux = max sample within +-1 px across the line
+   };
+
+   function fwhmOfProfile( profile, bg, peakIdx )
    {
-      // FWHM of a 1-px-step perpendicular profile: background from the
-      // profile ends, peak from the maximum, half-max crossings by linear
-      // interpolation. Returns 0 when there is no peak above background.
+      // FWHM of a 1-px-step perpendicular profile by linear interpolation of
+      // the half-max crossings. bg defaults to the lower profile end, the
+      // peak to the maximum. Returns 0 when nothing rises above bg, and
+      // NULL when the peak exists but a half-max crossing is missing on
+      // either side — the structure is broader than the window, which is
+      // exactly what the width veto must see.
       var n = profile.length;
       if ( n < 3 )
          return 0;
-      var bg = Math.min( profile[0], profile[n - 1] );
-      var peak = profile[0], pi = 0;
-      for ( var i = 1; i < n; ++i )
-         if ( profile[i] > peak )
-         {
-            peak = profile[i];
-            pi = i;
-         }
+      if ( bg === undefined || bg === null )
+         bg = Math.min( profile[0], profile[n - 1] );
+      var peak, pi;
+      if ( peakIdx === undefined || peakIdx === null )
+      {
+         peak = profile[0];
+         pi = 0;
+         for ( var i = 1; i < n; ++i )
+            if ( profile[i] > peak )
+            {
+               peak = profile[i];
+               pi = i;
+            }
+      }
+      else
+      {
+         pi = peakIdx;
+         peak = profile[pi];
+      }
       if ( !( peak > bg ) )
          return 0;
       var half = bg + ( peak - bg )/2;
 
-      var left = 0;
-      for ( var i = pi; i > 0; --i )
-         if ( profile[i - 1] < half )
+      var left = null;
+      for ( var l = pi; l > 0; --l )
+         if ( profile[l - 1] < half )
          {
-            left = ( i - 1 ) + ( half - profile[i - 1] )/( profile[i] - profile[i - 1] );
+            left = ( l - 1 ) + ( half - profile[l - 1] )/( profile[l] - profile[l - 1] );
             break;
          }
-      var right = n - 1;
-      for ( var i = pi; i < n - 1; ++i )
-         if ( profile[i + 1] < half )
+      var right = null;
+      for ( var r = pi; r < n - 1; ++r )
+         if ( profile[r + 1] < half )
          {
-            right = ( i + 1 ) - ( half - profile[i + 1] )/( profile[i] - profile[i + 1] );
+            right = ( r + 1 ) - ( half - profile[r + 1] )/( profile[r] - profile[r + 1] );
             break;
          }
+      if ( left === null || right === null )
+         return null;
       return right - left;
+   }
+
+   function perpProfile( sample, width, height, cx, cy, px, py, half )
+   {
+      // Samples at offsets -half..+half across the line (null off-image).
+      var prof = [];
+      for ( var o = -half; o <= half; ++o )
+      {
+         var xi = Math.round( cx + px*o );
+         var yi = Math.round( cy + py*o );
+         prof.push( ( xi >= 0 && xi < width && yi >= 0 && yi < height ) ? sample( xi, yi ) : null );
+      }
+      return prof;
+   }
+
+   function annulusStats( prof, half, inner )
+   {
+      // Robust local background from the outer annulus of a perpendicular
+      // profile, each side (|o| >= inner) taken separately: a plateau or a
+      // star on ONE side must not pull the level up nor blow up the noise
+      // estimate (a pooled MAD of two levels reads the level difference as
+      // noise and hides the trail). bg = the lower of the two side medians,
+      // for the flux; bgLow = the lower of the two side lower quartiles,
+      // for the width: the wings of a 12-14 px trail still leak into the
+      // annulus and a median background would shave the measured FWHM by
+      // ~10 %, right where the veto decides. noise = mean side MAD.
+      var left = [], right = [];
+      for ( var i = 0; i < prof.length; ++i )
+         if ( prof[i] !== null && Math.abs( i - half ) >= inner )
+            ( i < half ? left : right ).push( prof[i] );
+      var sides = [];
+      if ( left.length >= 3 )
+         sides.push( left );
+      if ( right.length >= 3 )
+         sides.push( right );
+      if ( sides.length === 0 )
+         return null;
+      var bg = Infinity, bgLow = Infinity, noise = 0;
+      for ( var k = 0; k < sides.length; ++k )
+      {
+         bg = Math.min( bg, medianOf( sides[k] ) );
+         bgLow = Math.min( bgLow, quantileOf( sides[k], 0.25 ) );
+         noise += madOf( sides[k] );
+      }
+      return { bg: bg, bgLow: bgLow, noise: noise/sides.length };
+   }
+
+   function profileWidth( prof, half, inner, coreHalf )
+   {
+      // FWHM of one perpendicular profile against its annulus background;
+      // the peak is searched within +-coreHalf of the line so a star in
+      // the annulus cannot become "the trail". Returns { fwhm } with fwhm
+      // = null when the structure has no half-max crossing inside the
+      // window (broad band), or null altogether when unmeasurable.
+      var st = annulusStats( prof, half, inner );
+      if ( st === null )
+         return null;
+      var pi = -1, peak = -Infinity;
+      for ( var i = half - coreHalf; i <= half + coreHalf; ++i )
+         if ( prof[i] !== null && prof[i] > peak )
+         {
+            peak = prof[i];
+            pi = i;
+         }
+      if ( pi < 0 || !( peak - st.bg > 3*st.noise ) )
+         return null; // no trail signal here: neither thin nor broad
+      // off-image samples are read as background for the crossing search
+      var filled = [];
+      for ( var j = 0; j < prof.length; ++j )
+         filled.push( ( prof[j] === null ) ? st.bgLow : prof[j] );
+      return { fwhm: fwhmOfProfile( filled, st.bgLow, pi ), bg: st.bg, noise: st.noise };
+   }
+
+   function measureTrail( sample, width, height, seg, opts )
+   {
+      // Photometry along a full-resolution segment. Every quantity is taken
+      // AGAINST A LOCAL BACKGROUND measured per station in the outer
+      // annulus of the perpendicular profile, so sky level and gradients
+      // cancel and a star crossing the trail only touches its own station.
+      //   meanFlux            mean background-subtracted peak (sample units)
+      //   brightnessVariation MAD / max( median, 6*noise ) of the station
+      //                       excess — the flasher / meteor cue. The noise
+      //                       floor keeps a trail near the per-sample noise
+      //                       (the faint pass finds 0.4-sigma streaks) from
+      //                       reading as a flasher: pure noise lands at
+      //                       ~0.15-0.22 over 64 stations (measured; a
+      //                       3-sigma floor reached 0.37), below the 0.35
+      //                       cue, while a flasher's alternating dashes
+      //                       give ~0.45+.
+      //   widthPx             median FWHM over the width stations, or null
+      //                       when most stations have no half-max crossing
+      //                       inside the +-16 px window (a band broader
+      //                       than ~30 px), which the caller's width veto
+      //                       must treat as "too wide".
+      var P = {};
+      for ( var k in PHOT )
+         P[k] = ( opts && opts[k] !== undefined ) ? opts[k] : PHOT[k];
+      var dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
+      var len = Math.sqrt( dx*dx + dy*dy );
+      if ( len <= 0 )
+         return { meanFlux: 0, brightnessVariation: null, widthPx: null, stations: 0 };
+      var ux = dx/len, uy = dy/len;
+      var px = -uy, py = ux; // unit perpendicular
+
+      var excess = [], noises = [];
+      for ( var i = 0; i < P.stations; ++i )
+      {
+         var t = ( i + 0.5 )/P.stations;
+         var prof = perpProfile( sample, width, height, seg.x1 + dx*t, seg.y1 + dy*t,
+                                 px, py, P.profileHalf );
+         var st = annulusStats( prof, P.profileHalf, P.annulusInner );
+         if ( st === null )
+            continue;
+         var v = -Infinity;
+         for ( var o = -P.probeHalf; o <= P.probeHalf; ++o )
+         {
+            var s = prof[P.profileHalf + o];
+            if ( s !== null && s > v )
+               v = s;
+         }
+         if ( v === -Infinity )
+            continue;
+         excess.push( v - st.bg );
+         noises.push( st.noise );
+      }
+      var meanFlux = 0, brightnessVariation = null;
+      if ( excess.length > 0 )
+      {
+         meanFlux = Math.max( 0, meanOf( excess ) );
+         var med = medianOf( excess );
+         var floor = 6*medianOf( noises );
+         var denom = Math.max( med, floor );
+         brightnessVariation = ( denom > 0 ) ? madOf( excess )/denom : null;
+      }
+
+      var widths = [], broad = 0;
+      for ( var w = 0; w < P.widthStations; ++w )
+      {
+         var tw = ( w + 0.5 )/P.widthStations;
+         var pw = perpProfile( sample, width, height, seg.x1 + dx*tw, seg.y1 + dy*tw,
+                               px, py, P.profileHalf );
+         var r = profileWidth( pw, P.profileHalf, P.annulusInner, P.coreHalf );
+         if ( r === null )
+            continue;
+         if ( r.fwhm === null )
+            ++broad;
+         else if ( r.fwhm > 0 )
+            widths.push( r.fwhm );
+      }
+      var widthPx = ( widths.length > 0 && widths.length >= broad ) ? medianOf( widths ) : null;
+      if ( widths.length === 0 && broad === 0 )
+         widthPx = 0; // no measurable signal at full resolution: not vetoed
+
+      return { meanFlux: meanFlux, brightnessVariation: brightnessVariation,
+               widthPx: widthPx, stations: excess.length };
    }
 
    return {
@@ -1577,7 +1757,10 @@ var SITrailCore = ( function()
       mergeDuplicateTrails: mergeDuplicateTrails,
       detectCore: detectCore,
       scaleSegment: scaleSegment,
-      fwhmOfProfile: fwhmOfProfile
+      PHOT: PHOT,
+      fwhmOfProfile: fwhmOfProfile,
+      profileWidth: profileWidth,
+      measureTrail: measureTrail
    };
 } )();
 
@@ -1588,72 +1771,15 @@ var SITrailDetect = ( function()
    var SCALE = 65535;
    var MAX_SMALL_SIDE = 1500;
 
-   function samplePerpMax( image, x, y, px, py, perpTol, width, height )
-   {
-      // Max sample within perpTol px across the trail — robust to the
-      // trail not being perfectly straight at full resolution.
-      var v = -1;
-      for ( var o = -perpTol; o <= perpTol; ++o )
-      {
-         var xi = Math.round( x + px*o );
-         var yi = Math.round( y + py*o );
-         if ( xi >= 0 && xi < width && yi >= 0 && yi < height )
-         {
-            var s = image.sample( xi, yi, 0 );
-            if ( s > v )
-               v = s;
-         }
-      }
-      return v;
-   }
-
    function measureTrail( image, seg )
    {
-      // Full-resolution photometry along the accepted segment.
-      var width = image.width, height = image.height;
-      var dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
-      var len = Math.sqrt( dx*dx + dy*dy );
-      if ( len <= 0 )
-         return { meanFluxAdu: 0, brightnessVariation: 0, widthPx: 0 };
-      var ux = dx/len, uy = dy/len;
-      var px = -uy, py = ux; // unit perpendicular
-
-      // 64 stations along the trail; per station keep the max of a 3-px
-      // perpendicular probe.
-      var samples = [];
-      var nStations = 64;
-      for ( var i = 0; i < nStations; ++i )
-      {
-         var t = ( i + 0.5 )/nStations;
-         var v = samplePerpMax( image, seg.x1 + dx*t, seg.y1 + dy*t, px, py, 1, width, height );
-         if ( v >= 0 )
-            samples.push( v );
-      }
-      var med = SITrailCore.medianOf( samples );
-      var meanFluxAdu = SITrailCore.meanOf( samples )*SCALE;
-      var brightnessVariation = ( med > 0 ) ? SITrailCore.madOf( samples )/med : 0;
-
-      // Width: mean FWHM of a 7-px perpendicular profile at 8 stations.
-      var widths = [];
-      for ( var s = 0; s < 8; ++s )
-      {
-         var ts = ( s + 0.5 )/8;
-         var cx = seg.x1 + dx*ts, cy = seg.y1 + dy*ts;
-         var profile = [];
-         for ( var o = -3; o <= 3; ++o )
-         {
-            var xi = Math.round( cx + px*o );
-            var yi = Math.round( cy + py*o );
-            if ( xi >= 0 && xi < width && yi >= 0 && yi < height )
-               profile.push( image.sample( xi, yi, 0 ) );
-         }
-         var f = SITrailCore.fwhmOfProfile( profile );
-         if ( f > 0 )
-            widths.push( f );
-      }
-      var widthPx = ( widths.length > 0 ) ? SITrailCore.meanOf( widths ) : 0;
-
-      return { meanFluxAdu: meanFluxAdu, brightnessVariation: brightnessVariation, widthPx: widthPx };
+      // Full-resolution photometry (SITrailCore.measureTrail) read through
+      // image.sample; flux reported in ADU.
+      var phot = SITrailCore.measureTrail( function( x, y ) { return image.sample( x, y, 0 ); },
+                                           image.width, image.height, seg );
+      return { meanFluxAdu: phot.meanFlux*SCALE,
+               brightnessVariation: phot.brightnessVariation,
+               widthPx: phot.widthPx };
    }
 
    function binned( image )

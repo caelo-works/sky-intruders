@@ -68,6 +68,13 @@ function ensureMinimumVersion( maj, min, rel )
 // picker presets, chartField call).
 var SI_DEFAULT_ACCENT = "#9FD8D2";
 
+// Full-resolution FWHM above which a residual trail is dropped as a cloud
+// band or stacking artifact. A bright satellite trail is 2-9 px FWHM at
+// typical sampling; measured against the local annulus background by
+// SITrailCore.measureTrail (profile +-16 px, so widths up to ~30 px are
+// numeric and a missing half-max crossing reports null).
+var WIDTH_VETO_PX = 12;
+
 var DEFAULT_PARAMS = {
    kSigma: 5.0,
    // Detection threshold on the registered DIFFERENCE image: the static sky
@@ -751,7 +758,9 @@ function analyzeNightSet( files, params, regDir )
                   var tr = det.trails[ t ];
                   // Width veto: a real streak is a thin line; residual cloud bands
                   // and stacking artifacts that survive the median are broad.
-                  if ( tr.widthPx > 12 )
+                  // null = no half-max crossing inside the profile window,
+                  // i.e. broader still.
+                  if ( tr.widthPx === null || tr.widthPx > WIDTH_VETO_PX )
                      continue;
                   tr.index = trails.length;
                   tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );

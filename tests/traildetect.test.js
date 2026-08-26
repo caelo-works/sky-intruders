@@ -385,3 +385,77 @@ console.log("traildetect: bright-pass angular refinement OK");
 }
 
 console.log("traildetect: duplicate / fragment merge OK");
+
+// ---------------------------------------------------------------------------
+// Photometry against a local annulus background: width measured on trails
+// of FWHM 3 / 8 / 14 px (14 must exceed the 12-px veto, 8 must not), a
+// profile with no half-max crossing inside the +-16 px window yields the
+// null sentinel, a uniform
+// trail over a sky gradient with stars on it stays below the 0.35 flasher
+// cue, a real flasher stays above it, and noise alone does not fire it.
+
+{
+   const W = 600, H = 400;
+   let s0 = 123456789, s1 = 362436069, s2 = 521288629, s3 = 88675123;
+   const rnd = () => { let tt = s0^(s0<<11); s0=s1; s1=s2; s2=s3; s3=(s3^(s3>>>19))^(tt^(tt>>>8)); return (s3>>>0)/4294967296; };
+   const gauss = () => { let s = 0; for (let i = 0; i < 12; i++) s += rnd(); return s - 6; };
+   const seg = { x1: 40, y1: 60, x2: 560, y2: 340 };
+   const dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1, len = Math.hypot(dx, dy), ux = dx/len, uy = dy/len;
+   const frame = (fwhm, amp, opts) => {
+      opts = opts || {};
+      const a = new Float32Array(W*H);
+      for (let y = 0; y < H; y++)
+         for (let x = 0; x < W; x++)
+            a[y*W + x] = 0.10 + 0.10*x/W + 0.05*y/H + 0.004*gauss(); // sky + gradient + noise
+      const sig = fwhm/2.3548;
+      for (let y = 0; y < H; y++)
+         for (let x = 0; x < W; x++) {
+            const t = (x - seg.x1)*ux + (y - seg.y1)*uy;
+            if (t < 0 || t > len) continue;
+            const d = -(x - seg.x1)*uy + (y - seg.y1)*ux;
+            let A = amp;
+            if (opts.flashPeriod) A = (Math.floor(t/opts.flashPeriod) % 2 === 0) ? amp : 0;
+            a[y*W + x] += A*Math.exp(-d*d/(2*sig*sig));
+            if (opts.shoulder && d >= 1 && d <= 40) a[y*W + x] += 0.8*amp; // plateau on one side
+         }
+      if (opts.stars)
+         for (let k = 0; k < opts.stars; k++) {
+            const t = len*(k + 0.5)/opts.stars, cx = Math.round(seg.x1 + ux*t), cy = Math.round(seg.y1 + uy*t);
+            for (let yy = -2; yy <= 2; yy++)
+               for (let xx = -2; xx <= 2; xx++)
+                  a[(cy + yy)*W + cx + xx] += 0.5*Math.exp(-(xx*xx + yy*yy)/2);
+         }
+      return a;
+   };
+   const measure = a => T.measureTrail((x, y) => a[y*W + x], W, H, seg);
+
+   const w3 = measure(frame(3, 0.3)), w8 = measure(frame(8, 0.3)), w14 = measure(frame(14, 0.3));
+   assert.ok(Math.abs(w3.widthPx - 3) <= 1.2, `fwhm 3 measured ${w3.widthPx}`);
+   assert.ok(Math.abs(w8.widthPx - 8) <= 1.2, `fwhm 8 measured ${w8.widthPx}`);
+   assert.ok(w8.widthPx <= 12, "an 8-px trail is kept by the 12-px veto");
+   assert.ok(Math.abs(w14.widthPx - 14) <= 1.5, `fwhm 14 measured ${w14.widthPx}`);
+   assert.ok(w14.widthPx > 12, "a 14-px band is vetoed");
+   assert.ok(Math.abs(w3.meanFlux - 0.3) < 0.03, `flux is background-subtracted (${w3.meanFlux})`);
+
+   const band = measure(frame(40, 0.3));
+   assert.ok(band.widthPx > 12, `a 40-px band is vetoed (${band.widthPx})`);
+   // trail against a plateau: no half-max crossing on that side inside the
+   // window -> the sentinel, which the caller's veto treats as "too wide"
+   const shoulder = measure(frame(3, 0.3, { shoulder: true }));
+   assert.strictEqual(shoulder.widthPx, null, "no crossing inside the window yields the null sentinel");
+
+   const steady = measure(frame(3, 0.3, { stars: 5 }));
+   assert.ok(steady.brightnessVariation < 0.15,
+      `steady trail over gradient + stars: variation ${steady.brightnessVariation}`);
+   const flasher = measure(frame(3, 0.3, { flashPeriod: 30 }));
+   assert.ok(flasher.brightnessVariation > 0.35, `flasher: variation ${flasher.brightnessVariation}`);
+   const noise = measure(frame(3, 0));
+   assert.ok(noise.brightnessVariation < 0.35, `noise alone must not fire the cue (${noise.brightnessVariation})`);
+   assert.ok(noise.widthPx === null || noise.widthPx <= 12, "noise alone is not vetoed as broad");
+
+   // fwhmOfProfile: missing crossing -> null, not a clipped number
+   assert.strictEqual(T.fwhmOfProfile([0, 1, 1, 1, 1, 1, 1], 0), null, "no right crossing -> null");
+   assert.ok(Math.abs(T.fwhmOfProfile([0, 0, 2, 4, 2, 0, 0], 0, 3) - 2) < 1e-9, "explicit bg and peak index");
+}
+
+console.log("traildetect: annulus-background photometry + width veto OK");

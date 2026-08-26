@@ -258,8 +258,17 @@ and, silently, none for the OIII pair. That is expected behaviour. One sky model
 per filter is deliberate: mixing narrowband channels into one model was measured
 to lose trails outright.
 
-Trails **wider than about 12 pixels are discarded** as cloud bands or stacking
-artefacts. There is no user setting for this.
+Trails **wider than 12 pixels (FWHM, full resolution) are discarded** as cloud
+bands or stacking artefacts. The width is measured on a ±16 px profile across
+the trail against the local background next to it; a trail with no measurable
+edge inside that window counts as too wide. A bright, slightly defocused
+satellite trail of 6–9 px is kept. There is no user setting for this.
+
+The brightness-variation index behind the meteor / flasher cue (threshold
+0.35) is measured after subtracting the local background at each of 64
+points along the trail, so sky gradients and stars crossing the trail do not
+create false flickering, and a trail too faint to measure at full resolution
+reads as steady rather than flickering.
 
 ### 4.3 How a trail gets a satellite's name
 
