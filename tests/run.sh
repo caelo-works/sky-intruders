@@ -20,6 +20,12 @@
 # ============================================================================
 set -euo pipefail
 
+# The night log prints every clock in UT and the golden fixtures under
+# tests/fixtures/report/ are written that way. Pin the zone so a host-local
+# regression (getHours instead of getUTCHours) fails loudly instead of
+# passing on a UTC machine and failing on everybody else's.
+export TZ=UTC
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="$ROOT/tests/build"
 MODULE="$BUILD/module.js"

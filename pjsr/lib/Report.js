@@ -14,11 +14,16 @@ var SIReport = ( function()
          session: "Session",
          framesAnalyzed: "%1 frames analyzed, %2 total exposure",
          nothing: "Nobody crossed your photo tonight. A perfectly boring, perfectly clean night — frame it.",
+         nothingPredicted: "No trail detected tonight, but the orbit model puts %1 cataloged satellite(s) in the field during the exposures — listed below.",
          chronology: "Who crossed the field",
          satellites: "satellites",
+         satelliteOne: "satellite",
          meteors: "meteor candidates",
+         meteorOne: "meteor candidate",
          satCandidates: "uncataloged satellite candidates",
+         satCandidateOne: "uncataloged satellite candidate",
          unknowns: "unidentified trails",
+         unknownOne: "unidentified trail",
          planes: "airplane(s)",
          trains: "satellite train(s) — fresh launches, not yet cataloged",
          predicted: "Predicted crossers (no matched trail)",
@@ -33,8 +38,15 @@ var SIReport = ( function()
          recStarlink: "most Starlink in one night: %1 (previous best %2)",
          recMeteors: "most meteor candidates in one night: %1 (previous best %2)",
          firstNight: "First logged night — every stat is a personal record. Welcome to the club.",
-         redditTitle: "Sky Intruders report: %1 satellites%2 crossed my %3 session last night",
-         redditMeteors: " and %1 meteor(s)",
+         redditTitle: "Sky Intruders report: %1 crossed my %2 session (%3)",
+         redditTitleOne: "Sky Intruders report: %1 crossed my %2 session (%3)",
+         redditTitleNone: "Sky Intruders report: nothing crossed my %1 session (%2)",
+         redditSats: "%1 satellites",
+         redditSatOne: "one satellite",
+         redditMeteors: "%1 meteors",
+         redditMeteorOne: "one meteor",
+         redditAnd: " and ",
+         operatorNames: { debris: "debris", "rocket body": "rocket body", other: "other" },
          moverLine: "%1 arcsec/min over %2 frames, from %3",
          confidence: { low: "low confidence", medium: "probable", high: "confirmed" },
          satClass: { rb: "rocket body", debris: "debris", active: "in service",
@@ -46,11 +58,16 @@ var SIReport = ( function()
          session: "Session",
          framesAnalyzed: "%1 brutes analysées, %2 de pose cumulée",
          nothing: "Personne n'a traversé ta photo cette nuit. Une nuit parfaitement banale, parfaitement propre — à encadrer.",
+         nothingPredicted: "Aucune traînée détectée cette nuit, mais le modèle orbital place %1 satellite(s) catalogué(s) dans le champ pendant les poses — liste ci-dessous.",
          chronology: "Qui a traversé le champ",
          satellites: "satellites",
+         satelliteOne: "satellite",
          meteors: "candidats météores",
+         meteorOne: "candidat météore",
          satCandidates: "candidats satellites hors catalogue",
+         satCandidateOne: "candidat satellite hors catalogue",
          unknowns: "traînées non identifiées",
+         unknownOne: "traînée non identifiée",
          planes: "avion(s)",
          trains: "train(s) de satellites — lancements récents, pas encore catalogués",
          predicted: "Passages prédits (sans traînée appariée)",
@@ -65,8 +82,15 @@ var SIReport = ( function()
          recStarlink: "record de Starlink en une nuit : %1 (ancien record %2)",
          recMeteors: "record de candidats météores en une nuit : %1 (ancien record %2)",
          firstNight: "Première nuit enregistrée — chaque stat est un record personnel. Bienvenue au club.",
-         redditTitle: "Rapport Sky Intruders : %1 satellites%2 ont traversé ma session %3 cette nuit",
-         redditMeteors: " et %1 météore(s)",
+         redditTitle: "Rapport Sky Intruders : %1 ont traversé ma session %2 (%3)",
+         redditTitleOne: "Rapport Sky Intruders : %1 a traversé ma session %2 (%3)",
+         redditTitleNone: "Rapport Sky Intruders : rien n'a traversé ma session %1 (%2)",
+         redditSats: "%1 satellites",
+         redditSatOne: "un satellite",
+         redditMeteors: "%1 météores",
+         redditMeteorOne: "un météore",
+         redditAnd: " et ",
+         operatorNames: { debris: "débris", "rocket body": "étage de fusée", other: "autres" },
          moverLine: "%1 arcsec/min sur %2 brutes, depuis %3",
          confidence: { low: "confiance faible", medium: "probable", high: "confirmé" },
          satClass: { rb: "étage de fusée", debris: "débris", active: "en service",
@@ -75,12 +99,19 @@ var SIReport = ( function()
       }
    };
 
+   // Single pass with a function replacer: an argument containing "%2" or a
+   // "$&"-style replacement pattern is inserted verbatim, never re-scanned.
    function fmt( template )
    {
-      var s = template;
-      for ( var i = 1; i < arguments.length; ++i )
-         s = s.replace( "%" + i, String( arguments[ i ] ) );
-      return s;
+      var args = arguments;
+      return template.replace( /%(\d)/g, function( m, n )
+         { return ( Number( n ) < args.length ) ? String( args[ Number( n ) ] ) : m; } );
+   }
+
+   // "1 satellite" / "3 satellites"
+   function countLabel( n, one, many )
+   {
+      return n + " " + ( n == 1 ? one : many );
    }
 
    function pad2( n )
@@ -88,15 +119,26 @@ var SIReport = ( function()
       return ( n < 10 ? "0" : "" ) + n;
    }
 
-   function localTime( date )
+   // Every clock in the log is UT, marked as such: the composite overlay
+   // prints "HH:MM UT" and both are posted together, so they must agree
+   // whatever the host time zone is.
+   function utcTime( date )
    {
-      return pad2( date.getHours() ) + ":" + pad2( date.getMinutes() );
+      return pad2( date.getUTCHours() ) + ":" + pad2( date.getUTCMinutes() ) + " UT";
+   }
+
+   // FITS string keywords come back as 'M 57' from some readers.
+   function stripQuotes( s )
+   {
+      return String( s || "" ).replace( /^'+|'+$/g, "" ).replace( /^\s+|\s+$/g, "" );
    }
 
    function exposureLabel( totalSec )
    {
-      var h = Math.floor( totalSec / 3600 );
-      var m = Math.round( ( totalSec - h * 3600 ) / 60 );
+      // Round to whole minutes first, then split: 7180 s is 2h00, not 1h60.
+      var total = Math.round( totalSec / 60 );
+      var h = Math.floor( total / 60 );
+      var m = total - 60 * h;
       return ( h > 0 ) ? h + "h" + pad2( m ) : m + " min";
    }
 
@@ -185,7 +227,7 @@ var SIReport = ( function()
    function eventLine( e, lang )
    {
       var T = STRINGS[ lang ] || STRINGS.en;
-      var t = e.timeUtc ? localTime( e.timeUtc ) : "--:--";
+      var t = e.timeUtc ? utcTime( e.timeUtc ) : "--:--";
       var what;
       if ( e.klass == "satellite" )
       {
@@ -229,7 +271,7 @@ var SIReport = ( function()
       for ( var i = 0; i < events.length; ++i )
          if ( events[ i ].timeUtc )
          {
-            var h = events[ i ].timeUtc.getHours();
+            var h = events[ i ].timeUtc.getUTCHours();
             byHour[ h ] = ( byHour[ h ] || 0 ) + 1;
          }
       var bestH = null, bestN = 0;
@@ -239,7 +281,28 @@ var SIReport = ( function()
             bestN = byHour[ k ];
             bestH = k;
          }
-      return ( bestH == null ) ? null : { label: pad2( Number( bestH ) ) + ":00–" + pad2( ( Number( bestH ) + 1 ) % 24 ) + ":00", count: bestN };
+      return ( bestH == null ) ? null : { label: pad2( Number( bestH ) ) + ":00–" + pad2( ( Number( bestH ) + 1 ) % 24 ) + ":00 UT", count: bestN };
+   }
+
+   // Forum-ready title: singular/plural agreement, and the night label in
+   // place of "last night" (a night is often re-analysed weeks later).
+   function forumTitle( summary, target, dateLabel, lang )
+   {
+      var T = STRINGS[ lang ] || STRINGS.en;
+      var session = target || ( lang == "fr" ? "d'astrophoto" : "astrophotography" );
+      var parts = [];
+      if ( summary.satellites == 1 )
+         parts.push( T.redditSatOne );
+      else if ( summary.satellites > 1 )
+         parts.push( fmt( T.redditSats, summary.satellites ) );
+      if ( summary.meteors == 1 )
+         parts.push( T.redditMeteorOne );
+      else if ( summary.meteors > 1 )
+         parts.push( fmt( T.redditMeteors, summary.meteors ) );
+      if ( parts.length == 0 )
+         return fmt( T.redditTitleNone, session, dateLabel );
+      var single = ( summary.satellites + summary.meteors == 1 );
+      return fmt( single ? T.redditTitleOne : T.redditTitle, parts.join( T.redditAnd ), session, dateLabel );
    }
 
    function build( night, history, lang )
@@ -248,20 +311,49 @@ var SIReport = ( function()
       var summary = summarizeNight( night );
       var records = computeRecords( summary, history, lang );
       var L = [];
+      var target = stripQuotes( night.target ) || null;
 
       L.push( "# " + T.title + " — " + night.dateLabel );
       L.push( "" );
       var sess = fmt( T.framesAnalyzed, night.frames, exposureLabel( night.totalExposureSec ) );
-      if ( night.target )
-         sess = night.target + " · " + sess;
+      if ( target )
+         sess = target + " · " + sess;
       L.push( "**" + T.session + "** : " + sess );
       L.push( "" );
 
       var sorted = night.events.slice().sort( function( a, b )
          { return ( a.timeUtc || 0 ) - ( b.timeUtc || 0 ); } );
 
+      // Sunlit satellites the orbit propagation puts in the field during
+      // the exposures, but that no detected trail could be matched to —
+      // the honest answer to "why is nothing identified?". Printed on empty
+      // nights too: that is where the question is asked.
+      var predicted = night.predicted || [];
+      function pushPredicted()
+      {
+         L.push( "## " + T.predicted );
+         L.push( "" );
+         for ( var i = 0; i < predicted.length; ++i )
+         {
+            var p = predicted[ i ];
+            var t = p.timeUtc ? utcTime( p.timeUtc ) : "--:--";
+            L.push( "- " + t + " — " + ( p.name || ( "NORAD " + p.noradId ) ) +
+                    ( p.elevationDeg != null ? " (" + Math.round( p.elevationDeg ) + "°)" : "" ) +
+                    "  ·  " + p.frameId );
+         }
+      }
+
       if ( sorted.length == 0 && summary.movers == 0 )
-         L.push( "*" + T.nothing + "*" );
+      {
+         if ( predicted.length > 0 )
+         {
+            L.push( "*" + fmt( T.nothingPredicted, predicted.length ) + "*" );
+            L.push( "" );
+            pushPredicted();
+         }
+         else
+            L.push( "*" + T.nothing + "*" );
+      }
       else
       {
          L.push( "## " + T.chronology );
@@ -270,39 +362,26 @@ var SIReport = ( function()
             L.push( "- " + eventLine( sorted[ i ], lang ) );
          L.push( "" );
 
-         // Sunlit satellites the orbit propagation puts in the field during
-         // the exposures, but that no detected trail could be matched to —
-         // the honest answer to "why is nothing identified?".
-         var predicted = night.predicted || [];
          if ( predicted.length > 0 )
          {
-            L.push( "## " + T.predicted );
-            L.push( "" );
-            for ( var i = 0; i < predicted.length; ++i )
-            {
-               var p = predicted[ i ];
-               var t = p.timeUtc ? localTime( p.timeUtc ) : "--:--";
-               L.push( "- " + t + " — " + ( p.name || ( "NORAD " + p.noradId ) ) +
-                       ( p.elevationDeg != null ? " (" + Math.round( p.elevationDeg ) + "°)" : "" ) +
-                       "  ·  " + p.frameId );
-            }
+            pushPredicted();
             L.push( "" );
          }
 
          L.push( "## " + T.funStats );
          L.push( "" );
-         L.push( "- " + summary.satellites + " " + T.satellites +
+         L.push( "- " + countLabel( summary.satellites, T.satelliteOne, T.satellites ) +
                  ( summary.starlink > 0 ? " (" + summary.starlink + " Starlink)" : "" ) );
          if ( summary.meteors > 0 )
-            L.push( "- " + summary.meteors + " " + T.meteors );
+            L.push( "- " + countLabel( summary.meteors, T.meteorOne, T.meteors ) );
          if ( summary.satCandidates > 0 )
-            L.push( "- " + summary.satCandidates + " " + T.satCandidates );
+            L.push( "- " + countLabel( summary.satCandidates, T.satCandidateOne, T.satCandidates ) );
          if ( summary.planes > 0 )
             L.push( "- " + summary.planes + " " + T.planes );
          if ( summary.trains > 0 )
             L.push( "- " + summary.trains + " " + T.trains );
          if ( summary.unknowns > 0 )
-            L.push( "- " + summary.unknowns + " " + T.unknowns );
+            L.push( "- " + countLabel( summary.unknowns, T.unknownOne, T.unknowns ) );
          var pct = ( night.frames > 0 ) ? Math.round( 100 * night.cleanFrames / night.frames ) : 100;
          L.push( "- " + fmt( T.cleanFrames, night.cleanFrames, night.frames, pct ) );
          var rush = busiestHour( sorted );
@@ -319,7 +398,8 @@ var SIReport = ( function()
             L.push( "" );
             opKeys.sort( function( a, b ) { return summary.operators[ b ] - summary.operators[ a ]; } );
             for ( var j = 0; j < opKeys.length; ++j )
-               L.push( "- " + opKeys[ j ] + " : " + summary.operators[ opKeys[ j ] ] );
+               L.push( "- " + ( T.operatorNames[ opKeys[ j ] ] || opKeys[ j ] ) + " : " +
+                       summary.operators[ opKeys[ j ] ] );
          }
 
          if ( ( night.movers || [] ).length > 0 )
@@ -350,9 +430,7 @@ var SIReport = ( function()
       L.push( "*" + T.generatedBy + "*" );
 
       var markdown = L.join( "\n" );
-      var redditTitle = fmt( T.redditTitle, summary.satellites,
-                             summary.meteors > 0 ? fmt( T.redditMeteors, summary.meteors ) : "",
-                             night.target || ( lang == "fr" ? "d'astrophoto" : "astrophotography" ) );
+      var redditTitle = forumTitle( summary, target, night.dateLabel, lang );
       return { markdown: markdown, redditTitle: redditTitle, summary: summary, records: records };
    }
 
