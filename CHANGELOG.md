@@ -36,6 +36,22 @@ All notable changes to this project are documented here. The format is based on
   (0.5 and 3 arcsec/min) into the real storm pool instead of four, cutting
   the harness run time by roughly half while keeping the zero-candidate
   storm pin and the drift-artifact family test.
+- Documentation: `docs/ARCHITECTURE.md` rewritten against the code — the
+  full module map (Geom, SatLabels, NightEvents, Render, Cosmology, Catalogs,
+  Treasure, TreasureReport, the vendored satellite.js) with include order,
+  the Node harness and the PixInsight-side scripts and gates, the actual
+  defaults (`diffKSigma` 4.5, the per-filter sky model, the two-pass detector
+  and its faint-pass constants, the width veto, the photometry formula), the
+  observer/TLE/WGS84/TEME→J2000 chain, the start/mid/end coarse gate, the
+  per-sample sunlit test, the strict/loose assigners with their named
+  constants and the cross/along gate (the old midpoint-separation score is
+  gone), the slow-mover gates, the persistent files and window names.
+  `docs/TREASURE-HUNT.md` now documents the `-sort` columns, the VizieR body
+  gate, the SkyBoT `Flag` handling, the `null`-vs-`[]` contract, the cache
+  key versions and the capture scoring. `docs/RELEASING.md` gains explicit
+  gates: harness green, the headless construct/selftest runs, a same-day
+  replay of the previous tag on the reference night (TLE age changes the
+  identities), and the doc re-read against the code. Fixes #20.
 
 ### Fixed
 
