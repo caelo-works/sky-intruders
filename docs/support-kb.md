@@ -93,10 +93,16 @@ The user will name things in their own language. This is the lookup.
 | Night trails | Traînées de nuit |
 | Treasure Hunt | Chasse au trésor |
 | Detection threshold (σ): | Seuil de détection (σ) : |
+| Advanced | Avancé |
+| Single-frame threshold (σ): | Seuil brute par brute (σ) : |
+| Flag slow movers as asteroid candidates | Signaler les objets lents comme candidats astéroïdes |
+| Orbital data max age (h): | Âge max des données orbitales (h) : |
+| Orbital data mirror URL: | URL du miroir orbital : |
 | Draw predicted crossers on the result image | Tracer les passages prédits sur l'image résultat |
 | Also draw shadow crossers | Tracer aussi les passages dans l'ombre |
 | Observer site — only if the FITS headers carry none | Site d'observation — seulement si les headers FITS n'en ont pas |
-| Lat (°): / Lon (°): / Alt (m): | Lat (°) : / Lon (°) : / Alt (m) : |
+| Lat (°, +N): / Lon (°, +E): / Alt (m): | Lat (°, +N) : / Lon (°, +E) : / Alt (m) : |
+| No observer site — satellites not identified. | Pas de site d'observation — satellites non identifiés. |
 | Max catalog rows / type: | Objets max / type de catalogue : |
 | Hunt for: | Chercher : |
 | Galaxies / Quasars / Planetary nebulae / Asteroids | Galaxies / Quasars / Nébuleuses planétaires / Astéroïdes |
@@ -136,25 +142,55 @@ why a user with nothing in the list can still get a result.
 
 *"Who crossed your photo last night?" — detects the trails and names them.*
 
-- **Detection threshold (σ)** — default **5.0**, range 3 to 12. **Warning: on a
-  normal night run this slider does nothing.** The real detection happens on a
-  registered difference image, which uses its own fixed internal threshold.
-  The slider only takes effect in the degraded fallback path (fewer than 3
-  frames). Do not tell a user to lower it to catch a faint trail — it will not
-  help. This is a known interface trap.
+- **Detection threshold (σ)** — default **4.5**, range 2.5 to 8. The threshold
+  on the **registered difference image**, i.e. the one every normal run (3+
+  frames) uses. Lower catches fainter streaks at the price of noise; 3.5 is a
+  reasonable first step for a faint trail that was missed, below 3 expect false
+  positives. (On **0.2.1 and earlier** this slider drove the single-frame
+  threshold only and did nothing on a normal run — see 8.1.)
 - **Draw predicted crossers on the result image** — default **off**. Draws, as
   pale ghost lines, the satellites the orbit model puts inside the field during
   an exposure but that no detected trail confirmed.
 - **Also draw shadow crossers** — default **off**. Same, for satellites the model
   puts inside the Earth's shadow — invisible by definition, drawn in grey.
-- **Observer site (Lat / Lon / Alt)** — empty by default. This is only a
-  **fallback**: if the frames carry site headers (`SITELAT`/`SITELONG`,
-  `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), those win and
-  these fields are ignored. Altitude is optional and defaults to 0 m.
+- **Observer site (Lat (°, +N) / Lon (°, +E) / Alt (m))** — empty by default.
+  This is only a **fallback**: if the frames carry site headers
+  (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), those
+  win and these fields are ignored. Altitude is optional and defaults to 0 m.
+  Sign convention is in the label: **north and east positive**, south and west
+  negative (Paris is `48.85` / `2.35`; New York is `40.71` / `-74.01`). The
+  fields accept a decimal with a **dot or a comma** (`48.85` and `48,85` are
+  the same) and the sexagesimal forms the headers use (`48 51 24`,
+  `-2:21:00`). A value outside ±90° / ±180° (or −500…9000 m) or an unreadable
+  one is **rejected**: the field is cleared and the status line at the bottom
+  says why (exact texts in 7.1). An accepted value is echoed normalized in the
+  field, and the field's tooltip shows it with its hemisphere ("Accepted:
+  48.8500° N"). (On **0.2.1 and earlier** a comma was silently truncated —
+  `48,85` became 48 — and any number was accepted; if a user on an old version
+  types French-style decimals, that is why their identifications are off.)
+- **Advanced** group:
+  - **Single-frame threshold (σ)** — default **5.0**, range 3 to 12. Used
+    **only** in the degraded per-frame path (fewer than 3 frames, or a set that
+    could not be registered), where the sky is not subtracted. Irrelevant to a
+    normal run.
+  - **Flag slow movers as asteroid candidates** — default **on**. Unticking it
+    skips the slow-mover search entirely (see 8.6 for what a candidate means).
+  - **Orbital data max age (h)** — default **12**, range 1 to 168. Cached
+    satellite elements older than this are re-downloaded. Raising it lets a
+    user work offline on a recent cache; predictions degrade with age.
+  - **Orbital data mirror URL** — empty by default. Base URL of a
+    CelesTrak-compatible mirror, tried first when set; empty means the default
+    sources (CelesTrak, then the CaeloWorks mirror — see 6.2).
 
 Without an observer site — from the headers *or* from these fields — **satellite
 identification is switched off entirely**. Trails are still detected, they simply
 cannot be named. This is the most common cause of "why is nothing identified?".
+Since 0.2.2 that state is visible: the status line at the bottom of the window
+and a banner at the top of the report window both read **"No observer site —
+satellites not identified."** (« Pas de site d'observation — satellites non
+identifiés. »); the banner adds which headers were looked for and tells the
+user to fill in Lat / Lon and run again. The console still prints the message
+in 7.2 as well, and on a run *with* a site prints where it came from.
 
 ### 3.4 Tab 2 — Treasure Hunt
 
@@ -300,8 +336,15 @@ Ghost lines for predicted-but-unconfirmed passes are pale yellow (sunlit) or gre
   no status (typically classified objects). The same tag appears on the night
   log's satellite lines. It comes from the public satellite catalog; if that
   download failed for the session, the tag is simply absent — not an error.
-- The same composite as a **PNG in the system temp folder**. The **Open image**
-  button in the report window reopens it.
+- The same composite as a **PNG in the system temp folder**, named
+  `SkyIntruders-night-<date>-<run token>.png` (the token is the run's start
+  time plus a random number, so two runs — or two PixInsight instances — never
+  overwrite each other's image). The **Open image** button in the report window
+  reopens it. The registered frames themselves live in a private scratch folder
+  `si-night-reg-<run token>` in the same temp folder for the duration of the
+  run and are deleted when it ends — on success, on a fallback to per-frame
+  detection, and on an error alike. A leftover `si-night-reg-…` folder means
+  PixInsight itself was killed mid-run; it is safe to delete.
 - A **night log** in markdown, shown in a window and printed to the console, with
   fun stats and a forum-ready post title. **Save report…** writes it next to the
   frames. **Every time in the log is UT**, written `HH:MM UT` (chronology,
@@ -444,7 +487,9 @@ some networks outright, so **a pause of 10 to 25 seconds before satellites
 resolve is normal**: that is CelesTrak timing out and the mirror taking over. It
 is not a bug and needs no action.
 
-Elements are cached for 12 hours.
+Elements are cached for 12 hours by default — the **Orbital data max age (h)**
+control in the Advanced group changes that, and **Orbital data mirror URL**
+points the first attempt at a mirror of the user's own.
 
 The download includes the **full GP catalog** (~31k objects) on top of the
 active and recent-launch groups. Versions **0.1.1 and earlier** covered roughly
@@ -471,7 +516,19 @@ unnamed.
 
 Everything lives in the user's home folder, under **`.caeloworks/sky-intruders`**:
 
-- **`settings.json`** — all dialog settings. Deleting it resets them to defaults.
+- **`settings.json`** — all dialog settings, plus a few keys with no control
+  that support may ask a user to set by hand (a value of the wrong type is
+  ignored and the default used): `saveHistory` (default `true` — `false` stops
+  the night being added to the personal records), `nightResultImage` (default
+  `true` — `false` skips the annotated composite), `nightResultCombine`
+  (`"best"`, the default, or `"max"` for a max-combine of the whole registered
+  set as the composite background — every streak in the pixels, and every
+  frame's hot pixels too), `debugFrameOverlays` (default `false` — `true`
+  writes one annotated PNG per registered frame, `si-frame-annotated-<run
+  token>-<n>.png`, to the temp folder) and `matchDiagnostics` (default
+  `false` — `true` records, for every unnamed trail, the nearest predicted
+  crossing and how far it missed the tolerances). Deleting the file resets
+  everything to defaults.
 - **`history.json`** — the personal records. **Deleting it destroys them
   permanently.**
 - **`tle/`** — the satellite element cache. **Deleting this folder is the standard
@@ -529,6 +586,23 @@ The user will copy-paste. These are the messages, word for word.
 - *"Add one plate-solved image, or open one in PixInsight first."* — Hunt pressed
   in Treasure Hunt with an empty list **and** no active image window.
 - *"Cannot open <path>"* — the listed file could not be read.
+- *"No observer site — satellites not identified."* / « Pas de site
+  d'observation — satellites non identifiés. » — shown on the status line of the
+  main window after the run and as a banner at the top of the night report
+  window, with the hint *"The frames carry no site headers (SITELAT / SITELONG,
+  OBSGEO-B / OBSGEO-L, LAT-OBS / LONG-OBS) and the Observer site fields are
+  empty. Trails were detected but cannot be named: fill in Lat / Lon and run
+  again."* Same meaning as the console message in 7.2.
+- Observer-site field rejections, on the status line, the field cleared:
+  *"Latitude must be between −90 and +90° (+N). Field cleared."*, *"Longitude
+  must be between −180 and +180° (+E). Field cleared."*, *"Elevation must be
+  between −500 and 9000 m. Field cleared."*, *"Coordinate not understood — use
+  48.85, 48,85 or 48 51 24. Field cleared."* (French: « La latitude doit être
+  entre −90 et +90° (+N). Champ vidé. », « La longitude doit être entre −180 et
+  +180° (+E). Champ vidé. », « L'altitude doit être entre −500 et 9000 m. Champ
+  vidé. », « Coordonnée incomprise — écris 48,85, 48.85 ou 48 51 24. Champ
+  vidé. »). The user typed something outside the range or unreadable; the
+  parameter is empty until they re-enter it.
 
 ### 7.2 Console messages, Night trails
 
@@ -536,9 +610,13 @@ The user will copy-paste. These are the messages, word for word.
   dialog fallback — satellite identification disabled."* — **the number one
   cause of "nothing was identified"**. Trails are detected but cannot be named.
   Fix: any of the listed header pairs in the frames, or fill the Observer site
-  fields in the Night trails tab. (Versions 0.1.1 and earlier word this message
-  "no observer site (SITELAT/SITELONG headers or dialog fallback)" — same
-  meaning.)
+  fields in the Night trails tab. Since 0.2.2 the same state is also shown in
+  the window (7.1). (Versions 0.1.1 and earlier word this message "no observer
+  site (SITELAT/SITELONG headers or dialog fallback)" — same meaning.)
+- *"Observer site (FITS headers): lat +48.8500, lon +2.3500, alt 120 m"* / *"…
+  (dialog fallback): …"* — the site that was used and where it came from. The
+  first thing to check when names look wrong: a longitude with the wrong sign
+  shows here.
 - *"NNNN satellites, from cache (STALE — network unreachable)"* — every source
   for the orbital elements failed and expired ones were used. Names and positions
   may be wrong. Restore the internet, delete the `tle` cache folder, re-run.
@@ -626,16 +704,15 @@ The user will copy-paste. These are the messages, word for word.
 > then delete the `treasure-cache` folder inside `.caeloworks/sky-intruders`
 > once to clear any cached false empties.
 
-### 8.1 The detection threshold slider does nothing on a normal night run
+### 8.1 The detection threshold slider did nothing on a normal night run (0.2.1 and earlier)
 
-The **Detection threshold (σ)** slider in the Night trails tab does **not** affect
-a normal run. Detection happens on a registered difference image, which uses its
-own fixed internal threshold; the slider only applies to the degraded fallback
-path used when there are fewer than three frames.
-
-**Do not tell a user to lower it to catch a faint trail.** It will change
-nothing, and they will lose confidence in the advice. If they need more
-sensitivity, there is currently no setting for it — escalate.
+On **0.2.1 and earlier** the **Detection threshold (σ)** slider only drove the
+single-frame fallback threshold; a normal run (3+ frames) used a fixed internal
+threshold of 4.5 on the registered difference image, so dragging the slider
+changed nothing. **Fixed:** the slider now drives that difference-image
+threshold (default 4.5, range 2.5–8), and the single-frame value moved to the
+Advanced group. If a user on an old version reports the slider does nothing,
+the answer is **update the script**.
 
 ### 8.2 Longitude sign is taken at face value
 
@@ -645,8 +722,10 @@ observer on the wrong side of the planet, and **every satellite identification
 then fails**, with no error message.
 
 **Symptom:** "trails are detected, the site is filled in, and still nothing is
-named." Have the user check the sign of their longitude. Escalate if it is
-correct.
+named." Have the user check the sign of their longitude — the console line
+*"Observer site (…): lat …, lon …"* shows the value actually used, and the
+dialog fields are labelled **+N** / **+E** (east positive, so a French site
+is positive and an American one negative). Escalate if it is correct.
 
 ### 8.3 Trains and aircraft can be confused, and parallel satellites merged
 
@@ -715,7 +794,8 @@ files.
 |---|---|---|
 | "I installed it but there is no menu entry" | PixInsight not restarted, or the feature registry is stale | Restart PixInsight, then **Script → Feature Scripts… → Regenerate**. It lives under **Script → CaeloWorks → Sky Intruders**. |
 | "It found no trails at all" | Fewer than 3 frames, or fewer than 3 **per filter** | Difference detection needs at least 3 frames of the same filter. Check the console for *"filter group … has only N frame(s)"*. |
-| "Trails are found but nothing is identified" | **No observer site** — by far the most common | The frames need site headers (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), or the user fills Lat/Lon in the Night trails tab. Without a site, identification is switched off entirely. |
+| "Trails are found but nothing is identified" | **No observer site** — by far the most common | Since 0.2.2 the window says so: the status line and the report banner read **"No observer site — satellites not identified."** The frames need site headers (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), or the user fills Lat (+N) / Lon (+E) in the Night trails tab — decimal with dot or comma, or sexagesimal. Without a site, identification is switched off entirely. |
+| "I typed my latitude and it disappeared" | The value was out of range or unreadable | The status line said why (7.1). Latitude within ±90, longitude within ±180 (east positive), decimal with dot or comma, or `48 51 24`. On **0.2.1 and earlier** a comma was silently truncated instead (`48,85` → 48): update the script. |
 | "Still nothing is identified, and my site is filled in" | No plate solve, and the orientation fallback gave up (fewer than 3 matching trails) | Plate-solve at least the **first** frame in the list. |
 | "Nothing is identified since one of my frames has a broken header" | On **0.2.1 or older**, one frame with a bad `DATE-OBS`/`EXPTIME` silently aborted the whole night's matching | Update the script: the bad frame is now reported (*"frame … : satellite matching failed"* / *"EXPTIME is 0"*) and the other frames are named. Then fix or drop that frame. |
 | "The satellite names look wrong" | Stale orbital elements, or a wrong longitude sign | Look for **`(STALE — network unreachable)`** in the console; if present, delete the `tle` folder in `.caeloworks/sky-intruders` and re-run. Then check the longitude sign. |
@@ -726,7 +806,7 @@ files.
 | "It says below the noise but I can see the object" | Working as intended in most cases | The object must beat its local surroundings and 12 decoy apertures. Objects on nebulosity or in dense star fields legitimately fail. A blown-out saturated core can also trigger it — that one is a real bug, escalate. |
 | "I got exactly 400 objects" | The per-catalog row cap | Raise **Max catalog rows / type**. |
 | "The map shows far fewer objects than the summary" | Deliberate — the chart is curated | The counts are complete; only the most notable below-noise objects are drawn. |
-| "Lowering the σ slider changed nothing" | **Known bug** — the slider does not affect a normal night run | Confirm it. Do not blame the user. Escalate. |
+| "Lowering the σ slider changed nothing" | Version **0.2.1 or earlier** — the slider did not affect a normal night run | Update the script. On the current version the slider drives the real threshold; going from 4.5 to 3.5 is a visible change. |
 | "PixInsight warns about an unsigned repository" | Expected — not signed yet | Safe to accept. |
 | "It takes 20 seconds before it finds any satellites" | CelesTrak timing out, mirror taking over | Normal. No action needed. |
 
@@ -735,8 +815,8 @@ files.
 ## 10. Escalating
 
 **Stop and hand over to a human** when: the user reports one of the known bugs
-above (the dead σ slider, a saturated core called "below the noise", a merged
-train); when they have lost data (a
+above (a saturated core called "below the noise", a merged train, a σ slider
+that does nothing on an up-to-date version); when they have lost data (a
 deleted `history.json` cannot be recovered); when the answer is not in this
 document. **Do not improvise a threshold, a file path, or a compatibility claim.**
 

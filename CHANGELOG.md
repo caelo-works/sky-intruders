@@ -69,6 +69,41 @@ All notable changes to this project are documented here. The format is based on
   nights with no detected trail. The Node harness runs under `TZ=UTC` and
   checks EN/FR golden markdown over a synthetic three-night history. Fixes
   #10.
+### Fixed
+
+- Night trails no longer leaks image windows or registered frames when the
+  registered-difference analysis fails part-way. Every "open a file, use its
+  first window, close it" site now goes through one `withWindow` helper with a
+  `try/finally` (the plate-solved reference window keeps its extended lifetime
+  until the projections are done), and the registration scratch directory is
+  wiped in a `finally` of `runAnalysis` on every exit path. The scratch
+  directory, the night result PNG and the per-frame debug overlays carry a
+  per-run token (`si-night-reg-<token>`, `SkyIntruders-night-<date>-<token>.png`,
+  `si-frame-annotated-<token>-<n>.png`) so concurrent PixInsight instances do
+  not collide. Fixes #6.
+
+- The "Detection threshold (σ)" slider now drives the threshold a normal night
+  run actually uses (`diffKSigma`, on the registered difference image; default
+  4.5, range 2.5–8) instead of the single-frame fallback value it silently
+  fed before. A new **Advanced** group on the Night trails tab exposes the
+  single-frame threshold, the asteroid-candidate search toggle, the orbital
+  data max age and a mirror URL, in both languages. `saveHistory`,
+  `nightResultImage`, `nightResultCombine`, `debugFrameOverlays` and
+  `matchDiagnostics` are declared in the defaults with the values the code
+  implied, so they can be set from `settings.json`; loaded values are now
+  type-checked (finite numbers, arrays of strings, `"best"`/`"max"` for the
+  composite mode) and the max-combine composite is reachable through that key.
+  Fixes #8.
+
+- The observer-site fields accept a decimal comma (`48,85` no longer becomes
+  48) and the sexagesimal forms the headers use, reject values outside
+  ±90° / ±180° with a message on the status line instead of taking them at
+  face value, carry the sign convention in their labels (+N / +E) and echo
+  the accepted value with its hemisphere. A run without any observer site now
+  says "No observer site — satellites not identified." on the status line and
+  as a banner in the report window, in both languages, not only in the
+  console; the console also prints the site that was used and where it came
+  from. Fixes #9.
 
 ## [0.2.1] - 2026-08-17
 

@@ -107,8 +107,61 @@ var DEFAULT_PARAMS = {
    treasureQuasars: true,
    treasurePne: true,
    treasureAsteroids: true,
-   treasureAccent: SI_DEFAULT_ACCENT
+   treasureAccent: SI_DEFAULT_ACCENT,
+   // --- settings.json only (no dialog control) ---------------------------
+   // Append the night to the personal records (history.json). Headless test
+   // runs switch it off so they never pollute the log.
+   saveHistory: true,
+   // Build the annotated night composite at all.
+   nightResultImage: true,
+   // Composite background: "best" = the sharpest/cleanest single frame (every
+   // trail of the night is drawn on top anyway); "max" = max-combine of the
+   // whole registered set — shows every streak in the pixels, and every
+   // frame's hot pixels with them.
+   nightResultCombine: "best",
+   // Diagnostics: one annotated PNG per registered frame in the temp folder,
+   // and per-trail nearest-candidate data in the result's fitInfo.diag.
+   debugFrameOverlays: false,
+   matchDiagnostics: false
 };
+
+// Keys whose default is null: the type a saved value must have to be taken.
+var NULLABLE_PARAM_TYPES = {
+   tleBaseUrl: "string",
+   observerLatDeg: "number",
+   observerLonDeg: "number"
+};
+
+// A saved value is accepted only when it has the default's type (finite for
+// numbers, arrays of strings for arrays); anything else keeps the default.
+function isAcceptableParam( key, def, v )
+{
+   if ( v === undefined )
+      return false;
+   if ( def === null )
+   {
+      if ( v === null )
+         return true;
+      var want = NULLABLE_PARAM_TYPES[ key ];
+      if ( want === undefined || typeof v !== want )
+         return false;
+      return ( want !== "number" ) || isFinite( v );
+   }
+   if ( Array.isArray( def ) )
+   {
+      if ( !Array.isArray( v ) )
+         return false;
+      for ( var i = 0; i < v.length; ++i )
+         if ( typeof v[ i ] !== "string" )
+            return false;
+      return true;
+   }
+   if ( typeof v !== typeof def )
+      return false;
+   if ( typeof v === "number" )
+      return isFinite( v );
+   return true;
+}
 
 function configDir()
 {
@@ -125,8 +178,10 @@ function loadParams()
       {
          var saved = JSON.parse( File.readTextFile( p ) );
          for ( var k in out )
-            if ( saved[ k ] !== undefined )
+            if ( isAcceptableParam( k, DEFAULT_PARAMS[ k ], saved[ k ] ) )
                out[ k ] = saved[ k ];
+         if ( out.nightResultCombine !== "best" && out.nightResultCombine !== "max" )
+            out.nightResultCombine = DEFAULT_PARAMS.nightResultCombine;
          // tleExtraGroups has no dialog control, so a saved value is a
          // frozen former default, not a user choice: upgrade the old
          // default in place so existing installs gain the full catalog.
@@ -203,17 +258,64 @@ var SIProf = ( function()
 // ---------------------------------------------------------------------------
 // Analysis pipeline.
 
-function analyzeFrame( filePath, params )
+// Open an image file, hand its first window to fn and close it whatever
+// happens (extra windows of a multi-image file are closed up front). Returns
+// fn's value, or null when the file yields no window. Every open-first-
+// close-the-rest site goes through here so no exception can strand a
+// full-resolution window in the workspace.
+function withWindow( path, fn )
 {
-   var windows = ImageWindow.open( filePath );
-   if ( windows.length == 0 )
-      throw new Error( "cannot open " + filePath );
-   var window = windows[ 0 ];
+   var wins = ImageWindow.open( path );
+   if ( wins.length == 0 )
+      return null;
+   for ( var i = 1; i < wins.length; ++i )
+      try { wins[ i ].forceClose(); } catch ( e ) {}
    try
    {
-      for ( var i = 1; i < windows.length; ++i )
-         windows[ i ].forceClose();
+      return fn( wins[ 0 ] );
+   }
+   finally
+   {
+      try { wins[ 0 ].forceClose(); } catch ( e ) {}
+   }
+}
 
+// A per-run token for scratch names in the system temp directory, so two
+// PixInsight instances (or a headless test set beside the GUI) never share
+// a registration directory or overwrite each other's result PNG.
+function siRunToken()
+{
+   var d = new Date();
+   function p2( n ) { return ( n < 10 ? "0" : "" ) + n; }
+   return String( d.getFullYear() ) + p2( d.getMonth() + 1 ) + p2( d.getDate() ) + "-" +
+          p2( d.getHours() ) + p2( d.getMinutes() ) + p2( d.getSeconds() ) + "-" +
+          ( 1000 + Math.floor( Math.random()*9000 ) );
+}
+
+// Observer-site field parsing: decimal with a dot OR a comma (French locale
+// keyboards), or the sexagesimal forms FrameMeta already reads from headers
+// ("48 51 24", "-12:30:00"). Returns { value } inside [lo, hi], { value: null }
+// for an empty field, or { error: "range" | "syntax" }.
+function siParseCoordinate( text, lo, hi )
+{
+   var str = String( text == null ? "" : text ).trim();
+   if ( str.length == 0 )
+      return { value: null };
+   str = str.replace( /,/g, "." ).replace( /\u00b0/g, " " );
+   var v = Number( str );
+   if ( !isFinite( v ) )
+      v = SIFrameMetaCore.parseSexagesimal( str );
+   if ( v == null || !isFinite( v ) )
+      return { error: "syntax" };
+   if ( v < lo || v > hi )
+      return { error: "range" };
+   return { value: v };
+}
+
+function analyzeFrame( filePath, params )
+{
+   var r = withWindow( filePath, function( window )
+   {
       var meta = SIFrameMeta.read( window, filePath );
       var det = SITrailDetect.detect( window.mainView.image, params );
 
@@ -255,11 +357,10 @@ function analyzeFrame( filePath, params )
 
       return { meta: meta, trails: det.trails, stats: det.stats, blobs: blobs,
                planeGroups: planeGroups, srcW: w, srcH: h };
-   }
-   finally
-   {
-      window.forceClose();
-   }
+   } );
+   if ( r == null )
+      throw new Error( "cannot open " + filePath );
+   return r;
 }
 
 // Extract the brightest compact sources in pixel coordinates. Capped so the
@@ -334,6 +435,9 @@ function clearDirectory( dir )
          while ( ff.next() );
       for ( var i = 0; i < victims.length; ++i )
          File.remove( victims[ i ] );
+      // Per-run scratch directories would otherwise pile up in the temp
+      // folder; a directory that still holds something is simply left alone.
+      try { File.removeDirectory( dir ); } catch ( e2 ) {}
    }
    catch ( e ) {}
 }
@@ -402,12 +506,13 @@ function countBinnedPeaks( data, width, height )
    return n;
 }
 
-function analyzeNightSet( files, params )
+// regDir: this run's private registration scratch directory (created by
+// StarAlignment, wiped by runAnalysis's finally whatever happens here).
+function analyzeNightSet( files, params, regDir )
 {
    if ( files.length < 3 )
       return null;
 
-   var regDir = File.systemTempDirectory + "/si-night-reg";
    clearDirectory( regDir );
    console.writeln( format( "Registering %d frames on a common grid (StarAlignment)…",
                             files.length ) );
@@ -438,29 +543,28 @@ function analyzeNightSet( files, params )
          continue;
       }
       SIProf.start( "pass A: open+bin registered frames" );
-      var wins = ImageWindow.open( reg.paths[ i ] );
-      if ( wins.length == 0 )
+      var opened = withWindow( reg.paths[ i ], function( win )
+      {
+         var meta = SIFrameMeta.read( win, files[ i ] );
+         if ( meta.dateObs == null || meta.exposureSec == null )
+         {
+            // registration output lost the headers — read them from the source
+            var srcMeta = withWindow( files[ i ], function( ow )
+            {
+               return SIFrameMeta.read( ow, files[ i ] );
+            } );
+            if ( srcMeta != null )
+               meta = srcMeta;
+         }
+         return { meta: meta, binned: SITrailDetect.binned( win.mainView.image ) };
+      } );
+      if ( opened == null )
       {
          SIProf.end( "pass A: open+bin registered frames" );
          continue;
       }
-      var win = wins[ 0 ];
-      for ( var k = 1; k < wins.length; ++k )
-         wins[ k ].forceClose();
-      var meta = SIFrameMeta.read( win, files[ i ] );
-      if ( meta.dateObs == null || meta.exposureSec == null )
-      {
-         // registration output lost the headers — read them from the source
-         var ow = ImageWindow.open( files[ i ] );
-         if ( ow.length > 0 )
-         {
-            meta = SIFrameMeta.read( ow[ 0 ], files[ i ] );
-            for ( var k2 = 0; k2 < ow.length; ++k2 )
-               ow[ k2 ].forceClose();
-         }
-      }
-      var b = SITrailDetect.binned( win.mainView.image );
-      win.forceClose();
+      var meta = opened.meta;
+      var b = opened.binned;
       var bgSub = [];
       for ( var bs = 0; bs < b.data.length; bs += 7 )
          if ( b.data[ bs ] > 1e-6 )
@@ -560,245 +664,254 @@ function analyzeNightSet( files, params )
       return x <= margin || y <= margin || x >= refW - margin || y >= refH - margin;
    }
 
-   var results = new Array( entries.length );
-   var detProfile = {};
-
-   for ( var gi = 0; gi < groupNames.length; ++gi )
+   // Everything below projects trail endpoints through refMeta.wcs, which
+   // may run through the live reference window: keep it open until the
+   // fov() cache is warm, and release it on every path, exception included.
+   try
    {
-      var idx = groups[ groupNames[ gi ] ];
-      if ( idx.length < 3 )
-      {
-         console.warningln( format( "   filter group '%s' has only %d frame(s) — " +
-                                    "3+ are needed for difference detection; skipped.",
-                                    groupNames[ gi ], idx.length ) );
-         for ( var s0 = 0; s0 < idx.length; ++s0 )
-            results[ idx[ s0 ] ] = { trails: [], stats: {}, planeGroups: [] };
-         continue;
-      }
+      var results = new Array( entries.length );
+      var detProfile = {};
 
-      var arrays = [];
-      for ( var a0 = 0; a0 < idx.length; ++a0 )
-         arrays.push( entries[ idx[ a0 ] ].binned.data );
-      // 60% of the group: N-1 forced the strict intersection of every
-      // pointing — on a multi-night session the one-night border zones
-      // (where trails live too) were masked out entirely. At 60% the
-      // population seams still involve enough frames for a solid median,
-      // and the per-frame ringing masks handle the frame edges.
-      var minCover = Math.max( 3, Math.ceil( idx.length*0.6 ) );
-      SIProf.start( "model: median + normalize" );
-      var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
-      for ( var a1 = 0; a1 < idx.length; ++a1 )
+      for ( var gi = 0; gi < groupNames.length; ++gi )
       {
-         var lf = SITrailCore.linearFitToModel( arrays[ a1 ], stack0.model, stack0.valid );
-         SITrailCore.applyLinear( arrays[ a1 ], lf.a, lf.b );
-         processEvents();
-      }
-      var stack = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
-      var model = stack.model;
-      // 6 px: past the Lanczos ringing at every resampled frame's coverage
-      // boundary, spread a few px by the intra-night dither.
-      var mask = SITrailCore.erodeMask( stack.valid, entries[ idx[ 0 ] ].binned.width,
-                                        entries[ idx[ 0 ] ].binned.height, 6 );
-      SIProf.end( "model: median + normalize" );
-
-      for ( var p0 = 0; p0 < idx.length; ++p0 )
-      {
-         var e = entries[ idx[ p0 ] ];
-         SIProf.start( "pass B: reopen frames" );
-         var wins2 = ImageWindow.open( e.regPath );
-         SIProf.end( "pass B: reopen frames" );
-         if ( wins2.length == 0 )
+         var idx = groups[ groupNames[ gi ] ];
+         if ( idx.length < 3 )
          {
-            results[ idx[ p0 ] ] = { trails: [], stats: {}, planeGroups: [] };
+            console.warningln( format( "   filter group '%s' has only %d frame(s) — " +
+                                       "3+ are needed for difference detection; skipped.",
+                                       groupNames[ gi ], idx.length ) );
+            for ( var s0 = 0; s0 < idx.length; ++s0 )
+               results[ idx[ s0 ] ] = { trails: [], stats: {}, planeGroups: [] };
             continue;
          }
-         var win2 = wins2[ 0 ];
-         for ( var k3 = 1; k3 < wins2.length; ++k3 )
-            wins2[ k3 ].forceClose();
 
-         // Per-frame mask: the global coverage mask AND the frame's OWN
-         // coverage eroded — Lanczos ringing at a resampled frame's boundary
-         // lives a few nonzero pixels INSIDE its coverage, invisible to the
-         // global mask and strong enough to pose as an edge-hugging trail.
-         var fv = new Uint8Array( e.binned.data.length );
-         for ( var m2 = 0; m2 < fv.length; ++m2 )
-            fv[ m2 ] = ( e.binned.data[ m2 ] > 1e-6 ) ? 1 : 0;
-         fv = SITrailCore.erodeMask( fv, e.binned.width, e.binned.height, 6 );
-         var frameMask = new Uint8Array( fv.length );
-         for ( var m3 = 0; m3 < fv.length; ++m3 )
-            frameMask[ m3 ] = ( mask[ m3 ] && fv[ m3 ] ) ? 1 : 0;
-
-         var diffParams = JSON.parse( JSON.stringify( params ) );
-         diffParams.profile = detProfile;
-         if ( params.diffKSigma > 0 )
-            diffParams.kSigma = params.diffKSigma;
-         // A satellite train alone can leave 10+ parallel streaks in one sub —
-         // never let a bundle exhaust the slots and mask a lone trail.
-         diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
-         SIProf.start( "pass B: detection (diff)" );
-         var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, frameMask );
-         SIProf.end( "pass B: detection (diff)" );
-         SIProf.start( "pass B: frame quality (binned peaks)" );
-         e.quality = { peaks: countBinnedPeaks( e.binned.data, e.binned.width, e.binned.height ),
-                       skyBgAdu: e.binned.skyBg };
-         SIProf.end( "pass B: frame quality (binned peaks)" );
-
-         var trails = [];
-         for ( var t = 0; t < det.trails.length; ++t )
+         var arrays = [];
+         for ( var a0 = 0; a0 < idx.length; ++a0 )
+            arrays.push( entries[ idx[ a0 ] ].binned.data );
+         // 60% of the group: N-1 forced the strict intersection of every
+         // pointing — on a multi-night session the one-night border zones
+         // (where trails live too) were masked out entirely. At 60% the
+         // population seams still involve enough frames for a solid median,
+         // and the per-frame ringing masks handle the frame edges.
+         var minCover = Math.max( 3, Math.ceil( idx.length*0.6 ) );
+         SIProf.start( "model: median + normalize" );
+         var stack0 = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
+         for ( var a1 = 0; a1 < idx.length; ++a1 )
          {
-            var tr = det.trails[ t ];
-            // Width veto: a real streak is a thin line; residual cloud bands
-            // and stacking artifacts that survive the median are broad.
-            if ( tr.widthPx > 12 )
+            var lf = SITrailCore.linearFitToModel( arrays[ a1 ], stack0.model, stack0.valid );
+            SITrailCore.applyLinear( arrays[ a1 ], lf.a, lf.b );
+            processEvents();
+         }
+         var stack = SITrailCore.medianStackMasked( arrays, 1e-6, minCover );
+         var model = stack.model;
+         // 6 px: past the Lanczos ringing at every resampled frame's coverage
+         // boundary, spread a few px by the intra-night dither.
+         var mask = SITrailCore.erodeMask( stack.valid, entries[ idx[ 0 ] ].binned.width,
+                                           entries[ idx[ 0 ] ].binned.height, 6 );
+         SIProf.end( "model: median + normalize" );
+
+         for ( var p0 = 0; p0 < idx.length; ++p0 )
+         {
+            var e = entries[ idx[ p0 ] ];
+            SIProf.start( "pass B: reopen frames" );
+            var opened2 = withWindow( e.regPath, function( win2 )
+            {
+               SIProf.end( "pass B: reopen frames" );
+
+               // Per-frame mask: the global coverage mask AND the frame's OWN
+               // coverage eroded — Lanczos ringing at a resampled frame's boundary
+               // lives a few nonzero pixels INSIDE its coverage, invisible to the
+               // global mask and strong enough to pose as an edge-hugging trail.
+               var fv = new Uint8Array( e.binned.data.length );
+               for ( var m2 = 0; m2 < fv.length; ++m2 )
+                  fv[ m2 ] = ( e.binned.data[ m2 ] > 1e-6 ) ? 1 : 0;
+               fv = SITrailCore.erodeMask( fv, e.binned.width, e.binned.height, 6 );
+               var frameMask = new Uint8Array( fv.length );
+               for ( var m3 = 0; m3 < fv.length; ++m3 )
+                  frameMask[ m3 ] = ( mask[ m3 ] && fv[ m3 ] ) ? 1 : 0;
+
+               var diffParams = JSON.parse( JSON.stringify( params ) );
+               diffParams.profile = detProfile;
+               if ( params.diffKSigma > 0 )
+                  diffParams.kSigma = params.diffKSigma;
+               // A satellite train alone can leave 10+ parallel streaks in one sub —
+               // never let a bundle exhaust the slots and mask a lone trail.
+               diffParams.maxTrails = Math.max( 25, params.maxTrails || 0 );
+               SIProf.start( "pass B: detection (diff)" );
+               var det = SITrailDetect.detectDiff( win2.mainView.image, e.binned, model, diffParams, frameMask );
+               SIProf.end( "pass B: detection (diff)" );
+               SIProf.start( "pass B: frame quality (binned peaks)" );
+               e.quality = { peaks: countBinnedPeaks( e.binned.data, e.binned.width, e.binned.height ),
+                             skyBgAdu: e.binned.skyBg };
+               SIProf.end( "pass B: frame quality (binned peaks)" );
+
+               var trails = [];
+               for ( var t = 0; t < det.trails.length; ++t )
+               {
+                  var tr = det.trails[ t ];
+                  // Width veto: a real streak is a thin line; residual cloud bands
+                  // and stacking artifacts that survive the median are broad.
+                  if ( tr.widthPx > 12 )
+                     continue;
+                  tr.index = trails.length;
+                  tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
+                  if ( hasUsableWcs( refMeta.wcs.kind ) )
+                  {
+                     tr.p1 = refMeta.wcs.imageToCelestial( tr.x1, tr.y1 );
+                     tr.p2 = refMeta.wcs.imageToCelestial( tr.x2, tr.y2 );
+                  }
+                  else
+                  {
+                     tr.p1 = null;
+                     tr.p2 = null;
+                  }
+                  trails.push( tr );
+               }
+
+               // Movers need trustworthy astrometry — see runAnalysis: registered
+               // sets without a real WCS skip the asteroid search entirely.
+               var blobs = [];
+               if ( params.detectAsteroids && hasUsableWcs( refMeta.wcs.kind ) )
+               {
+                  var pix = extractPixelSources( win2.mainView.image, params.maxSources );
+                  for ( var s = 0; s < pix.length; ++s )
+                  {
+                     var sky = refMeta.wcs.imageToCelestial( pix[ s ].x, pix[ s ].y );
+                     if ( sky != null )
+                        blobs.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
+                                      fluxAdu: pix[ s ].fluxAdu, x: pix[ s ].x, y: pix[ s ].y } );
+                  }
+               }
+
+               return { det: det, trails: trails, blobs: blobs };
+            } );
+            if ( opened2 == null )
+            {
+               SIProf.end( "pass B: reopen frames" );
+               results[ idx[ p0 ] ] = { trails: [], stats: {}, planeGroups: [] };
                continue;
-            tr.index = trails.length;
-            tr.spansEdgeToEdge = nearEdge( tr.x1, tr.y1 ) && nearEdge( tr.x2, tr.y2 );
-            if ( hasUsableWcs( refMeta.wcs.kind ) )
-            {
-               tr.p1 = refMeta.wcs.imageToCelestial( tr.x1, tr.y1 );
-               tr.p2 = refMeta.wcs.imageToCelestial( tr.x2, tr.y2 );
             }
-            else
-            {
-               tr.p1 = null;
-               tr.p2 = null;
-            }
-            trails.push( tr );
-         }
+            var det = opened2.det, trails = opened2.trails, blobs = opened2.blobs;
+            e.binned.data = null; // release the big array, keep the metadata
 
-         // Movers need trustworthy astrometry — see runAnalysis: registered
-         // sets without a real WCS skip the asteroid search entirely.
-         var blobs = [];
-         if ( params.detectAsteroids && hasUsableWcs( refMeta.wcs.kind ) )
+            // Parallel bundles: several near-parallel segments in ONE frame are a
+            // single object — an airplane (strobing lights: strong brightness
+            // variation along the marks) or a satellite train (fresh launch, not
+            // yet cataloged: steady parallel streaks). Grouped before matching so
+            // they never get individual satellite names.
+            var planeGroups = SIMeteors.groupPlanes( trails );
+            for ( var g = 0; g < planeGroups.length; ++g )
+            {
+               var pg = planeGroups[ g ];
+               var vars = [];
+               for ( var gi2 = 0; gi2 < pg.indices.length; ++gi2 )
+               {
+                  trails[ pg.indices[ gi2 ] ].planeGroup = g;
+                  var bv = trails[ pg.indices[ gi2 ] ].brightnessVariation;
+                  if ( bv != null )
+                     vars.push( bv );
+               }
+               vars.sort( function( a, b ) { return a - b; } );
+               var medVar = ( vars.length > 0 ) ? vars[ vars.length >> 1 ] : 0;
+               pg.kind = ( medVar > 0.3 ) ? "plane" : "train";
+            }
+
+            results[ idx[ p0 ] ] = { trails: trails, stats: det.stats, blobs: blobs,
+                                     planeGroups: planeGroups };
+            if ( trails.length > 0 )
+               console.writeln( format( "   %s: %d transient trail(s)%s", e.meta.id, trails.length,
+                                        planeGroups.length > 0
+                                           ? format( " — %d bundle(s)", planeGroups.length )
+                                           : "" ) );
+            processEvents();
+            gc();
+         }
+      }
+
+      var frames = [];
+      for ( var fi2 = 0; fi2 < entries.length; ++fi2 )
+      {
+         var r0 = results[ fi2 ] || { trails: [], stats: {}, planeGroups: [] };
+         frames.push( { meta: entries[ fi2 ].meta, trails: r0.trails, stats: r0.stats,
+                        blobs: r0.blobs || [], planeGroups: r0.planeGroups,
+                        srcW: refW, srcH: refH } );
+      }
+      var regPaths = [];
+      for ( var i = 0; i < entries.length; ++i )
+         regPaths.push( entries[ i ].regPath );
+
+      // Best frame, two stages: rank everything by the cheap indicators
+      // (peak count = transparency, sky background), then measure the real
+      // star FWHM at full resolution on the top 3 only.
+      SIProf.start( "best-frame pick (FWHM on top 3)" );
+      function medianOfKey( key )
+      {
+         var v = [];
+         for ( var i = 0; i < entries.length; ++i )
+            if ( entries[ i ].quality && entries[ i ].quality[ key ] > 0 )
+               v.push( entries[ i ].quality[ key ] );
+         return ( v.length > 0 ) ? SITrailCore.medianOf( v ) : 0;
+      }
+      var mPeaks = medianOfKey( "peaks" ), mBg = medianOfKey( "skyBgAdu" );
+      var ranked = [];
+      for ( var i = 0; i < entries.length; ++i )
+      {
+         var q = entries[ i ].quality || {};
+         ranked.push( { i: i,
+                        light: ( ( q.skyBgAdu > 0 && mBg > 0 ) ? 0.5*q.skyBgAdu/mBg : 0.75 )
+                             - ( ( q.peaks > 0 && mPeaks > 0 ) ? q.peaks/mPeaks : 0 ) } );
+      }
+      ranked.sort( function( a, b ) { return a.light - b.light; } );
+      var bestIndex = ranked[ 0 ].i, bestFwhm = 0, bestScore = Infinity;
+      for ( var r5 = 0; r5 < Math.min( 3, ranked.length ); ++r5 )
+      {
+         var cand = ranked[ r5 ].i;
+         var fq = withWindow( entries[ cand ].regPath, function( cw )
          {
-            var pix = extractPixelSources( win2.mainView.image, params.maxSources );
-            for ( var s = 0; s < pix.length; ++s )
-            {
-               var sky = refMeta.wcs.imageToCelestial( pix[ s ].x, pix[ s ].y );
-               if ( sky != null )
-                  blobs.push( { raDeg: sky.raDeg, decDeg: sky.decDeg,
-                                fluxAdu: pix[ s ].fluxAdu, x: pix[ s ].x, y: pix[ s ].y } );
-            }
-         }
-
-         win2.forceClose();
-         e.binned.data = null; // release the big array, keep the metadata
-
-         // Parallel bundles: several near-parallel segments in ONE frame are a
-         // single object — an airplane (strobing lights: strong brightness
-         // variation along the marks) or a satellite train (fresh launch, not
-         // yet cataloged: steady parallel streaks). Grouped before matching so
-         // they never get individual satellite names.
-         var planeGroups = SIMeteors.groupPlanes( trails );
-         for ( var g = 0; g < planeGroups.length; ++g )
+            return frameQuality( cw.mainView.image );
+         } );
+         if ( fq == null )
+            continue;
+         entries[ cand ].quality.fwhmPx = fq.fwhmPx;
+         entries[ cand ].quality.starCount = fq.starCount;
+         var score = ( fq.fwhmPx > 0 ? fq.fwhmPx : 9 ) + ranked[ r5 ].light;
+         if ( score < bestScore )
          {
-            var pg = planeGroups[ g ];
-            var vars = [];
-            for ( var gi2 = 0; gi2 < pg.indices.length; ++gi2 )
-            {
-               trails[ pg.indices[ gi2 ] ].planeGroup = g;
-               var bv = trails[ pg.indices[ gi2 ] ].brightnessVariation;
-               if ( bv != null )
-                  vars.push( bv );
-            }
-            vars.sort( function( a, b ) { return a - b; } );
-            var medVar = ( vars.length > 0 ) ? vars[ vars.length >> 1 ] : 0;
-            pg.kind = ( medVar > 0.3 ) ? "plane" : "train";
+            bestScore = score;
+            bestIndex = cand;
+            bestFwhm = fq.fwhmPx;
          }
-
-         results[ idx[ p0 ] ] = { trails: trails, stats: det.stats, blobs: blobs,
-                                  planeGroups: planeGroups };
-         if ( trails.length > 0 )
-            console.writeln( format( "   %s: %d transient trail(s)%s", e.meta.id, trails.length,
-                                     planeGroups.length > 0
-                                        ? format( " — %d bundle(s)", planeGroups.length )
-                                        : "" ) );
-         processEvents();
          gc();
       }
-   }
+      SIProf.end( "best-frame pick (FWHM on top 3)" );
+      var bq = entries[ bestIndex ].quality || {};
+      console.writeln( format( "Best frame for the result image: %s (FWHM %.1f px, %d peaks, sky %.0f ADU)",
+                               entries[ bestIndex ].meta.id, bestFwhm,
+                               bq.peaks || 0, bq.skyBgAdu || 0 ) );
 
-   var frames = [];
-   for ( var fi2 = 0; fi2 < entries.length; ++fi2 )
-   {
-      var r0 = results[ fi2 ] || { trails: [], stats: {}, planeGroups: [] };
-      frames.push( { meta: entries[ fi2 ].meta, trails: r0.trails, stats: r0.stats,
-                     blobs: r0.blobs || [], planeGroups: r0.planeGroups,
-                     srcW: refW, srcH: refH } );
-   }
-   var regPaths = [];
-   for ( var i = 0; i < entries.length; ++i )
-      regPaths.push( entries[ i ].regPath );
+      // Detector-internal split (dotted names = detail of "pass B: detection").
+      if ( detProfile.subtractMs ) SIProf.add( ".detect: subtract+flatten", detProfile.subtractMs );
+      if ( detProfile.brightMs ) SIProf.add( ".detect: bright pass", detProfile.brightMs );
+      if ( detProfile.faintMs ) SIProf.add( ".detect: faint pass", detProfile.faintMs );
+      if ( detProfile.faintHoughMs ) SIProf.add( ".detect: faint hough+normalize", detProfile.faintHoughMs );
+      if ( detProfile.faintRefineMs ) SIProf.add( ".detect: faint refine", detProfile.faintRefineMs );
+      if ( detProfile.photometryMs ) SIProf.add( ".detect: photometry", detProfile.photometryMs );
+      if ( detProfile.faintIters ) SIProf.add( ".detect: faint iterations (count)", detProfile.faintIters );
 
-   // Best frame, two stages: rank everything by the cheap indicators
-   // (peak count = transparency, sky background), then measure the real
-   // star FWHM at full resolution on the top 3 only.
-   SIProf.start( "best-frame pick (FWHM on top 3)" );
-   function medianOfKey( key )
-   {
-      var v = [];
-      for ( var i = 0; i < entries.length; ++i )
-         if ( entries[ i ].quality && entries[ i ].quality[ key ] > 0 )
-            v.push( entries[ i ].quality[ key ] );
-      return ( v.length > 0 ) ? SITrailCore.medianOf( v ) : 0;
+      return { frames: frames, refMeta: refMeta, refW: refW, refH: refH,
+               regPaths: regPaths, regDir: regDir, bestIndex: bestIndex,
+               refWcsDowngraded: refWcsDowngraded };
    }
-   var mPeaks = medianOfKey( "peaks" ), mBg = medianOfKey( "skyBgAdu" );
-   var ranked = [];
-   for ( var i = 0; i < entries.length; ++i )
+   finally
    {
-      var q = entries[ i ].quality || {};
-      ranked.push( { i: i,
-                     light: ( ( q.skyBgAdu > 0 && mBg > 0 ) ? 0.5*q.skyBgAdu/mBg : 0.75 )
-                          - ( ( q.peaks > 0 && mPeaks > 0 ) ? q.peaks/mPeaks : 0 ) } );
-   }
-   ranked.sort( function( a, b ) { return a.light - b.light; } );
-   var bestIndex = ranked[ 0 ].i, bestFwhm = 0, bestScore = Infinity;
-   for ( var r5 = 0; r5 < Math.min( 3, ranked.length ); ++r5 )
-   {
-      var cand = ranked[ r5 ].i;
-      var cw = ImageWindow.open( entries[ cand ].regPath );
-      if ( cw.length == 0 )
-         continue;
-      for ( var k6 = 1; k6 < cw.length; ++k6 )
-         cw[ k6 ].forceClose();
-      var fq = frameQuality( cw[ 0 ].mainView.image );
-      cw[ 0 ].forceClose();
-      entries[ cand ].quality.fwhmPx = fq.fwhmPx;
-      entries[ cand ].quality.starCount = fq.starCount;
-      var score = ( fq.fwhmPx > 0 ? fq.fwhmPx : 9 ) + ranked[ r5 ].light;
-      if ( score < bestScore )
+      // Warm the fov() cache while the reference window is still live (fov is
+      // the only refMeta.wcs use left after this return), then release it.
+      if ( refWin != null )
       {
-         bestScore = score;
-         bestIndex = cand;
-         bestFwhm = fq.fwhmPx;
+         try { refMeta.wcs.fov(); } catch ( e ) {}
+         try { refWin.forceClose(); } catch ( e ) {}
       }
-      gc();
    }
-   SIProf.end( "best-frame pick (FWHM on top 3)" );
-   var bq = entries[ bestIndex ].quality || {};
-   console.writeln( format( "Best frame for the result image: %s (FWHM %.1f px, %d peaks, sky %.0f ADU)",
-                            entries[ bestIndex ].meta.id, bestFwhm,
-                            bq.peaks || 0, bq.skyBgAdu || 0 ) );
-
-   // Detector-internal split (dotted names = detail of "pass B: detection").
-   if ( detProfile.subtractMs ) SIProf.add( ".detect: subtract+flatten", detProfile.subtractMs );
-   if ( detProfile.brightMs ) SIProf.add( ".detect: bright pass", detProfile.brightMs );
-   if ( detProfile.faintMs ) SIProf.add( ".detect: faint pass", detProfile.faintMs );
-   if ( detProfile.faintHoughMs ) SIProf.add( ".detect: faint hough+normalize", detProfile.faintHoughMs );
-   if ( detProfile.faintRefineMs ) SIProf.add( ".detect: faint refine", detProfile.faintRefineMs );
-   if ( detProfile.photometryMs ) SIProf.add( ".detect: photometry", detProfile.photometryMs );
-   if ( detProfile.faintIters ) SIProf.add( ".detect: faint iterations (count)", detProfile.faintIters );
-
-   // Warm the fov() cache while the reference window is still live (fov is the
-   // only refMeta.wcs use left after this return), then release the window.
-   if ( refWin != null )
-   {
-      try { refMeta.wcs.fov(); } catch ( e ) {}
-      try { refWin.forceClose(); } catch ( e ) {}
-   }
-   return { frames: frames, refMeta: refMeta, refW: refW, refH: refH,
-            regPaths: regPaths, regDir: regDir, bestIndex: bestIndex,
-            refWcsDowngraded: refWcsDowngraded };
 }
 
 // Header-only stand-in for a plate solve whose window is gone: no pixel
@@ -909,6 +1022,23 @@ function tanInvertForOverlay( tan, p )
 
 function runAnalysis( files, params )
 {
+   // One private scratch area per run; wiped on every exit path — the early
+   // returns and the registration failures the pipeline recovers from
+   // included — so no registered XISF set is ever left in the temp folder.
+   var run = { token: siRunToken() };
+   run.regDir = File.systemTempDirectory + "/si-night-reg-" + run.token;
+   try
+   {
+      return runAnalysisIn( files, params, run );
+   }
+   finally
+   {
+      clearDirectory( run.regDir );
+   }
+}
+
+function runAnalysisIn( files, params, run )
+{
    SIProf.reset();
    var tRun = Date.now();
    // Registered-difference analysis first (3+ frames of one field); fall
@@ -916,7 +1046,7 @@ function runAnalysis( files, params )
    var set = null;
    try
    {
-      set = analyzeNightSet( files, params );
+      set = analyzeNightSet( files, params, run.regDir );
    }
    catch ( e )
    {
@@ -949,17 +1079,27 @@ function runAnalysis( files, params )
    if ( frames.length == 0 )
       throw new Error( "no frame could be analyzed" );
 
-   // Observer site: headers first, dialog fallback second.
-   var observer = null;
+   // Observer site: headers first, dialog fallback second. observerSource
+   // ("headers" | "dialog" | null) travels with the result so the dialog and
+   // the report can show the state, not just the console.
+   var observer = null, observerSource = null;
    for ( var i = 0; i < frames.length; ++i )
       if ( frames[ i ].meta.observer != null )
       {
          observer = frames[ i ].meta.observer;
+         observerSource = "headers";
          break;
       }
    if ( observer == null && params.observerLatDeg != null && params.observerLonDeg != null )
+   {
       observer = { latDeg: params.observerLatDeg, lonDeg: params.observerLonDeg,
                    altM: params.observerAltM || 0 };
+      observerSource = "dialog";
+   }
+   if ( observer != null )
+      console.writeln( format( "Observer site (%s): lat %+.4f, lon %+.4f, alt %.0f m",
+                               observerSource == "headers" ? "FITS headers" : "dialog fallback",
+                               observer.latDeg, observer.lonDeg, observer.altM || 0 ) );
 
    // TLE cross-match through the sidecar; degrade gracefully without it.
    var matchResponse = null, tleInfo = null;
@@ -1491,20 +1631,17 @@ function runAnalysis( files, params )
             // Default: the best single frame (sharpest/cleanest) as the
             // background; every trail of the night is drawn on top anyway,
             // all frames sharing the reference grid.
-            var bw = ImageWindow.open( set.regPaths[ set.bestIndex ] );
-            if ( bw.length > 0 )
+            bmp = withWindow( set.regPaths[ set.bestIndex ], function( bw )
             {
-               for ( var k5 = 1; k5 < bw.length; ++k5 )
-                  bw[ k5 ].forceClose();
-               bmp = SIRender.stretchedBitmap( bw[ 0 ].mainView.image );
-               bw[ 0 ].forceClose();
-            }
+               return SIRender.stretchedBitmap( bw.mainView.image );
+            } );
          }
          if ( bmp != null )
          {
             bmp = SIRender.annotateTrails( bmp, labeledTrails.concat( predictedItems ),
                                            { flagDir: flagAssetsDir() } );
-            resultImagePath = File.systemTempDirectory + "/SkyIntruders-night-result.png";
+            resultImagePath = File.systemTempDirectory + "/SkyIntruders-night-" +
+                              night.dateLabel.replace( "/", "-" ) + "-" + run.token + ".png";
             bmp.save( resultImagePath );
 
             try
@@ -1530,12 +1667,12 @@ function runAnalysis( files, params )
          SIProf.start( "debug frame overlays" );
          for ( var i = 0; i < frames.length; ++i )
          {
-            var wins3 = ImageWindow.open( set.regPaths[ i ] );
-            if ( wins3.length == 0 )
+            var fbmp = withWindow( set.regPaths[ i ], function( w3 )
+            {
+               return SIRender.stretchedBitmap( w3.mainView.image );
+            } );
+            if ( fbmp == null )
                continue;
-            for ( var k4 = 1; k4 < wins3.length; ++k4 )
-               wins3[ k4 ].forceClose();
-            var fbmp = SIRender.stretchedBitmap( wins3[ 0 ].mainView.image );
             var mine = [];
             for ( var lt = 0; lt < labeledTrails.length; ++lt )
                if ( labeledTrails[ lt ].frameIndex === i )
@@ -1562,8 +1699,8 @@ function runAnalysis( files, params )
                }
             }
             fbmp = SIRender.annotateTrails( fbmp, mine, { flagDir: flagAssetsDir() } );
-            fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + i + ".png" );
-            wins3[ 0 ].forceClose();
+            fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + run.token + "-" +
+                       i + ".png" );
             gc();
          }
       }
@@ -1573,9 +1710,6 @@ function runAnalysis( files, params )
       }
    SIProf.end( "debug frame overlays" );
 
-   if ( set != null )
-      clearDirectory( set.regDir );
-
    SIProf.add( "(untimed rest)", Math.max( 0, ( Date.now() - tRun ) -
       ( function() { var s = 0, t = SIProf.table(); for ( var i = 0; i < t.length; ++i )
         if ( t[ i ].name.charAt( 0 ) != "." && t[ i ].name.indexOf( "(count)" ) < 0 ) s += t[ i ].ms;
@@ -1584,6 +1718,7 @@ function runAnalysis( files, params )
 
    return { night: night, report: report, tleInfo: tleInfo, frames: frames,
             resultImagePath: resultImagePath, fitInfo: fitInfo,
+            observer: observer, observerSource: observerSource,
             registered: ( set != null ), timings: timings,
             totalMs: Date.now() - tRun };
 }
@@ -2275,8 +2410,28 @@ var SI_UI = {
                     "is empty) and discover the galaxies, quasars, nebulae and passing " +
                     "asteroids hiding in your field.",
       kSigma: "Detection threshold (\u03c3):",
-      kSigmaTip: "Trail pixels must exceed the frame background by this many " +
-                 "robust sigmas. Lower catches fainter trails but risks noise.",
+      kSigmaTip: "Threshold on the registered DIFFERENCE image, where the static sky " +
+                 "is already subtracted \u2014 the one every normal run (3+ frames) " +
+                 "uses. Trail pixels must exceed the residual noise by this many " +
+                 "robust sigmas: lower catches fainter streaks but risks noise. " +
+                 "Default 4.5.",
+      advanced: "Advanced",
+      singleKSigma: "Single-frame threshold (\u03c3):",
+      singleKSigmaTip: "Used ONLY in the degraded per-frame path: fewer than 3 frames, " +
+                       "or a set that could not be registered. There the sky is not " +
+                       "subtracted, so the threshold is higher. Default 5.0.",
+      asteroids: "Flag slow movers as asteroid candidates",
+      asteroidsTip: "Search the point sources of plate-solved frames for objects " +
+                    "drifting coherently from frame to frame. Candidates, not " +
+                    "confirmed detections; untick to skip the search.",
+      tleAge: "Orbital data max age (h):",
+      tleAgeTip: "Cached satellite elements older than this are re-downloaded. " +
+                 "Raise it to work offline on a recent cache; predictions degrade " +
+                 "with age. Default 12.",
+      tleUrl: "Orbital data mirror URL:",
+      tleUrlTip: "Base URL of a CelesTrak-compatible mirror, tried first when set. " +
+                 "Leave empty for the default sources (CelesTrak, then the " +
+                 "CaeloWorks mirror).",
       predicted: "Draw predicted crossers on the result image",
       predictedTip: "Satellites the orbit propagation puts inside your field " +
                     "during an exposure but that no detected trail matched — " +
@@ -2290,7 +2445,18 @@ var SI_UI = {
                    "order: SITELAT / SITELONG, OBSGEO-B / OBSGEO-L, LAT-OBS / " +
                    "LONG-OBS — decimal or sexagesimal. Elevation: SITEELEV, " +
                    "OBSGEO-H, ALT-OBS.",
-      lat: "Lat (\u00b0):", lon: "Lon (\u00b0):", alt: "Alt (m):",
+      lat: "Lat (\u00b0, +N):", lon: "Lon (\u00b0, +E):", alt: "Alt (m):",
+      coordEmptyTip: "Decimal (48.85 or 48,85) or sexagesimal (48 51 24). North and East " +
+                     "positive, South and West negative.",
+      coordAccepted: "Accepted:",
+      coordSyntax: "Coordinate not understood \u2014 use 48.85, 48,85 or 48 51 24. Field cleared.",
+      latRange: "Latitude must be between \u221290 and +90\u00b0 (+N). Field cleared.",
+      lonRange: "Longitude must be between \u2212180 and +180\u00b0 (+E). Field cleared.",
+      altRange: "Elevation must be between \u2212500 and 9000 m. Field cleared.",
+      noSiteStatus: "No observer site \u2014 satellites not identified.",
+      noSiteHint: "The frames carry no site headers (SITELAT / SITELONG, OBSGEO-B / OBSGEO-L, " +
+                  "LAT-OBS / LONG-OBS) and the Observer site fields are empty. Trails were " +
+                  "detected but cannot be named: fill in Lat / Lon and run again.",
       treasureRows: "Max catalog rows / type:",
       treasureRowsTip: "Upper bound on objects fetched per catalog (galaxies, quasars, " +
                        "nebulae, asteroids) around your field.",
@@ -2330,8 +2496,29 @@ var SI_UI = {
                     "liste est vide) et d\u00e9couvre les galaxies, quasars, n\u00e9buleuses et " +
                     "ast\u00e9ro\u00efdes de passage cach\u00e9s dans ton champ.",
       kSigma: "Seuil de d\u00e9tection (\u03c3) :",
-      kSigmaTip: "Les pixels d'une tra\u00een\u00e9e doivent d\u00e9passer le fond de ce nombre de " +
-                 "sigmas robustes. Plus bas = tra\u00een\u00e9es plus faibles, mais risque de bruit.",
+      kSigmaTip: "Seuil sur l'image de DIFF\u00c9RENCE recal\u00e9e, o\u00f9 le ciel statique est " +
+                 "d\u00e9j\u00e0 soustrait \u2014 celui de toute analyse normale (3 brutes et plus). " +
+                 "Les pixels d'une tra\u00een\u00e9e doivent d\u00e9passer le bruit r\u00e9siduel de ce " +
+                 "nombre de sigmas robustes : plus bas = tra\u00een\u00e9es plus faibles, mais " +
+                 "risque de bruit. D\u00e9faut 4,5.",
+      advanced: "Avanc\u00e9",
+      singleKSigma: "Seuil brute par brute (\u03c3) :",
+      singleKSigmaTip: "Utilis\u00e9 SEULEMENT dans le mode d\u00e9grad\u00e9 brute par brute : moins " +
+                       "de 3 brutes, ou un lot impossible \u00e0 recaler. Le ciel n'y est pas " +
+                       "soustrait, d'o\u00f9 un seuil plus haut. D\u00e9faut 5,0.",
+      asteroids: "Signaler les objets lents comme candidats ast\u00e9ro\u00efdes",
+      asteroidsTip: "Cherche parmi les sources ponctuelles des brutes r\u00e9solues les objets " +
+                    "qui d\u00e9rivent de fa\u00e7on coh\u00e9rente d'une brute \u00e0 l'autre. Des " +
+                    "candidats, pas des d\u00e9tections confirm\u00e9es ; d\u00e9coche pour sauter " +
+                    "la recherche.",
+      tleAge: "\u00c2ge max des donn\u00e9es orbitales (h) :",
+      tleAgeTip: "Les \u00e9l\u00e9ments orbitaux en cache plus vieux que \u00e7a sont " +
+                 "ret\u00e9l\u00e9charg\u00e9s. Augmente-le pour travailler hors ligne sur un cache " +
+                 "r\u00e9cent ; les pr\u00e9dictions se d\u00e9gradent avec l'\u00e2ge. D\u00e9faut 12.",
+      tleUrl: "URL du miroir orbital :",
+      tleUrlTip: "URL de base d'un miroir compatible CelesTrak, essay\u00e9 en premier quand " +
+                 "il est renseign\u00e9. Vide = sources par d\u00e9faut (CelesTrak, puis le " +
+                 "miroir CaeloWorks).",
       predicted: "Tracer les passages pr\u00e9dits sur l'image r\u00e9sultat",
       predictedTip: "Satellites que la propagation orbitale place dans le champ pendant une " +
                     "pose mais qu'aucune tra\u00een\u00e9e d\u00e9tect\u00e9e n'a confirm\u00e9s — trac\u00e9s en " +
@@ -2345,7 +2532,19 @@ var SI_UI = {
                    "lus, dans l'ordre : SITELAT / SITELONG, OBSGEO-B / OBSGEO-L, " +
                    "LAT-OBS / LONG-OBS — d\u00e9cimal ou sexag\u00e9simal. \u00c9l\u00e9vation : " +
                    "SITEELEV, OBSGEO-H, ALT-OBS.",
-      lat: "Lat (\u00b0) :", lon: "Lon (\u00b0) :", alt: "Alt (m) :",
+      lat: "Lat (\u00b0, +N) :", lon: "Lon (\u00b0, +E) :", alt: "Alt (m) :",
+      coordEmptyTip: "D\u00e9cimal (48,85 ou 48.85) ou sexag\u00e9simal (48 51 24). Nord et Est " +
+                     "positifs, Sud et Ouest n\u00e9gatifs.",
+      coordAccepted: "Valeur retenue :",
+      coordSyntax: "Coordonn\u00e9e incomprise \u2014 \u00e9cris 48,85, 48.85 ou 48 51 24. Champ vid\u00e9.",
+      latRange: "La latitude doit \u00eatre entre \u221290 et +90\u00b0 (+N). Champ vid\u00e9.",
+      lonRange: "La longitude doit \u00eatre entre \u2212180 et +180\u00b0 (+E). Champ vid\u00e9.",
+      altRange: "L'altitude doit \u00eatre entre \u2212500 et 9000 m. Champ vid\u00e9.",
+      noSiteStatus: "Pas de site d'observation \u2014 satellites non identifi\u00e9s.",
+      noSiteHint: "Les brutes n'ont pas de headers de site (SITELAT / SITELONG, OBSGEO-B / " +
+                  "OBSGEO-L, LAT-OBS / LONG-OBS) et les champs Site d'observation sont vides. " +
+                  "Les tra\u00een\u00e9es sont d\u00e9tect\u00e9es mais ne peuvent pas \u00eatre nomm\u00e9es : " +
+                  "renseigne Lat / Lon et relance.",
       treasureRows: "Objets max / type de catalogue :",
       treasureRowsTip: "Plafond d'objets r\u00e9cup\u00e9r\u00e9s par catalogue (galaxies, quasars, " +
                        "n\u00e9buleuses, ast\u00e9ro\u00efdes) autour du champ.",
@@ -2660,12 +2859,26 @@ class ReportDialog extends Dialog
       this.titleLabel.margin = 6;
       this.titleLabel.frameStyle = FrameStyle.Box;
 
+      var L = ( params && params.lang ) || "en";
+
+      // No observer site: say it where the user looks, not only in the console.
+      this.siteLabel = null;
+      if ( result.observer == null )
+      {
+         this.siteLabel = new Label( this );
+         this.siteLabel.useRichText = true;
+         this.siteLabel.wordWrapping = true;
+         this.siteLabel.margin = 6;
+         this.siteLabel.frameStyle = FrameStyle.Box;
+         this.siteLabel.text = "<span style=\"color:#e0a030;\"><b>" + uiT( L, "noSiteStatus" ) +
+                               "</b></span> " + uiT( L, "noSiteHint" );
+      }
+
       this.textBox = new TextBox( this );
       this.textBox.readOnly = true;
       this.textBox.text = result.report.markdown;
       this.textBox.setMinSize( 640, 480 );
 
-      var L = ( params && params.lang ) || "en";
       this.saveButton = new PushButton( this );
       this.saveButton.text = uiT( L, "saveReport" );
       this.saveButton.icon = siIcon( this, ":/icons/save.png" );
@@ -2717,6 +2930,8 @@ class ReportDialog extends Dialog
       this.sizer.margin = 8;
       this.sizer.spacing = 8;
       this.sizer.add( this.titleLabel );
+      if ( this.siteLabel != null )
+         this.sizer.add( this.siteLabel );
       this.sizer.add( this.textBox, 100 );
       this.sizer.add( this.buttons );
       this.adjustToContents();
@@ -2856,22 +3071,68 @@ class SkyIntrudersDialog extends Dialog
       if ( MODES.indexOf( params.mode ) < 0 ) // settings may restore a removed mode
          params.mode = "night";
 
-      // Night page: detection threshold + observer site.
+      // Night page: detection threshold + observer site + advanced knobs.
+      // The slider drives diffKSigma — the threshold every normal (3+ frame)
+      // run uses on the registered difference image. The single-frame
+      // fallback threshold (kSigma) lives in the Advanced group.
       this.kSigmaControl = new NumericControl( this );
       this.kSigmaControl.label.text = "Detection threshold (σ):";
-      this.kSigmaControl.setRange( 3, 12 );
+      this.kSigmaControl.setRange( 2.5, 8 );
       this.kSigmaControl.setPrecision( 1 );
-      this.kSigmaControl.setValue( params.kSigma );
-      this.kSigmaControl.toolTip = "Trail pixels must exceed the frame background by this many " +
-                                   "robust sigmas. Lower catches fainter trails but risks noise.";
-      this.kSigmaControl.onValueUpdated = ( v ) => { self.params.kSigma = v; };
+      this.kSigmaControl.setValue( params.diffKSigma );
+      this.kSigmaControl.onValueUpdated = ( v ) => { self.params.diffKSigma = v; };
 
-      this.latEdit = this.makeCoordEdit( "Lat (°):", params.observerLatDeg,
+      this.singleKSigmaControl = new NumericControl( this );
+      this.singleKSigmaControl.label.text = "Single-frame threshold (σ):";
+      this.singleKSigmaControl.setRange( 3, 12 );
+      this.singleKSigmaControl.setPrecision( 1 );
+      this.singleKSigmaControl.setValue( params.kSigma );
+      this.singleKSigmaControl.onValueUpdated = ( v ) => { self.params.kSigma = v; };
+
+      this.asteroidsCheck = new CheckBox( this );
+      this.asteroidsCheck.text = "Flag slow movers as asteroid candidates";
+      this.asteroidsCheck.checked = ( params.detectAsteroids !== false );
+      this.asteroidsCheck.onCheck = ( checked ) => { self.params.detectAsteroids = checked; };
+
+      this.tleAgeControl = new NumericControl( this );
+      this.tleAgeControl.label.text = "Orbital data max age (h):";
+      this.tleAgeControl.setRange( 1, 168 );
+      this.tleAgeControl.setPrecision( 0 );
+      this.tleAgeControl.setValue( params.tleMaxAgeHours );
+      this.tleAgeControl.onValueUpdated = ( v ) => { self.params.tleMaxAgeHours = Math.round( v ); };
+
+      this.tleUrlLabel = new Label( this );
+      this.tleUrlLabel.text = "Orbital data mirror URL:";
+      this.tleUrlLabel.textAlignment = TextAlign.Right | TextAlign.VertCenter;
+      this.tleUrlEdit = new Edit( this );
+      this.tleUrlEdit.text = params.tleBaseUrl || "";
+      this.tleUrlEdit.onEditCompleted = () =>
+      {
+         var t = String( self.tleUrlEdit.text ).trim();
+         self.params.tleBaseUrl = ( t.length > 0 ) ? t : null;
+         self.tleUrlEdit.text = t;
+      };
+      this.tleUrlRow = new HorizontalSizer;
+      this.tleUrlRow.spacing = 4;
+      this.tleUrlRow.add( this.tleUrlLabel );
+      this.tleUrlRow.add( this.tleUrlEdit, 100 );
+
+      this.advancedGroup = new GroupBox( this );
+      this.advancedGroup.title = "Advanced";
+      this.advancedGroup.sizer = new VerticalSizer;
+      this.advancedGroup.sizer.margin = 8;
+      this.advancedGroup.sizer.spacing = 6;
+      this.advancedGroup.sizer.add( this.singleKSigmaControl );
+      this.advancedGroup.sizer.add( this.asteroidsCheck );
+      this.advancedGroup.sizer.add( this.tleAgeControl );
+      this.advancedGroup.sizer.add( this.tleUrlRow );
+
+      this.latEdit = this.makeCoordEdit( "Lat (°, +N):", params.observerLatDeg, -90, 90, "lat",
                                          ( v ) => { self.params.observerLatDeg = v; } );
-      this.lonEdit = this.makeCoordEdit( "Lon (°):", params.observerLonDeg,
+      this.lonEdit = this.makeCoordEdit( "Lon (°, +E):", params.observerLonDeg, -180, 180, "lon",
                                          ( v ) => { self.params.observerLonDeg = v; } );
-      this.altEdit = this.makeCoordEdit( "Alt (m):", params.observerAltM,
-                                         ( v ) => { self.params.observerAltM = v; } );
+      this.altEdit = this.makeCoordEdit( "Alt (m):", params.observerAltM, -500, 9000, "alt",
+                                         ( v ) => { self.params.observerAltM = ( v == null ) ? 0 : v; } );
       this.observerRow = new HorizontalSizer;
       this.observerRow.spacing = 10;
       this.observerRow.add( this.latEdit.sizer );
@@ -2906,7 +3167,8 @@ class SkyIntrudersDialog extends Dialog
          this.kSigmaControl,
          this.predictedCheck,
          this.shadowCheck,
-         this.observerGroup
+         this.observerGroup,
+         this.advancedGroup
       ] );
 
       // Treasure page: catalog depth + a plate-solve reminder.
@@ -3188,6 +3450,15 @@ class SkyIntrudersDialog extends Dialog
       this.treasureHint.text = uiT( L, "hintTreasure" );
       this.kSigmaControl.label.text = uiT( L, "kSigma" );
       this.kSigmaControl.toolTip = uiT( L, "kSigmaTip" );
+      this.advancedGroup.title = uiT( L, "advanced" );
+      this.singleKSigmaControl.label.text = uiT( L, "singleKSigma" );
+      this.singleKSigmaControl.toolTip = uiT( L, "singleKSigmaTip" );
+      this.asteroidsCheck.text = uiT( L, "asteroids" );
+      this.asteroidsCheck.toolTip = uiT( L, "asteroidsTip" );
+      this.tleAgeControl.label.text = uiT( L, "tleAge" );
+      this.tleAgeControl.toolTip = uiT( L, "tleAgeTip" );
+      this.tleUrlLabel.text = uiT( L, "tleUrl" );
+      this.tleUrlEdit.toolTip = uiT( L, "tleUrlTip" );
       this.predictedCheck.text = uiT( L, "predicted" );
       this.predictedCheck.toolTip = uiT( L, "predictedTip" );
       this.shadowCheck.text = uiT( L, "shadow" );
@@ -3197,6 +3468,9 @@ class SkyIntrudersDialog extends Dialog
       this.latEdit.label.text = uiT( L, "lat" );
       this.lonEdit.label.text = uiT( L, "lon" );
       this.altEdit.label.text = uiT( L, "alt" );
+      this.latEdit.echo( this.params.observerLatDeg );
+      this.lonEdit.echo( this.params.observerLonDeg );
+      this.altEdit.echo( this.params.observerAltM );
       this.treasureRows.label.text = uiT( L, "treasureRows" );
       this.treasureRows.toolTip = uiT( L, "treasureRowsTip" );
       this.huntLabel.text = uiT( L, "huntFor" );
@@ -3284,25 +3558,65 @@ class SkyIntrudersDialog extends Dialog
          : ( n + uiT( this.params.lang, ( n == 1 ) ? "statusOne" : "statusMany" ) );
    }
 
-   makeCoordEdit( label, value, apply )
+   // One observer-site field. kind: "lat" | "lon" | "alt" (picks the range
+   // message and the +N/+E echo). An out-of-range or unreadable entry is
+   // rejected: the field is cleared, the parameter set to null and the status
+   // line says why. An accepted value is echoed back normalized (decimal,
+   // dot) in the field and, with its hemisphere, in the field's tooltip.
+   makeCoordEdit( label, value, lo, hi, kind, apply )
    {
+      var self = this;
       var l = new Label( this );
       l.text = label;
       l.textAlignment = TextAlign.Right | TextAlign.VertCenter;
       var e = new Edit( this );
       e.setFixedWidth( this.font.width( "-000.000000" ) + 16 );
+      var ctl = { label: l, edit: e, kind: kind };
+      ctl.echo = function( v )
+      {
+         e.toolTip = ( v == null ) ? uiT( self.params.lang, "coordEmptyTip" )
+                                   : uiT( self.params.lang, "coordAccepted" ) + " " +
+                                     self.formatCoordinate( v, kind );
+      };
       if ( value != null )
          e.text = String( value );
+      ctl.echo( value );
       e.onEditCompleted = () =>
       {
-         var v = parseFloat( e.text );
-         apply( isNaN( v ) ? null : v );
+         var r = siParseCoordinate( e.text, lo, hi );
+         if ( r.error )
+         {
+            apply( null );
+            e.text = "";
+            ctl.echo( null );
+            self.updateStatus( "<span style=\"color:#e0a030;\">" +
+                               uiT( self.params.lang, ( r.error == "range" ) ? kind + "Range" : "coordSyntax" ) +
+                               "</span>" );
+            return;
+         }
+         apply( r.value );
+         e.text = ( r.value == null ) ? "" : String( Math.round( r.value*1e6 )/1e6 );
+         ctl.echo( r.value );
+         self.updateStatus();
       };
       var s = new HorizontalSizer;
       s.spacing = 4;
       s.add( l );
       s.add( e );
-      return { label: l, edit: e, sizer: s };
+      ctl.sizer = s;
+      return ctl;
+   }
+
+   // "48.8500° N" / "2.3500° E" / "120 m" — the echo of an accepted value.
+   formatCoordinate( v, kind )
+   {
+      if ( kind == "alt" )
+         return Math.round( v ) + " m";
+      var hemi = ( kind == "lat" ) ? ( v < 0 ? "S" : "N" ) : ( v < 0 ? "W" : "E" );
+      var a = Math.abs( v ).toFixed( 4 );
+      if ( this.params.lang == "fr" )
+         a = a.replace( ".", "," );
+      return a + "\u00b0 " + hemi;
    }
 
    addFiles( paths )
@@ -3349,11 +3663,17 @@ class SkyIntrudersDialog extends Dialog
       this.setBusy( true );
       console.show();
       console.writeln( "<b>" + SKYINTRUDERS_TITLE + "</b> — analyzing " + this.files.length + " frame(s)…" );
+      var postStatus = null;
       try
       {
          this.lastResult = runAnalysis( this.files, this.params );
          console.writeln( "" );
          console.writeln( this.lastResult.report.markdown );
+         // The "no site" state must survive the report dialog: it stays on
+         // the status line until the file list changes.
+         if ( this.lastResult.observer == null )
+            postStatus = "<span style=\"color:#e0a030;\">" +
+                         uiT( this.params.lang, "noSiteStatus" ) + "</span>";
          var dir = File.extractDrive( this.files[ 0 ] ) + File.extractDirectory( this.files[ 0 ] );
          ( new ReportDialog( this.lastResult, this.params, dir ) ).execute();
       }
@@ -3365,40 +3685,41 @@ class SkyIntrudersDialog extends Dialog
       finally
       {
          this.setBusy( false );
+         if ( postStatus != null )
+            this.updateStatus( postStatus );
       }
    }
 
    runTreasure()
    {
-      // Input: the first listed image, else the active window.
-      var window = null, filePath = null, opened = false;
+      // Input: the first listed image (opened for the duration of the hunt
+      // and closed whatever happens), else the active window.
+      var self = this;
       if ( this.files.length > 0 )
       {
-         var wins = ImageWindow.open( this.files[ 0 ] );
-         if ( wins.length == 0 )
+         var path = this.files[ 0 ];
+         var r = withWindow( path, function( window )
          {
-            ( new MessageBox( uiT( this.params.lang, "cannotOpen" ) + " " + this.files[ 0 ],
+            self.runTreasureOn( window, path );
+            return true;
+         } );
+         if ( r == null )
+            ( new MessageBox( uiT( this.params.lang, "cannotOpen" ) + " " + path,
                               SKYINTRUDERS_TITLE, StdIcon.Error, StdButton.Ok ) ).execute();
-            return;
-         }
-         for ( var i = 1; i < wins.length; ++i )
-            wins[ i ].forceClose();
-         window = wins[ 0 ];
-         filePath = this.files[ 0 ];
-         opened = true;
+         return;
       }
-      else
+      var window = ImageWindow.activeWindow;
+      if ( window == null || window.isNull )
       {
-         window = ImageWindow.activeWindow;
-         if ( window == null || window.isNull )
-         {
-            ( new MessageBox( uiT( this.params.lang, "needImage" ),
-                              SKYINTRUDERS_TITLE, StdIcon.Information, StdButton.Ok ) ).execute();
-            return;
-         }
-         filePath = window.filePath || window.mainView.id;
+         ( new MessageBox( uiT( this.params.lang, "needImage" ),
+                           SKYINTRUDERS_TITLE, StdIcon.Information, StdButton.Ok ) ).execute();
+         return;
       }
+      this.runTreasureOn( window, window.filePath || window.mainView.id );
+   }
 
+   runTreasureOn( window, filePath )
+   {
       saveParams( this.params );
       this.setBusy( true );
       console.show();
@@ -3428,8 +3749,6 @@ class SkyIntrudersDialog extends Dialog
       }
       finally
       {
-         if ( opened && window != null )
-            try { window.forceClose(); } catch ( e2 ) {}
          this.setBusy( false );
       }
    }
@@ -3478,6 +3797,46 @@ function siConstructTest()
       out.langSwitchOk = ( out.frAnalyze !== out.enAnalyze ) &&
                          ( out.frAnalyze === uiT( "fr", modeKey ) ) &&
                          ( out.enAnalyze === uiT( "en", modeKey ) );
+
+      // Advanced group: every control must exist, carry its parameter and
+      // round-trip a value through the handlers the GUI would fire.
+      d.kSigmaControl.onValueUpdated( 3.5 );
+      d.singleKSigmaControl.onValueUpdated( 6 );
+      d.asteroidsCheck.onCheck( false );
+      d.tleAgeControl.onValueUpdated( 48 );
+      d.tleUrlEdit.text = " https://example.invalid/tle ";
+      d.tleUrlEdit.onEditCompleted();
+      out.advancedOk = ( d.params.diffKSigma === 3.5 ) && ( d.params.kSigma === 6 ) &&
+                       ( d.params.detectAsteroids === false ) &&
+                       ( d.params.tleMaxAgeHours === 48 ) &&
+                       ( d.params.tleBaseUrl === "https://example.invalid/tle" ) &&
+                       ( d.advancedGroup.title === uiT( "en", "advanced" ) );
+      d.tleUrlEdit.text = "";
+      d.tleUrlEdit.onEditCompleted();
+      out.advancedOk = out.advancedOk && ( d.params.tleBaseUrl === null );
+
+      // Observer site: decimal comma, sexagesimal, range rejection, echo.
+      d.latEdit.edit.text = "48,85";
+      d.latEdit.edit.onEditCompleted();
+      d.lonEdit.edit.text = "-2 21 00";
+      d.lonEdit.edit.onEditCompleted();
+      out.coordOk = ( d.params.observerLatDeg === 48.85 ) &&
+                    ( d.params.observerLonDeg === -2.35 ) &&
+                    ( d.latEdit.edit.toolTip.indexOf( "48.8500" ) >= 0 ) &&
+                    ( d.lonEdit.edit.toolTip.indexOf( "W" ) >= 0 );
+      d.latEdit.edit.text = "480";
+      d.latEdit.edit.onEditCompleted();
+      out.coordOk = out.coordOk && ( d.params.observerLatDeg === null ) &&
+                    ( d.latEdit.edit.text === "" ) &&
+                    ( d.statusLabel.text.indexOf( uiT( "en", "latRange" ) ) >= 0 );
+
+      // The report dialog must carry the no-site banner.
+      var rd = new ReportDialog( { night: { dateLabel: "2026-01-01" },
+                                   report: { redditTitle: "t", markdown: "m" },
+                                   observer: null, resultImagePath: null },
+                                 { lang: "fr" }, File.systemTempDirectory );
+      out.noSiteBannerOk = ( rd.siteLabel != null ) &&
+                           ( rd.siteLabel.text.indexOf( uiT( "fr", "noSiteStatus" ) ) >= 0 );
 
       // Exercise the result dialogs too (they are built on demand at runtime).
       var res = { summary: { counts: { galaxy: 2, quasar: 1, pne: 0, asteroid: 1 },
