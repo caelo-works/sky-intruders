@@ -127,7 +127,15 @@ chart, live, in both directions. Every setting is remembered between sessions.
 ### 3.2 The input list (shared by both modes)
 
 **Add files…** accepts `.fits`, `.fit`, `.fts`, `.xisf`. **Add folder…** scans
-one folder (it does not recurse). Duplicates are ignored.
+one folder (it does not recurse). Duplicates (same full path) are ignored.
+Files from **several folders** can be mixed in one list; when two of them share
+a file name (`Light_001.fits` from two capture folders), the status line says
+so — *"Same file name in several folders (Light_001.fits): frames are told apart
+by their position in the list."* — and the run proceeds: since 0.2.2 every frame
+is keyed on its position in the list, not on its name, so nothing collides. The
+log and the report still show the plain file name, so two lines may look alike
+in that case. 0.2.1 and earlier silently mixed such frames up (one registered
+copy overwrote the other).
 
 > **The first file in the list matters more than the others.** In Night trails it
 > is the registration reference and the source of the field's plate solve. If the
@@ -341,8 +349,9 @@ Ghost lines for predicted-but-unconfirmed passes are pale yellow (sunlit) or gre
   time plus a random number, so two runs — or two PixInsight instances — never
   overwrite each other's image). The **Open image** button in the report window
   reopens it. The registered frames themselves live in a private scratch folder
-  `si-night-reg-<run token>` in the same temp folder for the duration of the
-  run and are deleted when it ends — on success, on a fallback to per-frame
+  `si-night-reg-<run token>` in the same temp folder, named
+  `<NNN>_<file name>_r.xisf` (`NNN` = the frame's position in the input list,
+  from 000), for the duration of the run and are deleted when it ends — on success, on a fallback to per-frame
   detection, and on an error alike. A leftover `si-night-reg-…` folder means
   PixInsight itself was killed mid-run; it is safe to delete.
 - A **night log** in markdown, shown in a window and printed to the console, with
@@ -525,7 +534,7 @@ Everything lives in the user's home folder, under **`.caeloworks/sky-intruders`*
   set as the composite background — every streak in the pixels, and every
   frame's hot pixels too), `debugFrameOverlays` (default `false` — `true`
   writes one annotated PNG per registered frame, `si-frame-annotated-<run
-  token>-<n>.png`, to the temp folder) and `matchDiagnostics` (default
+  token>-<NNN>_<file name>.png`, to the temp folder) and `matchDiagnostics` (default
   `false` — `true` records, for every unnamed trail, the nearest predicted
   crossing and how far it missed the tolerances). Deleting the file resets
   everything to defaults.
@@ -586,6 +595,10 @@ The user will copy-paste. These are the messages, word for word.
 - *"Add one plate-solved image, or open one in PixInsight first."* — Hunt pressed
   in Treasure Hunt with an empty list **and** no active image window.
 - *"Cannot open <path>"* — the listed file could not be read.
+- *"Same file name in several folders (<names>): frames are told apart by their
+  position in the list."* / « Même nom de fichier dans plusieurs dossiers
+  (<noms>) : les brutes sont distinguées par leur position dans la liste. » —
+  informational, shown right after adding files; see 3.2.
 - *"No observer site — satellites not identified."* / « Pas de site
   d'observation — satellites non identifiés. » — shown on the status line of the
   main window after the run and as a banner at the top of the night report
@@ -631,6 +644,13 @@ The user will copy-paste. These are the messages, word for word.
 - *"geometry mismatch, skipped: <file>"* — that frame's dimensions differ from
   the first frame's. Don't mix sensors or crops in one run.
 - *"not registered, skipped: <file>"* — star alignment rejected that frame.
+- *"only N usable registered frame(s) (M geometry mismatch) — falling back to
+  per-frame detection"* — alignment worked but fewer than three frames survived
+  the geometry check above; same consequence as the "only N/M frames registered"
+  line.
+- *"duplicate file names in the set: registering in N batches"* — informational:
+  the list mixes folders with identical file names, alignment runs in several
+  passes so no registered copy overwrites another. Slightly slower, not an error.
 - *"Field orientation fit found only N matched pair(s) — not enough to trust
   satellite names; crossers are reported as predictions only."* — no plate solve,
   and the fallback fit could not be trusted. **Nothing gets named.** Fix:

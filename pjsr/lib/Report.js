@@ -164,7 +164,9 @@ var SIReport = ( function()
 
    /*
     * events: [ { timeUtc (Date), klass ("satellite"|"meteor"|
-    *   "satellite-candidate"|"unknown"), name, shower, confidence, frameId,
+    *   "satellite-candidate"|"unknown"), name, shower, confidence, frameId
+    *   (run-unique key), frameName (base name shown to the reader; frameId
+    *   when absent),
     *   elevationDeg, angularRateDegPerSec, details } ]
     * night: { dateLabel, frames: N, cleanFrames, totalExposureSec,
     *          target (string|null), events, movers }
@@ -263,7 +265,7 @@ var SIReport = ( function()
                 ( e.rateArcsecPerMin != null ? " (" + e.rateArcsecPerMin.toFixed( 1 ) + " arcsec/min)" : "" );
       else
          what = ( lang == "fr" ? "traînée non identifiée" : "unidentified trail" );
-      return t + " — " + what + "  ·  " + e.frameId;
+      return t + " — " + what + "  ·  " + ( e.frameName || e.frameId );
    }
 
    function busiestHour( events )
@@ -340,7 +342,7 @@ var SIReport = ( function()
             var t = p.timeUtc ? utcTime( p.timeUtc ) : "--:--";
             L.push( "- " + t + " — " + ( p.name || ( "NORAD " + p.noradId ) ) +
                     ( p.elevationDeg != null ? " (" + Math.round( p.elevationDeg ) + "°)" : "" ) +
-                    "  ·  " + p.frameId );
+                    "  ·  " + ( p.frameName || p.frameId ) );
          }
       }
 
@@ -412,7 +414,8 @@ var SIReport = ( function()
             {
                var mv = night.movers[ m ];
                L.push( "- " + fmt( T.moverLine, mv.rateArcsecPerMin.toFixed( 1 ),
-                                   mv.points.length, mv.points[ 0 ].frame ) );
+                                   mv.points.length,
+                                   mv.points[ 0 ].frameName || mv.points[ 0 ].frame ) );
             }
          }
       }

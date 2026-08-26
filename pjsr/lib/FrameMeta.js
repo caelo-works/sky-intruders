@@ -265,6 +265,27 @@ var SIFrameMetaCore = ( function()
                rotationDeg: null, hasWcs: false };
    }
 
+   // Per-run frame identity. A night's frames may come from several folders
+   // that reuse the same file names (Light_001.fits in every capture
+   // directory), so nothing downstream keys on the base name alone: the
+   // frame's position in the run's input list, zero-padded, is prefixed to
+   // it. The same tag names that frame's registered copy in the scratch
+   // directory, so a log line, a diagnostics entry and a scratch file all
+   // point at one input.
+   function frameTag( index, count )
+   {
+      var width = Math.max( 3, String( Math.max( 0, ( count || 0 ) - 1 ) ).length );
+      var s = String( Math.max( 0, index|0 ) );
+      while ( s.length < width )
+         s = "0" + s;
+      return s;
+   }
+
+   function frameId( index, count, name )
+   {
+      return frameTag( index, count ) + "_" + String( name );
+   }
+
    return {
       parseNumber: parseNumber,
       parseSexagesimal: parseSexagesimal,
@@ -278,7 +299,9 @@ var SIFrameMetaCore = ( function()
       angularSeparationDeg: angularSeparationDeg,
       positionAngleDeg: positionAngleDeg,
       fovFromProjector: fovFromProjector,
-      approxFov: approxFov
+      approxFov: approxFov,
+      frameTag: frameTag,
+      frameId: frameId
    };
 } )();
 
@@ -594,7 +617,12 @@ var SIFrameMeta = ( function()
 
       return {
          path: String( filePath ),
+         // id: the key every per-frame map uses. Defaults to the base name;
+         // the night pipeline replaces it with the run-unique
+         // SIFrameMetaCore.frameId. name: what the user reads in logs and
+         // reports — always the base name.
          id: basename( filePath ),
+         name: basename( filePath ),
          dateObs: dateObs,
          exposureSec: exposureSec,
          observer: observer,
