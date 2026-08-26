@@ -161,9 +161,11 @@ cannot be named. This is the most common cause of "why is nothing identified?".
 *"What you photographed without knowing" — on one plate-solved image.*
 
 - **Max catalog rows / type** — default **400**, range 50 to 2000. It is a hard
-  truncation per catalog, **not** a magnitude cut, and the catalog does not
-  guarantee brightest-first order. A dense field can silently lose objects past
-  row 400. Raising it is safe: slower, busier chart, nothing else.
+  truncation per catalog, **not** a magnitude cut. Each catalog is asked to
+  sort its answer — largest galaxies and nebulae first, brightest quasars and
+  stars first — so when the cap is hit it is the faintest / smallest objects
+  that are dropped, and the console says so (*"catalog answer truncated at N
+  rows"*, see 7.3). Raising it is safe: slower, busier chart, nothing else.
 - **Hunt for: Galaxies / Quasars / Planetary nebulae / Asteroids** — all four on
   by default. Unticking one skips that catalog entirely.
 - **Overlay color** — default `#9FD8D2`. The colour of the star chart's markers,
@@ -480,8 +482,10 @@ Everything lives in the user's home folder, under **`.caeloworks/sky-intruders`*
 
 Treasure Hunt separates "the catalog said this field is empty" from "the
 catalog did not answer". On any failure — the host unreachable, an HTTP error,
-or a 200 response that is not catalog data (an HTML maintenance page, a proxy
-or captive-portal page; SkyBoT reporting its own service error) — the run:
+a 200 response that is not catalog data (an HTML maintenance page, a proxy or
+captive-portal page), or the catalog service reporting its own error (VizieR
+answers a broken or unavailable table with a normal-looking banner plus an
+`Error=` line and no data section; SkyBoT with its error flag) — the run:
 
 - **continues** with the other catalogs; the failed one counts 0 objects;
 - prints two console lines: *"Treasure/Catalogs: … query failed: …"* and
@@ -489,6 +493,10 @@ or captive-portal page; SkyBoT reporting its own service error) — the run:
 - shows the **"some catalogs did not respond" banner** in the report, naming
   the affected catalog(s);
 - **caches nothing** for that query, so the next run asks again.
+
+A VizieR answer only counts as genuine when it carries the data section (the
+catalog resource line or the column header) — an empty field still has one; a
+banner alone, or a banner with an `Error=` line, does not.
 
 So a report **without** the banner genuinely means every catalog answered, and
 its zeros are real zeros. A report **with** the banner must never be read as
@@ -554,6 +562,18 @@ The user will copy-paste. These are the messages, word for word.
   (outage page?)"* — the server answered, but with something other than catalog
   data (an HTML maintenance page, a proxy or captive-portal page). Treated as an
   outage: banner in the report, nothing cached.
+- *"Treasure/Catalogs: galaxy query failed: catalog reported an error: …"*
+  (also `quasar`, `pne`) — the catalog server itself answered with an error
+  line (table unavailable, malformed query, service overloaded) instead of
+  data; the rest of the line is the server's own message. Treated as an
+  outage: banner in the report, nothing cached.
+- *"Treasure/Catalogs: galaxy catalog answer truncated at 400 rows (raise 'Max
+  catalog rows' to see more)"* (also `quasar`, `pne`, `hipstar`; the number is
+  the current cap) — **not an error.** The answer filled the row cap, so the
+  smallest / faintest objects of that catalog may be missing from the report.
+  The catalog answered sorted (largest or brightest first), so what is shown is
+  the notable end. Raise **Max catalog rows** and re-run if the user wants the
+  rest.
 - *"Treasure/Catalogs: asteroid query failed after retries"* — the asteroid
   service did not answer usefully after three tries (unreachable, or it
   reported its own service error). Banner in the report.
@@ -571,10 +591,14 @@ The user will copy-paste. These are the messages, word for word.
 > Earlier builds (up to 0.2.0) had two Treasure Hunt bugs here: a catalog
 > outage read exactly like an empty field (the report banner could never
 > fire), and that false empty was then cached for 30 days. Both are fixed —
-> outages now show the report banner and are never cached (see 6.4). If the
-> user's version is 0.2.0 or older, those symptoms are expected: the fix is to
-> **update the script**, then delete the `treasure-cache` folder inside
-> `.caeloworks/sky-intruders` once to clear any cached false empties.
+> outages now show the report banner and are never cached (see 6.4). 0.2.1
+> still had one gap: a VizieR answer that was an *error* (banner plus an
+> `Error=` line, no data) passed the check and was cached as an empty field.
+> Builds after 0.2.1 reject such bodies and use a new cache key, so the old
+> entries are simply never read again. If the user's version is 0.2.1 or
+> older, those symptoms are expected: the fix is to **update the script**,
+> then delete the `treasure-cache` folder inside `.caeloworks/sky-intruders`
+> once to clear any cached false empties.
 
 ### 8.1 The detection threshold slider does nothing on a normal night run
 
@@ -670,7 +694,7 @@ files.
 | "The satellite names look wrong" | Stale orbital elements, or a wrong longitude sign | Look for **`(STALE — network unreachable)`** in the console; if present, delete the `tle` folder in `.caeloworks/sky-intruders` and re-run. Then check the longitude sign. |
 | "It says 'unidentified satellite' / orange trail" | No catalog match — a fresh launch, a classified object, or debris | **This is a correct, honest answer, not a failure.** The script refuses to guess a name it cannot support. |
 | "Treasure Hunt says my image has no WCS, but I solved it" | The solve is not on the image the script opened | With an empty input list the script uses the **active window**. Make sure the solved image is the one being read. A WBPP master is normally already solved. |
-| "Treasure Hunt found nothing" | An empty field — or a catalog outage, which the report now flags | Ask whether the report shows the **"some catalogs did not respond"** banner. No banner: every catalog answered, the zeros are real. Banner: the named catalogs did not answer — re-run once the network or service is back (failures are not cached). On **0.2.0 or older** the banner never fires and a false empty can sit in the cache: update the script, then delete the `treasure-cache` folder once. |
+| "Treasure Hunt found nothing" | An empty field — or a catalog outage, which the report now flags | Ask whether the report shows the **"some catalogs did not respond"** banner. No banner: every catalog answered, the zeros are real. Banner: the named catalogs did not answer — re-run once the network or service is back (failures are not cached). On **0.2.0 or older** the banner never fires and a false empty can sit in the cache; on **0.2.1** a catalog-side error could still be cached as empty. Either way: update the script, then delete the `treasure-cache` folder once. |
 | "It found no planetary nebulae" | Normal away from the Milky Way | The nebula catalog essentially only covers the galactic plane. Zero is the correct answer for most fields. |
 | "It says below the noise but I can see the object" | Working as intended in most cases | The object must beat its local surroundings and 12 decoy apertures. Objects on nebulosity or in dense star fields legitimately fail. A blown-out saturated core can also trigger it — that one is a real bug, escalate. |
 | "I got exactly 400 objects" | The per-catalog row cap | Raise **Max catalog rows / type**. |

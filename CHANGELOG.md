@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Treasure Hunt no longer mistakes a VizieR error answer for an empty field.
+  A live error body (`#INFO Error=…`) carries the same comment banner as a
+  genuine answer, so the previous comment-line check accepted it and the empty
+  result was cached for 30 days. VizieR bodies are now accepted only when they
+  carry the data section (`#RESOURCE=` or the column header) and rejected
+  outright when they carry an `Error=` line — both are reported as an outage
+  (console line, report banner, nothing cached). The VizieR cache key moved to
+  v3 so entries poisoned by earlier builds are never read again. The error body
+  is pinned as a test fixture.
+- Catalog answers that fill the row cap are no longer silently truncated: the
+  console now warns *"catalog answer truncated at N rows"*, and every VizieR
+  query carries a deterministic sort (largest galaxies and nebulae first,
+  brightest quasars and stars first) so the rows dropped by the cap are the
+  least notable ones rather than an arbitrary index order. Fixes #12.
+
 ## [0.2.1] - 2026-08-17
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-17:

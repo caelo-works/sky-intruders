@@ -29,6 +29,16 @@ function allFinite( rows )
    assert( u.indexOf( "-c=202.4696+47.1952" ) >= 0, "RA+Dec joined with +" );
    assert( u.indexOf( "-out=PGC,logD25" ) >= 0, "columns in URL" );
    assert( u.indexOf( "-out.max=20" ) >= 0, "row cap in URL" );
+   assert( u.indexOf( "-sort=" ) < 0, "no -sort unless asked" );
+   var us = Cat.vizierUrl( "VII/237", 202.4696, 47.1952, 0.15, [ "PGC", "logD25" ], 20, "-logD25" );
+   assert( us.indexOf( "&-sort=-logD25" ) >= 0, "deterministic -sort in URL: " + us );
+   // Every catalog carries a sort column so the row cap keeps the largest /
+   // brightest objects rather than an arbitrary index order.
+   for ( var k in Cat.SOURCE )
+      assert( typeof Cat.SOURCE[ k ].sort == "string" && Cat.SOURCE[ k ].sort.length > 0,
+              "SOURCE." + k + " has a sort column" );
+   assert.strictEqual( Cat.SOURCE.quasar.sort, "Rmag", "quasars brightest first" );
+   assert.strictEqual( Cat.SOURCE.hipstar.sort, "Vmag", "stars brightest first" );
 
    // Negative declination keeps its own minus after the + separator.
    var un = Cat.vizierUrl( "V/127A/mash1", 270, -30, 2, [ "PNG", "Name" ], 40 );
@@ -189,6 +199,55 @@ function allFinite( rows )
    assert.strictEqual( Cat.skybotFlag( "# Flag: -1\n# Error: ephemeris service down\n" ), -1, "error flag" );
    assert.strictEqual( Cat.skybotFlag( "<!DOCTYPE html><html></html>" ), null, "no flag in an outage page" );
    assert.strictEqual( Cat.skybotFlag( null ), null, "null body has no flag" );
+} )();
+
+// --- VizieR positive gate: a live error body is NOT an empty field ----------
+
+( function testVizierGate()
+{
+   // Recorded live answer to a query on a catalog that does not exist: full
+   // banner, '#'-comment lines everywhere, and '#INFO<TAB>Error=...'. The
+   // comment-line test alone accepted it (and cached it as an empty field).
+   var err = fixture( "vizier-error-body.tsv" );
+   assert( Cat.hasCommentLine( err ), "error body does carry comment lines (why the old gate failed)" );
+   assert( !Cat.isVizierBody( err ), "error body rejected by the positive gate" );
+   assert.strictEqual( Cat.vizierError( err ), "Table or Catalog not found: ZZZ/NOPE",
+                       "error message extracted" );
+   assert.deepStrictEqual( Cat.parseVizierTsv( err ), [], "error body parses to no rows" );
+
+   // Space-separated variant of the INFO line is rejected too.
+   assert( !Cat.isVizierBody( "#\n#INFO Error=service overloaded\n" ), "'#INFO Error=' rejected" );
+   assert.strictEqual( Cat.vizierError( "#INFO Error=service overloaded\n" ), "service overloaded" );
+
+   // Genuine bodies are still accepted…
+   assert( Cat.isVizierBody( fixture( "hyperleda-m51.tsv" ) ), "galaxy body accepted" );
+   assert( Cat.isVizierBody( fixture( "milliquas-3c273.tsv" ) ), "quasar body accepted" );
+   assert( Cat.isVizierBody( fixture( "pne-bulge.tsv" ) ), "PNe body accepted" );
+   assert.strictEqual( Cat.vizierError( fixture( "pne-bulge.tsv" ) ), null, "no error in a genuine body" );
+   // …including a genuinely empty field: banner + RESOURCE + header, no rows.
+   var empty = "#\n#   VizieR Astronomical Server\n#INFO\tpublisher=CDS\n\n#RESOURCE=yCat_7237\n" +
+               "#Name: VII/237\n\n_RAJ2000\t_DEJ2000\tPGC\tlogD25\ndeg\tdeg\t\t\n--------\t--------\t---\t---\n";
+   assert( Cat.isVizierBody( empty ), "empty field with data section accepted" );
+   assert.deepStrictEqual( Cat.parseVizierTsv( empty ), [], "empty field parses to no rows" );
+   // The header line alone (no RESOURCE) is also enough.
+   assert( Cat.isVizierBody( "_RAJ2000\t_DEJ2000\tPGC\n" ), "column header alone accepted" );
+
+   // Outage bodies stay rejected.
+   assert( !Cat.isVizierBody( "<!DOCTYPE html>\n<html><body><h1>503</h1></body></html>" ), "HTML rejected" );
+   assert( !Cat.isVizierBody( "#\n#   VizieR Astronomical Server\n#INFO\tpublisher=CDS\n" ), "banner alone rejected" );
+   assert( !Cat.isVizierBody( "" ), "empty body rejected" );
+   assert( !Cat.isVizierBody( null ), "null body rejected" );
+   assert.strictEqual( Cat.vizierError( null ), null );
+
+   // Truncation: the PNe fixture was recorded with -out.max=40 and holds
+   // exactly 40 rows — the cap was hit and rows may be missing.
+   var pn = Cat.parseVizierTsv( fixture( "pne-bulge.tsv" ) );
+   assert.strictEqual( pn.length, 40 );
+   assert( Cat.vizierTruncated( pn, 40 ), "exactly max rows flags truncation" );
+   assert( !Cat.vizierTruncated( pn, 41 ), "below the cap is not truncated" );
+   assert( !Cat.vizierTruncated( Cat.parseVizierTsv( fixture( "hyperleda-m51.tsv" ) ), 20 ),
+           "3 of 20 rows is not truncated" );
+   assert( !Cat.vizierTruncated( [], 0 ), "no cap, no truncation" );
 } )();
 
 console.log( "catalogs.test.js: all assertions passed" );
