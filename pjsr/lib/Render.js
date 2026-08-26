@@ -102,14 +102,6 @@ var SIRender = ( function()
       }
    }
 
-   function beginNoSwap( view )
-   {
-      if ( typeof UndoFlag_NoSwapFile !== "undefined" )
-         view.beginProcess( UndoFlag_NoSwapFile );
-      else
-         view.beginProcess();
-   }
-
    // Midtones balance that maps a clipped-median x to a target background,
    // derived from the MTF: for target 0.25 the closed form is 3x/(2x+1).
    function midtonesForTarget( x, targetBg )

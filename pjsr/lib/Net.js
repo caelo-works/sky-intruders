@@ -37,39 +37,6 @@ var SITleNet = ( function()
       return pairs;
    }
 
-   function pause( ms )
-   {
-      if ( typeof msleep == "function" )
-      {
-         msleep( ms );
-         return;
-      }
-      var until = Date.now() + ms;
-      while ( Date.now() < until )
-         if ( typeof processEvents == "function" )
-            processEvents();
-   }
-
-   function httpGet( url, timeoutSec )
-   {
-      var T = new NetworkTransfer;
-      var chunks = [];
-      T.onDownloadDataAvailable = function( data )
-      {
-         chunks.push( data );
-         return true;
-      };
-      if ( typeof T.setConnectionTimeout == "function" )
-         T.setConnectionTimeout( timeoutSec );
-      T.setURL( url );
-      var ok = T.download();
-      var text = "";
-      for ( var i = 0; i < chunks.length; ++i )
-         text += chunks[ i ].toString();
-      return { ok: ok, code: T.responseCode, text: text,
-               error: String( T.errorInformation || "" ) };
-   }
-
    function readMeta( path )
    {
       try
@@ -106,7 +73,7 @@ var SITleNet = ( function()
          var url = buildUrl( sources[ i ], group );
          if ( url == null )
             continue;
-         var r = httpGet( url, timeoutSec );
+         var r = SINet.getText( url, timeoutSec );
          if ( !r.ok || ( r.code != 0 && r.code != 200 ) )
          {
             lastError = r.error || ( "HTTP " + r.code );
@@ -155,7 +122,7 @@ var SITleNet = ( function()
       var got = fetchPass( sources, group, 10 );
       if ( got.error )
       {
-         pause( 1500 );
+         SINet.pause( 1500 );
          got = fetchPass( sources, group, 25 );
       }
       if ( !got.error )
@@ -209,7 +176,7 @@ var SITleNet = ( function()
          {
             for ( var i = 0; i < SATCAT_SOURCES.length; ++i )
             {
-               var r = httpGet( SATCAT_SOURCES[ i ], pass == 0 ? 15 : 30 );
+               var r = SINet.getText( SATCAT_SOURCES[ i ], pass == 0 ? 15 : 30 );
                if ( r.ok && ( r.code == 0 || r.code == 200 ) &&
                     r.text.indexOf( "NORAD_CAT_ID" ) >= 0 )
                {
@@ -223,7 +190,7 @@ var SITleNet = ( function()
                }
             }
             if ( pass == 0 )
-               pause( 1500 );
+               SINet.pause( 1500 );
          }
          if ( meta != null && File.exists( path ) )
             return { path: path, fromCache: true, stale: true };
@@ -280,8 +247,65 @@ var SITleNet = ( function()
       return out;
    }
 
+   // Dedup a concatenated TLE text by NORAD id — first occurrence wins, so
+   // list the primary group first. Returns { text, count }. Pure (parses
+   // through SISatMatch.parseTles, resolved at call time).
+   function mergeTleTexts( text )
+   {
+      var parsed = SISatMatch.parseTles( text );
+      var seenIds = {};
+      var rebuilt = [];
+      for ( var pt = 0; pt < parsed.length; ++pt )
+         if ( !seenIds[ parsed[ pt ].noradId ] )
+         {
+            seenIds[ parsed[ pt ].noradId ] = true;
+            rebuilt.push( parsed[ pt ].name + "\n" + parsed[ pt ].line1 + "\n" + parsed[ pt ].line2 );
+         }
+      return { text: rebuilt.join( "\n" ), count: rebuilt.length };
+   }
+
+   // The catalog a run matches against: the primary group, then every extra
+   // group appended (a failing extra is reported and skipped), then — only
+   // when extras were requested — one dedup by NORAD id, with info.count
+   // updated to the merged size. Console lines are the run log the user
+   // reads. Returns { info, text }; throws when the primary fetch fails.
+   // onInfo( info ), when given, is called as soon as the primary fetch
+   // has succeeded, so a caller keeps the catalog descriptor even when a
+   // later step throws.
+   function fetchMergedTleText( group, extraGroups, cacheDir, maxAgeHours, baseUrl, onInfo )
+   {
+      var info = fetchTle( group, cacheDir, maxAgeHours, baseUrl );
+      if ( onInfo )
+         onInfo( info );
+      console.writeln( format( "   %d satellites, %s%s", info.count,
+                               info.fromCache ? "from cache" : "fresh download",
+                               info.stale ? " (STALE \u2014 network unreachable)" : "" ) );
+      var text = File.readTextFile( info.tlePath );
+      if ( extraGroups && extraGroups.length > 0 )
+      {
+         for ( var xg = 0; xg < extraGroups.length; ++xg )
+            try
+            {
+               var ext = fetchTle( extraGroups[ xg ], cacheDir, maxAgeHours, baseUrl );
+               text += "\n" + File.readTextFile( ext.tlePath );
+               console.writeln( format( "   + %s: %d satellites", extraGroups[ xg ], ext.count ) );
+            }
+            catch ( eg )
+            {
+               console.warningln( "   + " + extraGroups[ xg ] + ": " + eg.message );
+            }
+         var merged = mergeTleTexts( text );
+         text = merged.text;
+         info.count = merged.count;
+         console.writeln( format( "   = %d satellites after merge/dedup", merged.count ) );
+      }
+      return { info: info, text: text };
+   }
+
    return {
       fetchTle: fetchTle,
+      fetchMergedTleText: fetchMergedTleText,
+      mergeTleTexts: mergeTleTexts,
       fetchSatcat: fetchSatcat,
       parseSatcatInfo: parseSatcatInfo,
       parseSatcatOwners: parseSatcatOwners,
@@ -295,10 +319,10 @@ var SITleNet = ( function()
 // ---------------------------------------------------------------------------
 
 /*
- * SINet — a generic text getter over NetworkTransfer, shared by the Treasure
- * Hunt catalog queries. Same chunk-accumulate pattern as SITleNet's private
- * httpGet, exposed as a public one-shot call. Callers own retry/backoff and
- * payload validation.
+ * SINet — the one HTTP text getter over NetworkTransfer (TLE/SATCAT fetches
+ * above, Treasure Hunt catalog queries) plus the GUI-friendly pause the
+ * retry loops sleep with. Callers own retry/backoff and payload validation.
+ * Defined after SITleNet in this file; SITleNet only calls it at run time.
  */
 var SINet = ( function()
 {
@@ -324,5 +348,18 @@ var SINet = ( function()
                error: String( T.errorInformation || "" ) };
    }
 
-   return { getText: getText };
+   function pause( ms )
+   {
+      if ( typeof msleep == "function" )
+      {
+         msleep( ms );
+         return;
+      }
+      var until = Date.now() + ms;
+      while ( Date.now() < until )
+         if ( typeof processEvents == "function" )
+            processEvents();
+   }
+
+   return { getText: getText, pause: pause };
 } )();

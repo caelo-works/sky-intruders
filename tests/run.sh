@@ -34,12 +34,15 @@ BUILD="$ROOT/tests/build"
 MODULE="$BUILD/module.js"
 VENDOR_SGP4="$ROOT/pjsr/lib/vendor/satellite.js"
 LIBS=(
+   "$ROOT/pjsr/lib/Geom.js"
    "$ROOT/pjsr/lib/Stats.js"
    "$ROOT/pjsr/lib/FrameMeta.js"
    "$ROOT/pjsr/lib/TrailDetect.js"
    "$ROOT/pjsr/lib/Net.js"
    "$ROOT/pjsr/lib/SatMatch.js"
    "$ROOT/pjsr/lib/Meteors.js"
+   "$ROOT/pjsr/lib/SatLabels.js"
+   "$ROOT/pjsr/lib/NightEvents.js"
    "$ROOT/pjsr/lib/Report.js"
    "$ROOT/pjsr/lib/Cosmology.js"
    "$ROOT/pjsr/lib/Catalogs.js"
@@ -81,12 +84,15 @@ EOF
    cat <<'EOF'
 
 module.exports = {
+   SIGeom: SIGeom,
    SIStats: SIStats,
    SIFrameMetaCore: SIFrameMetaCore,
    SITrailCore: SITrailCore,
    SITleNet: SITleNet,
    SISatMatch: SISatMatch,
    SIMeteors: SIMeteors,
+   SISatLabels: SISatLabels,
+   SINightEvents: SINightEvents,
    SIReport: SIReport,
    SICosmology: SICosmology,
    SICatalogs: SICatalogs,

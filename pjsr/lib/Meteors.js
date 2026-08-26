@@ -2,7 +2,8 @@
 /*
  * Meteors.js — meteor-shower heuristics for trails the TLE match left over.
  *
- * Pure JS, no PI types: everything here is unit-testable under Node.
+ * Pure JS, no PI types (spherical math from SIGeom): everything here is
+ * unit-testable under Node.
  * Radiants are J2000 at peak, drift ignored (we match within ~8 degrees,
  * far coarser than radiant drift over an activity window).
  */
@@ -29,10 +30,7 @@ var SIMeteors = ( function()
 
    function unitVector( raDeg, decDeg )
    {
-      var ra = raDeg * D2R, dec = decDeg * D2R;
-      return [ Math.cos( dec ) * Math.cos( ra ),
-               Math.cos( dec ) * Math.sin( ra ),
-               Math.sin( dec ) ];
+      return SIGeom.unitVector( raDeg, decDeg );
    }
 
    function cross( a, b )
@@ -55,8 +53,10 @@ var SIMeteors = ( function()
 
    function sepDeg( aRa, aDec, bRa, bDec )
    {
-      var d = dot( unitVector( aRa, aDec ), unitVector( bRa, bDec ) );
-      return Math.acos( Math.max( -1, Math.min( 1, d ) ) ) / D2R;
+      // Dot-product / arccos separation. The slow-mover gates below were
+      // tuned on this form; SIGeom keeps it apart from the haversine one
+      // used by the matching engine (see SIGeom.angularSepDotDeg).
+      return SIGeom.angularSepDotDeg( aRa, aDec, bRa, bDec );
    }
 
    // Angular distance from a point to the great circle through p1-p2.

@@ -27,25 +27,17 @@ var SITrailCore = ( function()
    };
 
    // ------------------------------------------------------------------------
-   // Array statistics (local so the core stays self-contained under Node)
+   // Array statistics (SIStats; short local names for the many call sites)
 
    function medianOf( arr )
    {
-      if ( arr.length === 0 )
-         return 0;
-      var s = Array.prototype.slice.call( arr ).sort( function( a, b ) { return a - b; } );
-      var mid = Math.floor( s.length/2 );
-      return ( s.length % 2 !== 0 ) ? s[mid] : ( s[mid - 1] + s[mid] )/2;
+      return SIStats.arrayMedian( arr );
    }
 
    function madOf( arr )
    {
-      // Sigma-equivalent MAD (x1.4826), like SIStats.arrayMAD.
-      var med = medianOf( arr );
-      var dev = [];
-      for ( var i = 0; i < arr.length; ++i )
-         dev.push( Math.abs( arr[i] - med ) );
-      return medianOf( dev )*1.4826;
+      // Sigma-equivalent MAD (x1.4826).
+      return SIStats.arrayMAD( arr );
    }
 
    function meanOf( arr )
@@ -1899,17 +1891,22 @@ var SITrailDetect = ( function()
                 ( !mask || SITrailCore.lineEdgeAffinity( mask, binnedSelf.width,
                                                          binnedSelf.height, run, 8 ) <= 0.35 );
       };
-      params.noiseOverride = { median: 0, sigma: sigmaDiff };
-      params.mask = mask;
+      // Local options object: the caller's params are never written to.
+      var opts = {};
+      if ( params )
+         for ( var key in params )
+            opts[key] = params[key];
+      opts.noiseOverride = { median: 0, sigma: sigmaDiff };
+      opts.mask = mask;
       tP = Date.now();
-      var core = SITrailCore.detectCore( diff, binnedSelf.width, binnedSelf.height, params, thinOnly );
+      var core = SITrailCore.detectCore( diff, binnedSelf.width, binnedSelf.height, opts, thinOnly );
       if ( prof ) prof.brightMs = ( prof.brightMs || 0 ) + ( Date.now() - tP );
 
       tP = Date.now();
       for ( var i = 0; i < core.trails.length; ++i )
          SITrailCore.eraseSegment( diff, binnedSelf.width, binnedSelf.height, core.trails[i], 5 );
       processEvents();
-      var faint = SITrailCore.detectFaintCore( diff, binnedSelf.width, binnedSelf.height, params );
+      var faint = SITrailCore.detectFaintCore( diff, binnedSelf.width, binnedSelf.height, opts );
       if ( prof ) prof.faintMs = ( prof.faintMs || 0 ) + ( Date.now() - tP );
       for ( var f = 0; f < faint.trails.length; ++f )
          core.trails.push( faint.trails[f] );
