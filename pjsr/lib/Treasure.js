@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * Treasure.js — SITreasure: pure orchestration and narrative for the
  * Treasure Hunt mode. Cross-matches catalog objects against the frame,

@@ -14,6 +14,21 @@ All notable changes to this project are documented here. The format is based on
   unit tests for its TLE/SATCAT parsers. `docs/RELEASING.md` orders the steps
   as tests → commit → push `main` → tag → push tag and uses a process-local
   token instead of `gh auth switch`. Fixes #7.
+- Every first-party source under `pjsr/` now opens with an SPDX licence
+  identifier (`GPL-3.0-only`); the vendored `satellite.js` keeps its own
+  MIT notice.
+- The update package built by `scripts/build-update-package.sh` ships the
+  repository `LICENSE` next to the entry script (still a reproducible zip).
+- Node harness: the meteor slow-mover suite injects two synthetic rates
+  (0.5 and 3 arcsec/min) into the real storm pool instead of four, cutting
+  the harness run time by roughly half while keeping the zero-candidate
+  storm pin and the drift-artifact family test.
+
+### Fixed
+- `tests/treasure.test.js`: the "no external asset URLs" check was written
+  as `A && B || C`, which the credit link made vacuously true; it now lists
+  every `http(s)` URL in the report and requires all of them to be the
+  caelo.works credit. Fixes #13.
 
 ## [0.2.1] - 2026-08-17
 

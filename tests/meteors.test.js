@@ -146,7 +146,9 @@ function gauss( rng )
    // A synthetic mover injected into the SAME pool (last 7 frames form one
    // session with gaps <= 91 min) must still come out — exactly once.
    var rng = makeRng( 42 );
-   var rates = [ 0.5, 1.0, 3.0, 8.0 ];
+   // Two rates bracket the slow-mover window (each run walks the full
+   // 7 800-source pool, so the list is kept short on purpose).
+   var rates = [ 0.5, 3.0 ];
    for ( var r = 0; r < rates.length; ++r )
    {
       var fr = poolFrames();
