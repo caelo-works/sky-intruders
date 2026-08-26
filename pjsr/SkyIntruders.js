@@ -522,8 +522,10 @@ function analyzeNightSet( files, params )
    // below; ghost overlays use a separate synthetic TAN, and mover blobs are
    // projected in-loop, so nothing past the return still needs this window).
    var refWin = null;
+   var refWcsDowngraded = false;
    if ( hasUsableWcs( refMeta.wcs.kind ) )
    {
+      var reopenError = "no window";
       try
       {
          var rw = ImageWindow.open( reg.paths[ 0 ] );
@@ -535,7 +537,20 @@ function analyzeNightSet( files, params )
             refMeta = SIFrameMeta.read( refWin, files[ 0 ] );
          }
       }
-      catch ( e ) { refWin = null; }
+      catch ( e ) { refWin = null; reopenError = e.message; }
+      if ( refWin == null )
+      {
+         // Without a live window the plate solve cannot project anything:
+         // every trail endpoint would come back null and strict matching
+         // would silently name nothing. Say so, and hand the set to the
+         // header-based orientation fit instead of pretending it is solved.
+         console.warningln( SKYINTRUDERS_TITLE + ": plate-solved reference could not be " +
+                            "re-opened (" + reopenError + ") — falling back to the " +
+                            "field-orientation fit" );
+         refMeta.wcs = approxWcsFromHeaders( refMeta, entries[ 0 ].binned.srcW,
+                                             entries[ 0 ].binned.srcH );
+         refWcsDowngraded = true;
+      }
    }
    var refW = entries[ 0 ].binned.srcW, refH = entries[ 0 ].binned.srcH;
    var margin = Math.max( 8, Math.round( 0.03 * Math.max( refW, refH ) ) );
@@ -781,7 +796,30 @@ function analyzeNightSet( files, params )
       try { refWin.forceClose(); } catch ( e ) {}
    }
    return { frames: frames, refMeta: refMeta, refW: refW, refH: refH,
-            regPaths: regPaths, regDir: regDir, bestIndex: bestIndex };
+            regPaths: regPaths, regDir: regDir, bestIndex: bestIndex,
+            refWcsDowngraded: refWcsDowngraded };
+}
+
+// Header-only stand-in for a plate solve whose window is gone: no pixel
+// projection, only the approximate field (RA/DEC keywords + plate scale)
+// the orientation fit needs. Same shape as SIFrameMeta's wcs object.
+function approxWcsFromHeaders( meta, width, height )
+{
+   var C = SIFrameMetaCore;
+   var kw = meta.keywords || {};
+   var ra = C.parseRaDeg( kw[ "RA" ] );
+   if ( ra === null )
+      ra = C.parseHoursToDeg( kw[ "OBJCTRA" ] );
+   var dec = C.parseSexagesimal( kw[ "DEC" ] );
+   if ( dec === null )
+      dec = C.parseSexagesimal( kw[ "OBJCTDEC" ] );
+   var fov = null;
+   if ( ra !== null && dec !== null )
+      fov = C.approxFov( ra, dec, meta.pixScaleArcsec, width, height );
+   return { kind: ( fov != null ) ? "approx" : "none",
+            imageToCelestial: function( x, y ) { return null; },
+            celestialToImage: function( raDeg, decDeg ) { return null; },
+            fov: function() { return fov; } };
 }
 
 function buildMatchRequest( frames, observer, params, fovOverride )
@@ -795,6 +833,13 @@ function buildMatchRequest( frames, observer, params, fovOverride )
       var f = frames[ i ];
       if ( f.meta.dateObs == null || f.meta.exposureSec == null )
          continue;
+      if ( !isFinite( f.meta.exposureSec ) || f.meta.exposureSec <= 0 )
+      {
+         console.warningln( format( "   frame %s: EXPTIME is %s — no exposure window, " +
+                                    "skipped for satellite identification",
+                                    f.meta.id, String( f.meta.exposureSec ) ) );
+         continue;
+      }
       // Registered sets share the reference frame's grid, so every frame's
       // trails live in the REFERENCE field of view.
       var fov = ( fovOverride != null ) ? fovOverride : f.meta.wcs.fov();
@@ -971,6 +1016,14 @@ function runAnalysis( files, params )
             SIProf.start( "SGP4 cross-match" );
             matchResponse = SISatMatch.match( req, tleText );
             SIProf.end( "SGP4 cross-match" );
+            if ( matchResponse.error )
+               console.warningln( SKYINTRUDERS_TITLE + ": satellite matching failed — " +
+                                  matchResponse.error );
+            else
+               for ( var me = 0; me < ( matchResponse.errors || [] ).length; ++me )
+                  console.warningln( format( "   frame %s: satellite matching failed — %s",
+                                             String( matchResponse.errors[ me ].frame ),
+                                             matchResponse.errors[ me ].message ) );
          }
       }
       catch ( e )
@@ -1028,11 +1081,14 @@ function runAnalysis( files, params )
          if ( fit != null && fit.pairs.length > 0 )
          {
             fitInfo = { rotationDeg: fit.rotationDeg, parity: fit.parity,
-                        pairs: fit.pairs.length, score: fit.score };
+                        pairs: fit.pairs.length, score: fit.score,
+                        downgradedFromSolve: ( set.refWcsDowngraded === true ) };
             fitTanForOverlay = fit.tan;
             console.writeln( format( "Field orientation fitted from %d trail(s): " +
-                                     "rotation %.1f°, %s", fit.pairs.length, fit.rotationDeg,
-                                     fit.parity < 0 ? "mirrored" : "direct" ) );
+                                     "rotation %.1f°, %s%s", fit.pairs.length, fit.rotationDeg,
+                                     fit.parity < 0 ? "mirrored" : "direct",
+                                     set.refWcsDowngraded ? " (plate solve unavailable — " +
+                                     "orientation fit used instead)" : "" ) );
             // TLE predictions err mostly ALONG the track (early/late on
             // the ephemeris); the loose assigner is tight across, generous
             // along.

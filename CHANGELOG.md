@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- Night trails: a single frame with a corrupt header (bad `DATE-OBS`, zero
+  `EXPTIME`, a propagation exception) no longer aborts satellite matching for
+  the whole night. Frames with a non-positive `EXPTIME` are skipped with a
+  console warning naming the frame; `match()` now isolates per-frame failures
+  in an `errors[]` array and keeps matching the other frames; every match
+  error is written to the console instead of being silently dropped, so
+  "nothing identified" is no longer indistinguishable from a real empty result.
+- Night trails: when the plate-solved reference cannot be re-opened after
+  detection, the console now says so explicitly and the run downgrades to the
+  header-based field-orientation fit, with the fit line labelled
+  "(plate solve unavailable — orientation fit used instead)". Fixes #11.
+
 ## [0.2.1] - 2026-08-17
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-17:

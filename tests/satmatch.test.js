@@ -354,3 +354,49 @@ console.log("satmatch: 7 propagation steps within tolerance; match replay == ref
 
    console.log("satmatch: medium-confidence rescue OK");
 }
+
+// Per-frame failures must not abort the night: a frame with EXPTIME=0 (no
+// exposure window) or one that throws inside the matcher is reported in
+// errors[] while every other frame is still matched normally.
+
+{
+   const good = request.frames[0];
+   const clone = () => JSON.parse(JSON.stringify(good));
+
+   const zero = clone();
+   zero.id = "L_0000_exptime0.fits";
+   zero.exposureSec = 0;
+   const later = clone();
+   later.id = "L_0002.fits";
+   const resZero = SISatMatch.match({ observer: request.observer,
+                                      frames: [zero, clone(), later],
+                                      options: request.options }, tleText, "delta");
+   assert.strictEqual(resZero.error, null, "one EXPTIME=0 frame must not abort the match");
+   assert.strictEqual(resZero.frames.length, 2, "both good frames matched");
+   assert.deepStrictEqual(resZero.frames.map(f => f.id), [good.id, "L_0002.fits"]);
+   assert.strictEqual(resZero.frames[0].crossings.length, reference.frames[0].crossings.length,
+                      "good frame result unchanged by the skipped one");
+   assert.strictEqual(resZero.errors.length, 1, "skipped frame reported once");
+   assert.strictEqual(resZero.errors[0].frame, "L_0000_exptime0.fits");
+   assert.ok(/exposureSec/.test(resZero.errors[0].message), resZero.errors[0].message);
+
+   // a frame whose data explodes inside the matcher (here: a fov getter that
+   // throws, standing in for any corrupt header) is isolated the same way
+   const broken = clone();
+   broken.id = "L_broken.fits";
+   Object.defineProperty(broken, "fov", { get() { throw new Error("corrupt header"); } });
+   const resThrow = SISatMatch.match({ observer: request.observer,
+                                       frames: [clone(), broken, later],
+                                       options: request.options }, tleText, "delta");
+   assert.strictEqual(resThrow.error, null, "a throwing frame must not abort the match");
+   assert.deepStrictEqual(resThrow.frames.map(f => f.id), [good.id, "L_0002.fits"]);
+   assert.strictEqual(resThrow.frames[0].crossings.length, reference.frames[0].crossings.length);
+   assert.strictEqual(resThrow.errors.length, 1);
+   assert.strictEqual(resThrow.errors[0].frame, "L_broken.fits");
+   assert.ok(/corrupt header/.test(resThrow.errors[0].message), resThrow.errors[0].message);
+
+   // the healthy replay still reports an empty errors[] (callers may rely on it)
+   assert.deepStrictEqual(res.errors, [], "healthy request has no per-frame errors");
+
+   console.log("satmatch: per-frame error isolation OK");
+}
