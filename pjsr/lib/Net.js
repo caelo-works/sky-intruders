@@ -247,8 +247,65 @@ var SITleNet = ( function()
       return out;
    }
 
+   // Dedup a concatenated TLE text by NORAD id — first occurrence wins, so
+   // list the primary group first. Returns { text, count }. Pure (parses
+   // through SISatMatch.parseTles, resolved at call time).
+   function mergeTleTexts( text )
+   {
+      var parsed = SISatMatch.parseTles( text );
+      var seenIds = {};
+      var rebuilt = [];
+      for ( var pt = 0; pt < parsed.length; ++pt )
+         if ( !seenIds[ parsed[ pt ].noradId ] )
+         {
+            seenIds[ parsed[ pt ].noradId ] = true;
+            rebuilt.push( parsed[ pt ].name + "\n" + parsed[ pt ].line1 + "\n" + parsed[ pt ].line2 );
+         }
+      return { text: rebuilt.join( "\n" ), count: rebuilt.length };
+   }
+
+   // The catalog a run matches against: the primary group, then every extra
+   // group appended (a failing extra is reported and skipped), then — only
+   // when extras were requested — one dedup by NORAD id, with info.count
+   // updated to the merged size. Console lines are the run log the user
+   // reads. Returns { info, text }; throws when the primary fetch fails.
+   // onInfo( info ), when given, is called as soon as the primary fetch
+   // has succeeded, so a caller keeps the catalog descriptor even when a
+   // later step throws.
+   function fetchMergedTleText( group, extraGroups, cacheDir, maxAgeHours, baseUrl, onInfo )
+   {
+      var info = fetchTle( group, cacheDir, maxAgeHours, baseUrl );
+      if ( onInfo )
+         onInfo( info );
+      console.writeln( format( "   %d satellites, %s%s", info.count,
+                               info.fromCache ? "from cache" : "fresh download",
+                               info.stale ? " (STALE \u2014 network unreachable)" : "" ) );
+      var text = File.readTextFile( info.tlePath );
+      if ( extraGroups && extraGroups.length > 0 )
+      {
+         for ( var xg = 0; xg < extraGroups.length; ++xg )
+            try
+            {
+               var ext = fetchTle( extraGroups[ xg ], cacheDir, maxAgeHours, baseUrl );
+               text += "\n" + File.readTextFile( ext.tlePath );
+               console.writeln( format( "   + %s: %d satellites", extraGroups[ xg ], ext.count ) );
+            }
+            catch ( eg )
+            {
+               console.warningln( "   + " + extraGroups[ xg ] + ": " + eg.message );
+            }
+         var merged = mergeTleTexts( text );
+         text = merged.text;
+         info.count = merged.count;
+         console.writeln( format( "   = %d satellites after merge/dedup", merged.count ) );
+      }
+      return { info: info, text: text };
+   }
+
    return {
       fetchTle: fetchTle,
+      fetchMergedTleText: fetchMergedTleText,
+      mergeTleTexts: mergeTleTexts,
       fetchSatcat: fetchSatcat,
       parseSatcatInfo: parseSatcatInfo,
       parseSatcatOwners: parseSatcatOwners,

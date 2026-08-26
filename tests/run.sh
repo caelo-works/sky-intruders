@@ -41,6 +41,8 @@ LIBS=(
    "$ROOT/pjsr/lib/Net.js"
    "$ROOT/pjsr/lib/SatMatch.js"
    "$ROOT/pjsr/lib/Meteors.js"
+   "$ROOT/pjsr/lib/SatLabels.js"
+   "$ROOT/pjsr/lib/NightEvents.js"
    "$ROOT/pjsr/lib/Report.js"
    "$ROOT/pjsr/lib/Cosmology.js"
    "$ROOT/pjsr/lib/Catalogs.js"
@@ -89,6 +91,8 @@ module.exports = {
    SITleNet: SITleNet,
    SISatMatch: SISatMatch,
    SIMeteors: SIMeteors,
+   SISatLabels: SISatLabels,
+   SINightEvents: SINightEvents,
    SIReport: SIReport,
    SICosmology: SICosmology,
    SICatalogs: SICatalogs,

@@ -29,6 +29,8 @@
 #include "lib/Net.js"
 #include "lib/SatMatch.js"
 #include "lib/Meteors.js"
+#include "lib/SatLabels.js"
+#include "lib/NightEvents.js"
 #include "lib/Report.js"
 #include "lib/Cosmology.js"
 #include "lib/Catalogs.js"
@@ -1135,42 +1137,11 @@ function runAnalysisIn( files, params, run )
       {
          console.writeln( "Fetching TLE catalog (group: " + params.tleGroup + ")…" );
          SIProf.start( "TLE fetch (+extras)" );
-         tleInfo = SITleNet.fetchTle( params.tleGroup, configDir() + "/tle",
-                                      params.tleMaxAgeHours, params.tleBaseUrl );
-         console.writeln( format( "   %d satellites, %s%s", tleInfo.count,
-                                  tleInfo.fromCache ? "from cache" : "fresh download",
-                                  tleInfo.stale ? " (STALE — network unreachable)" : "" ) );
-         var tleText = File.readTextFile( tleInfo.tlePath );
-         if ( params.tleExtraGroups && params.tleExtraGroups.length > 0 )
-         {
-            for ( var xg = 0; xg < params.tleExtraGroups.length; ++xg )
-               try
-               {
-                  var ext = SITleNet.fetchTle( params.tleExtraGroups[ xg ], configDir() + "/tle",
-                                               params.tleMaxAgeHours, params.tleBaseUrl );
-                  tleText += "\n" + File.readTextFile( ext.tlePath );
-                  console.writeln( format( "   + %s: %d satellites", params.tleExtraGroups[ xg ],
-                                           ext.count ) );
-               }
-               catch ( eg )
-               {
-                  console.warningln( "   + " + params.tleExtraGroups[ xg ] + ": " + eg.message );
-               }
-            // Dedup by NORAD id (first occurrence wins — list the primary
-            // group first).
-            var parsed = SISatMatch.parseTles( tleText );
-            var seenIds = {};
-            var rebuilt = [];
-            for ( var pt = 0; pt < parsed.length; ++pt )
-               if ( !seenIds[ parsed[ pt ].noradId ] )
-               {
-                  seenIds[ parsed[ pt ].noradId ] = true;
-                  rebuilt.push( parsed[ pt ].name + "\n" + parsed[ pt ].line1 + "\n" + parsed[ pt ].line2 );
-               }
-            tleText = rebuilt.join( "\n" );
-            tleInfo.count = rebuilt.length;
-            console.writeln( format( "   = %d satellites after merge/dedup", rebuilt.length ) );
-         }
+         var merged = SITleNet.fetchMergedTleText( params.tleGroup, params.tleExtraGroups,
+                                                   configDir() + "/tle", params.tleMaxAgeHours,
+                                                   params.tleBaseUrl,
+                                                   function( info ) { tleInfo = info; } );
+         var tleText = merged.text;
          SIProf.end( "TLE fetch (+extras)" );
          var fovOverride = ( set != null ) ? set.refMeta.wcs.fov() : null;
          var req = buildMatchRequest( frames, observer, params, fovOverride );
@@ -1199,7 +1170,6 @@ function runAnalysisIn( files, params, run )
    // Merge crossings + heuristics into events. Every per-frame map below is
    // keyed on meta.id (run-unique: index + base name); meta.name is what
    // reaches the user.
-   var events = [];
    var crossingsByFrame = {};
    if ( matchResponse != null && !matchResponse.error )
       for ( var i = 0; i < matchResponse.frames.length; ++i )
@@ -1331,33 +1301,6 @@ function runAnalysisIn( files, params, run )
       }
    }
 
-   // Operator country for the flag chip on the result image, from the
-   // catalog name. Coarse by design; unknown stays a neutral placeholder.
-   function satCountryCode( name )
-   {
-      var n = ( name || "" ).toUpperCase();
-      if ( /STARLINK|IRIDIUM|GLOBALSTAR|NAVSTAR|GPS |FLOCK|SKYSAT|LEMUR|KUIPER|USA |NOSS|LACROSSE|IMAGE|GOES|TERRA|AQUA|LANDSAT/.test( n ) ) return "us";
-      if ( /QIANFAN|G60|HULIANWANG|CHUANGXIN|TIANGONG|^CSS|CZ-|YAOGAN|FENGYUN|SHIYAN|JILIN|GAOFEN|BEIDOU|CHINASAT|SHENZHOU/.test( n ) ) return "cn";
-      if ( /COSMOS|GLONASS|SOYUZ|PROGRESS|METEOR-|RESURS/.test( n ) ) return "ru";
-      if ( /ONEWEB/.test( n ) ) return "gb";
-      if ( /GALILEO|SENTINEL|METEOSAT|ARIANE/.test( n ) ) return "eu";
-      if ( /HIMAWARI|ALOS|QZS/.test( n ) ) return "jp";
-      if ( /IRNSS|CARTOSAT|GSAT|RISAT/.test( n ) ) return "in";
-      if ( /SPOT |PLEIADES|ELISA|CERES/.test( n ) ) return "fr";
-      return "xx";
-   }
-
-   // CelesTrak SATCAT OWNER codes -> ISO flag codes (vendored circle-flags).
-   var OWNER_FLAG = {
-      US: "us", PRC: "cn", CIS: "ru", UK: "gb", FR: "fr", GER: "de",
-      JPN: "jp", IND: "in", ESA: "eu", EUTE: "eu", EUME: "eu", EUSP: "eu",
-      IT: "it", CA: "ca", AUS: "au", BRAZ: "br", ISRA: "il", SKOR: "kr",
-      TURK: "tr", ARGN: "ar", SAFR: "za", SPN: "es", NETH: "nl", SWED: "se",
-      NOR: "no", SWTZ: "ch", POL: "pl", DEN: "dk", SING: "sg", THAI: "th",
-      INDO: "id", MEX: "mx", UKR: "ua", KAZ: "kz", SAUD: "sa", UAE: "ae",
-      LUXE: "lu", SES: "lu", O3B: "lu", GLOB: "us", IRID: "us", ORB: "us"
-   };
-
    function loadSatcatInfo()
    {
       // NORAD id -> { owner, ops } from the (cached) SATCAT; empty on
@@ -1373,63 +1316,6 @@ function runAnalysisIn( files, params, run )
       return {};
    }
 
-   // Second label line on the result image: distance, angular rate, launch
-   // year (from the COSPAR designator), service status (SATCAT).
-   // What kind of thing is this, per the SATCAT record: a working payload,
-   // a dead one, an unknown one (classified objects come out '?'), a rocket
-   // body or debris \u2014 the last two have no ops status, the notion does not
-   // apply. Returns a language-neutral code, or null without a record (a
-   // failed SATCAT fetch must not relabel everything "unknown").
-   function satClassCode( rec )
-   {
-      if ( !rec )
-         return null;
-      if ( rec.type == "R/B" )
-         return "rb";
-      if ( rec.type == "DEB" )
-         return "debris";
-      if ( rec.ops && "+PBSX".indexOf( rec.ops ) >= 0 )
-         return "active";
-      if ( rec.ops == "-" )
-         return "dead";
-      return "unknown";
-   }
-
-   var SAT_CLASS_LABEL = {
-      en: { rb: "rocket body", debris: "debris", active: "in service",
-            dead: "out of service", unknown: "unknown" },
-      fr: { rb: "\u00e9tage de fus\u00e9e", debris: "d\u00e9bris", active: "en service",
-            dead: "hors service", unknown: "inconnu" }
-   };
-
-   function satTelemetryLine( crossing, satcat, lang )
-   {
-      var fr = ( lang == "fr" );
-      var parts = [];
-      if ( crossing.rangeKm > 0 )
-         parts.push( Math.round( crossing.rangeKm ) + "\u2009km" );
-      if ( crossing.angularRateDegPerSec > 0 )
-      {
-         var r = crossing.angularRateDegPerSec.toFixed( 2 );
-         parts.push( ( fr ? r.replace( ".", "," ) : r ) + "\u00b0/s" );
-      }
-      var des = String( crossing.intlDes || "" );
-      var m = /^(\d{4})-/.exec( des );
-      if ( m )
-         parts.push( m[ 1 ] );
-      var cls = satClassCode( satcat[ crossing.noradId ] );
-      if ( cls != null )
-         parts.push( SAT_CLASS_LABEL[ fr ? "fr" : "en" ][ cls ] );
-      // shadow transition inside the field: the streak stops or starts here
-      if ( crossing.shadowEntryUtc )
-         parts.push( ( fr ? "entre dans l'ombre " : "into shadow " ) +
-                     String( crossing.shadowEntryUtc ).substring( 11, 19 ) + " UT" );
-      if ( crossing.shadowExitUtc )
-         parts.push( ( fr ? "sort de l'ombre " : "out of shadow " ) +
-                     String( crossing.shadowExitUtc ).substring( 11, 19 ) + " UT" );
-      return parts.join( " \u00b7 " );
-   }
-
    function flagAssetsDir()
    {
       try
@@ -1443,120 +1329,16 @@ function runAnalysisIn( files, params, run )
       }
    }
 
-   var TRAIL_STYLE = {
-      satellite: "#22d3ee",
-      "satellite-candidate": "#ffa05f",
-      meteor: "#ff5f8f",
-      plane: "#a7b34d",
-      train: "#8fd18f",
-      unknown: "#c9d2dd"
-   };
-   var FALLBACK_LABEL = {
-      en: { "satellite-candidate": "unidentified satellite", meteor: "meteor?",
-            plane: "airplane", train: "satellite train", unknown: "intruder?" },
-      fr: { "satellite-candidate": "satellite non identifié", meteor: "météore ?",
-            plane: "avion", train: "train de satellites", unknown: "intrus ?" }
-   };
-   var langLabels = FALLBACK_LABEL[ params.lang ] || FALLBACK_LABEL.en;
-   var labeledTrails = [];
    SIProf.start( "SATCAT fetch+parse" );
    var satcatInfo = loadSatcatInfo();
    SIProf.end( "SATCAT fetch+parse" );
 
-   var cleanFrames = 0, totalExposureSec = 0;
-   var predicted = [];
-   for ( var i = 0; i < frames.length; ++i )
-   {
-      var f = frames[ i ];
-      totalExposureSec += f.meta.exposureSec || 0;
-      if ( f.trails.length == 0 )
-         cleanFrames++;
-      var crossings = crossingsByFrame[ f.meta.id ] || [];
-      // Sunlit crossers that did not get matched to any trail still belong
-      // in the report — the pass happened whether we caught the streak or not.
-      for ( var c0 = 0; c0 < crossings.length; ++c0 )
-         if ( crossings[ c0 ].matchedTrailIndex == null && crossings[ c0 ].sunlit )
-            predicted.push( { name: crossings[ c0 ].name,
-                              noradId: crossings[ c0 ].noradId,
-                              timeUtc: crossings[ c0 ].entryUtc ? new Date( crossings[ c0 ].entryUtc ) : null,
-                              elevationDeg: crossings[ c0 ].elevationDeg,
-                              frameId: f.meta.id, frameName: f.meta.name } );
-      var matchedIdx = {};
-      for ( var c = 0; c < crossings.length; ++c )
-         if ( crossings[ c ].matchedTrailIndex != null )
-         {
-            matchedIdx[ crossings[ c ].matchedTrailIndex ] = true;
-            events.push( { timeUtc: crossings[ c ].entryUtc ? new Date( crossings[ c ].entryUtc ) : f.meta.dateObs,
-                           klass: "satellite",
-                           name: crossings[ c ].name,
-                           noradId: crossings[ c ].noradId,
-                           confidence: crossings[ c ].matchConfidence || "high",
-                           elevationDeg: crossings[ c ].elevationDeg,
-                           angularRateDegPerSec: crossings[ c ].angularRateDegPerSec,
-                           satClass: satClassCode( satcatInfo[ crossings[ c ].noradId ] ),
-                           // shadow transition inside the field (matched on
-                           // the lit sub-path): the report says so instead
-                           // of leaving a truncated streak to the meteor
-                           // heuristic
-                           sunlitFraction: crossings[ c ].sunlitFraction,
-                           shadowEntryUtc: crossings[ c ].shadowEntryUtc
-                              ? new Date( crossings[ c ].shadowEntryUtc ) : null,
-                           shadowExitUtc: crossings[ c ].shadowExitUtc
-                              ? new Date( crossings[ c ].shadowExitUtc ) : null,
-                           frameId: f.meta.id, frameName: f.meta.name } );
-            var tr0 = null;
-            for ( var tt = 0; tt < f.trails.length; ++tt )
-               if ( f.trails[ tt ].index === crossings[ c ].matchedTrailIndex )
-                  tr0 = f.trails[ tt ];
-            if ( tr0 != null )
-               labeledTrails.push( { frameIndex: i,
-                                     x1: tr0.x1, y1: tr0.y1, x2: tr0.x2, y2: tr0.y2,
-                                     color: TRAIL_STYLE.satellite,
-                                     flag: OWNER_FLAG[ ( satcatInfo[ crossings[ c ].noradId ] || {} ).owner ] ||
-                                           satCountryCode( crossings[ c ].name ),
-                                     sub: satTelemetryLine( crossings[ c ], satcatInfo, params.lang ),
-                                     label: ( crossings[ c ].name || ( "NORAD " + crossings[ c ].noradId ) ) +
-                                            ( crossings[ c ].matchConfidence === "medium" ? " ?" : "" ) +
-                                            ( crossings[ c ].entryUtc
-                                               ? " · " + String( crossings[ c ].entryUtc ).substring( 11, 16 ) + " UT"
-                                               : "" ) } );
-         }
-      // One event (and one drawn line) per bundle — airplane or train.
-      for ( var g = 0; g < ( f.planeGroups || [] ).length; ++g )
-      {
-         var pg = f.planeGroups[ g ];
-         var kind = pg.kind || "plane";
-         events.push( { timeUtc: f.meta.dateObs,
-                        klass: kind,
-                        name: null,
-                        segments: pg.segments,
-                        frameId: f.meta.id, frameName: f.meta.name } );
-         labeledTrails.push( { frameIndex: i,
-                               x1: pg.x1, y1: pg.y1, x2: pg.x2, y2: pg.y2,
-                               color: TRAIL_STYLE[ kind ],
-                               label: langLabels[ kind ] + " (" + pg.segments + ")" } );
-      }
-      for ( var t = 0; t < f.trails.length; ++t )
-         if ( !matchedIdx[ f.trails[ t ].index ] && f.trails[ t ].planeGroup == null )
-         {
-            var cls = SIMeteors.classifyTrail( f.trails[ t ], f.meta.dateObs );
-            events.push( { timeUtc: f.meta.dateObs,
-                           klass: cls.klass,
-                           name: null,
-                           shower: cls.shower ? cls.shower.name : null,
-                           confidence: cls.confidence,
-                           reason: cls.reason,
-                           frameId: f.meta.id, frameName: f.meta.name } );
-            var lb = langLabels[ cls.klass ] || langLabels.unknown;
-            if ( cls.klass === "meteor" && cls.shower )
-               lb += " (" + cls.shower.name + ")";
-            labeledTrails.push( { frameIndex: i,
-                                  x1: f.trails[ t ].x1, y1: f.trails[ t ].y1,
-                                  x2: f.trails[ t ].x2, y2: f.trails[ t ].y2,
-                                  color: TRAIL_STYLE[ cls.klass ] || TRAIL_STYLE.unknown,
-                                  label: lb } );
-         }
-   }
+   // Events, drawn segments and predicted passes, frame by frame.
+   var assembled = SINightEvents.build( frames, crossingsByFrame, satcatInfo, params.lang );
+   var events = assembled.events;
+   var labeledTrails = assembled.labeledTrails;
+   var predicted = assembled.predicted;
+   var cleanFrames = assembled.cleanFrames, totalExposureSec = assembled.totalExposureSec;
 
    // Asteroid candidates: slow, coherent movers among the point sources of
    // frames that have sky coordinates. Registered-but-unsolved sets are
@@ -1662,14 +1444,9 @@ function runAnalysisIn( files, params, run )
                continue;
             predictedItems.push( { x1: g1.x, y1: g1.y, x2: g2.x, y2: g2.y,
                                    color: cp.sunlit ? "#e8d44d" : "#9aa0a8",
-                                   flag: OWNER_FLAG[ ( satcatInfo[ cp.noradId ] || {} ).owner ] ||
-                                         satCountryCode( cp.name ),
-                                   label: ( cp.name || ( "NORAD " + cp.noradId ) ) +
-                                          ( cp.entryUtc ? " \u00b7 " +
-                                            String( cp.entryUtc ).substring( 11, 16 ) + " UT" : "" ) +
-                                          ( cp.sunlit ? "" :
-                                            ( params.lang == "fr" ? " (ombre)" : " (shadow)" ) ),
-                                   sub: satTelemetryLine( cp, satcatInfo, params.lang ) } );
+                                   flag: SISatLabels.flagCode( satcatInfo[ cp.noradId ], cp.name ),
+                                   label: SISatLabels.predictedLabel( cp, params.lang ),
+                                   sub: SISatLabels.telemetryLine( cp, satcatInfo, params.lang ) } );
          }
       }
 
