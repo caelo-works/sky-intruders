@@ -285,19 +285,100 @@ var SITrailCore = ( function()
                length: run.length, hitCount: run.hitCount, fill: run.fill };
    }
 
-   function eraseCorridor( map, width, height, thetaDeg, rho, halfWidth )
+   function eraseSegment( data, width, height, seg, halfW )
    {
-      // Zero every pixel within halfWidth of the accepted line so the next
-      // iteration finds the next trail instead of the same one.
-      var th = thetaDeg*Math.PI/180;
-      var ct = Math.cos( th ), st = Math.sin( th );
-      for ( var y = 0; y < height; ++y )
+      // Zero every pixel within halfW of the SEGMENT (not the whole line),
+      // bounding-box limited. Erasing the full line would silently swallow
+      // the other collinear runs — the following members of a train, the
+      // next dash of a flasher — before they could be proposed.
+      var x1 = seg.x1, y1 = seg.y1, x2 = seg.x2, y2 = seg.y2;
+      var dx = x2 - x1, dy = y2 - y1;
+      var len2 = dx*dx + dy*dy;
+      var x0 = Math.max( 0, Math.floor( Math.min( x1, x2 ) - halfW ) );
+      var xN = Math.min( width - 1, Math.ceil( Math.max( x1, x2 ) + halfW ) );
+      var y0 = Math.max( 0, Math.floor( Math.min( y1, y2 ) - halfW ) );
+      var yN = Math.min( height - 1, Math.ceil( Math.max( y1, y2 ) + halfW ) );
+      for ( var y = y0; y <= yN; ++y )
       {
          var row = y*width;
-         for ( var x = 0; x < width; ++x )
-            if ( map[row + x] && Math.abs( x*ct + y*st - rho ) <= halfWidth )
-               map[row + x] = 0;
+         for ( var x = x0; x <= xN; ++x )
+         {
+            var t = ( len2 > 0 ) ? Math.max( 0, Math.min( 1, ( ( x - x1 )*dx + ( y - y1 )*dy )/len2 ) ) : 0;
+            var px = x1 + t*dx, py = y1 + t*dy;
+            var ddx = x - px, ddy = y - py;
+            if ( ddx*ddx + ddy*ddy <= halfW*halfW )
+               data[row + x] = 0;
+         }
       }
+   }
+
+   function linePivot( width, height, thetaDeg, rho )
+   {
+      // In-image midpoint of the line rho = x*cos + y*sin, or null.
+      var ext = lineExtent( width, height, thetaDeg, rho );
+      if ( ext === null )
+         return null;
+      var tm = ( ext.t0 + ext.t1 )/2;
+      return { x: rho*ext.ct - tm*ext.st, y: rho*ext.st + tm*ext.ct };
+   }
+
+   function refineGrid( thetaDeg, pivot, dTheta, thetaStep, dRho, rhoStep, evaluate )
+   {
+      // Shared sub-degree / sub-pixel search around a coarse Hough peak.
+      // The candidate lines ROTATE ABOUT `pivot` (a point on the coarse
+      // line): rho is measured from the image origin, so tilting the line by
+      // d(theta) shifts its rho by t*d(theta) at a point t along it — up to
+      // ~28 px over a 0.9-degree tilt at the far end of a 1500-px frame —
+      // and a grid in (theta, rho) about the origin would sample lines that
+      // never cross the trail. evaluate( theta, rho ) returns { score, ... }
+      // or null; the highest score wins. Both passes use it — the faint
+      // pass scores the corridor integral, the bright pass the contiguous
+      // hit count on the binary map.
+      var best = null;
+      for ( var dt = -dTheta; dt <= dTheta + 1e-9; dt += thetaStep )
+      {
+         var t = thetaDeg + dt;
+         var th = t*Math.PI/180;
+         var base = pivot.x*Math.cos( th ) + pivot.y*Math.sin( th );
+         for ( var dr = -dRho; dr <= dRho + 1e-9; dr += rhoStep )
+         {
+            var r = evaluate( t, base + dr );
+            if ( r !== null && ( best === null || r.score > best.score ) )
+               best = r;
+         }
+      }
+      return best;
+   }
+
+   function refineBinaryLine( map, width, height, thetaDeg, rho, perpTol, gapTol )
+   {
+      // Bright-pass refinement. At 1-degree theta resolution an edge-to-edge
+      // trail at a non-integer angle drifts by L*sin(0.5 deg) (~13 px over
+      // 1500 px) across a line walked with perpTol = 1: the best run is a
+      // central chunk and the rest comes back as separate fragments. Two
+      // grids: the faint pass's coarse one about the midpoint of the coarse
+      // run, then a fine one about the midpoint of the coarse-refined run
+      // (residual < 0.02 deg -> < 0.5 px drift over a 1730-px diagonal).
+      function evalRun( t, r )
+      {
+         var run = lineRun( map, width, height, t, r, perpTol, gapTol );
+         if ( run === null )
+            return null;
+         return { thetaDeg: t, rho: r, run: run, score: run.hitCount };
+      }
+      function midpoint( run )
+      {
+         return { x: ( run.x1 + run.x2 )/2, y: ( run.y1 + run.y2 )/2 };
+      }
+      var first = evalRun( thetaDeg, rho );
+      var pivot = ( first !== null ) ? midpoint( first.run ) : linePivot( width, height, thetaDeg, rho );
+      if ( pivot === null )
+         return null;
+      var coarse = refineGrid( thetaDeg, pivot, 0.9, 0.15, 3, 0.5, evalRun );
+      if ( coarse === null )
+         return first;
+      var fine = refineGrid( coarse.thetaDeg, midpoint( coarse.run ), 0.15, 0.03, 0.5, 0.125, evalRun );
+      return ( fine !== null && fine.score >= coarse.score ) ? fine : coarse;
    }
 
    function segmentCorridorSum( data, width, height, seg, halfW )
@@ -459,11 +540,16 @@ var SITrailCore = ( function()
             var peak = findPeak( hough );
             if ( peak === null || peak.count < peakMin )
                break;
-            var run = lineRun( map, width, height, peak.thetaDeg, peak.rho, p.perpTol, p.gapTol );
+            // The peak is at bin resolution; walk the refined line, not the
+            // bin centre (see refineBinaryLine). `peak` stays integer for
+            // suppressPeak.
+            var refined = refineBinaryLine( map, width, height, peak.thetaDeg, peak.rho,
+                                            p.perpTol, p.gapTol );
+            var run = ( refined !== null ) ? refined.run : null;
             if ( run !== null && run.length >= minLen && run.fill >= p.fillRatioMin &&
                  ( acceptSeg === undefined || acceptSeg( run ) ) )
             {
-               accepted = { run: run, thetaDeg: peak.thetaDeg, rho: peak.rho };
+               accepted = { run: run, thetaDeg: refined.thetaDeg, rho: refined.rho };
                break;
             }
             suppressPeak( hough, peak.thetaDeg, peak.rho, 2, 3 );
@@ -483,11 +569,14 @@ var SITrailCore = ( function()
             score: seg.fill*Math.min( 1, 2*seg.length/diag )
          } );
 
-         eraseCorridor( map, width, height, accepted.thetaDeg, accepted.rho, p.corridorHalfWidth );
+         // Only the accepted run is erased: other collinear runs (train
+         // members, flasher dashes) are re-proposed by the next iteration
+         // and joined by mergeDuplicateTrails when they belong together.
+         eraseSegment( map, width, height, seg, p.corridorHalfWidth );
       }
 
       return {
-         trails: trails,
+         trails: mergeDuplicateTrails( trails, MERGE_GAP_FRAC*diag ),
          stats: { median: mm.median, mad: mm.mad,
                   threshold: at.threshold, aboveFrac: at.aboveFrac, kUsed: at.kUsed }
       };
@@ -967,19 +1056,17 @@ var SITrailCore = ( function()
       // spans several rho bins), while a noise peak does not refine
       // coherently. Returns the best refined line and its significance over
       // a 3-wide corridor.
-      var best = null;
-      for ( var dt = -0.9; dt <= 0.901; dt += 0.15 )
-         for ( var dr = -3; dr <= 3.01; dr += 0.5 )
-         {
-            var cs = corridorSum( z, width, height, thetaDeg + dt, rho + dr, 1 );
-            if ( cs === null || cs.count < 10 )
-               continue;
-            var signif = ( cs.sum - mu1*cs.count )/( sigma1*Math.sqrt( cs.count ) );
-            if ( best === null || signif > best.signif )
-               best = { thetaDeg: thetaDeg + dt, rho: rho + dr, signif: signif,
-                        length: cs.length };
-         }
-      return best;
+      var pivot = linePivot( width, height, thetaDeg, rho );
+      if ( pivot === null )
+         return null;
+      return refineGrid( thetaDeg, pivot, 0.9, 0.15, 3, 0.5, function( t, r )
+      {
+         var cs = corridorSum( z, width, height, t, r, 1 );
+         if ( cs === null || cs.count < 10 )
+            return null;
+         var signif = ( cs.sum - mu1*cs.count )/( sigma1*Math.sqrt( cs.count ) );
+         return { thetaDeg: t, rho: r, signif: signif, length: cs.length, score: signif };
+      } );
    }
 
    function faintProfile( z, width, height, ext, rho, perpTol )
@@ -1296,6 +1383,113 @@ var SITrailCore = ( function()
       return { trails: trails, sigma: sigma };
    }
 
+   // ------------------------------------------------------------------------
+   // Duplicate / fragment merging (binned coordinates)
+
+   // Collinear fragments of one trail are joined when their line agrees to
+   // MERGE_PERP_PX across (at both endpoints — a 0.2-degree residual drifts
+   // ~1 px per 300 px) and MERGE_ANGLE_DEG in direction, and the empty
+   // stretch between them is at most MERGE_GAP_FRAC of the image diagonal
+   // (~54 binned px at 1500x1000): a refinement residue or a flasher's dark
+   // dash is shorter than that, while successive train members are usually
+   // farther apart along the track and stay separate trails.
+   var MERGE_PERP_PX = 4;
+   var MERGE_ANGLE_DEG = 2;
+   var MERGE_GAP_FRAC = 0.03;
+
+   function trailAngleDiff( a, b )
+   {
+      var d = Math.abs( a - b ) % 180;
+      return ( d > 90 ) ? 180 - d : d;
+   }
+
+   function unionOfCollinear( a, b )
+   {
+      // One trail spanning both segments, on the longer one's line.
+      var dxA = a.x2 - a.x1, dyA = a.y2 - a.y1;
+      var lenA = Math.sqrt( dxA*dxA + dyA*dyA );
+      var ux = dxA/lenA, uy = dyA/lenA;
+      var ts = [ 0, lenA,
+                 ux*( b.x1 - a.x1 ) + uy*( b.y1 - a.y1 ),
+                 ux*( b.x2 - a.x1 ) + uy*( b.y2 - a.y1 ) ];
+      var lo = Math.min.apply( null, ts ), hi = Math.max.apply( null, ts );
+      var dxB = b.x2 - b.x1, dyB = b.y2 - b.y1;
+      var lenB = Math.sqrt( dxB*dxB + dyB*dyB );
+      var out = {
+         x1: a.x1 + ux*lo, y1: a.y1 + uy*lo,
+         x2: a.x1 + ux*hi, y2: a.y1 + uy*hi,
+         lengthPx: hi - lo,
+         angleDeg: normalizeAngleDeg( Math.atan2( uy, ux )*180/Math.PI ),
+         fill: ( a.fill*lenA + b.fill*lenB )/( lenA + lenB ),
+         score: Math.max( a.score, b.score )
+      };
+      if ( a.faint || b.faint )
+         out.faint = !!( a.faint && b.faint );
+      return out;
+   }
+
+   function mergeDuplicateTrails( trails, maxGap )
+   {
+      // Two kinds of pairs are ONE trail:
+      //  - near-parallel, near-collinear, OVERLAPPING segments (the bright and
+      //    faint passes both firing on one streak, or the faint pass
+      //    refinding the unerased shoulder of a wide one): keep the longest;
+      //  - COLLINEAR, non-overlapping fragments separated by at most maxGap
+      //    along the line: replace both by their union extent.
+      // Real close-formation pairs (NOSS) fly ~60+ binned px apart and are
+      // untouched.
+      if ( !( maxGap >= 0 ) )
+         maxGap = 0;
+      var list = trails.slice();
+      var merged = true;
+      while ( merged )
+      {
+         merged = false;
+         for ( var i = 0; i < list.length && !merged; ++i )
+            for ( var j = i + 1; j < list.length && !merged; ++j )
+            {
+               var a = list[i], b = list[j];
+               if ( trailAngleDiff( a.angleDeg, b.angleDeg ) > 3 )
+                  continue;
+               var dxA = a.x2 - a.x1, dyA = a.y2 - a.y1;
+               var lenA = Math.sqrt( dxA*dxA + dyA*dyA );
+               if ( lenA < 1 )
+                  continue;
+               var ux = dxA/lenA, uy = dyA/lenA;
+               var perp = Math.max( Math.abs( -uy*( b.x1 - a.x1 ) + ux*( b.y1 - a.y1 ) ),
+                                    Math.abs( -uy*( b.x2 - a.x1 ) + ux*( b.y2 - a.y1 ) ) );
+               var tB1 = ux*( b.x1 - a.x1 ) + uy*( b.y1 - a.y1 );
+               var tB2 = ux*( b.x2 - a.x1 ) + uy*( b.y2 - a.y1 );
+               var lo = Math.min( tB1, tB2 ), hi = Math.max( tB1, tB2 );
+               var lenB = hi - lo;
+               var overlap = Math.min( lenA, hi ) - Math.max( 0, lo );
+               var gap = -overlap;
+               var collinear = perp <= MERGE_PERP_PX &&
+                               trailAngleDiff( a.angleDeg, b.angleDeg ) <= MERGE_ANGLE_DEG &&
+                               gap <= maxGap;
+               if ( collinear )
+               {
+                  var longer = ( lenB > lenA ) ? b : a, shorter = ( lenB > lenA ) ? a : b;
+                  list.splice( j, 1 );
+                  list.splice( i, 1, unionOfCollinear( longer, shorter ) );
+                  merged = true;
+               }
+               else
+               {
+                  // midpoint offset, as before, for the overlap rule
+                  var mbx = ( b.x1 + b.x2 )/2 - a.x1, mby = ( b.y1 + b.y2 )/2 - a.y1;
+                  if ( Math.abs( -uy*mbx + ux*mby ) > 10 )
+                     continue;
+                  if ( overlap < 0.3*Math.min( lenA, lenB ) )
+                     continue;
+                  list.splice( ( lenB > lenA ) ? i : j, 1 );
+                  merged = true;
+               }
+            }
+      }
+      return list;
+   }
+
    function scaleSegment( seg, binFactor )
    {
       // Binned -> full-resolution pixels, centered on the binned cell.
@@ -1347,6 +1541,7 @@ var SITrailCore = ( function()
 
    return {
       DEFAULTS: DEFAULTS,
+      MERGE_GAP_FRAC: MERGE_GAP_FRAC,
       medianOf: medianOf,
       madOf: madOf,
       meanOf: meanOf,
@@ -1376,7 +1571,10 @@ var SITrailCore = ( function()
       suppressPeak: suppressPeak,
       bestRun: bestRun,
       lineRun: lineRun,
-      eraseCorridor: eraseCorridor,
+      eraseSegment: eraseSegment,
+      refineGrid: refineGrid,
+      refineBinaryLine: refineBinaryLine,
+      mergeDuplicateTrails: mergeDuplicateTrails,
       detectCore: detectCore,
       scaleSegment: scaleSegment,
       fwhmOfProfile: fwhmOfProfile
@@ -1517,87 +1715,6 @@ var SITrailDetect = ( function()
       return finishDetection( image, core, b.binFactor );
    }
 
-   function eraseSegmentBinned( data, width, height, seg, halfW )
-   {
-      // Zero every pixel within halfW of the segment (binned coordinates),
-      // bounding-box limited.
-      var x1 = seg.x1, y1 = seg.y1, x2 = seg.x2, y2 = seg.y2;
-      var dx = x2 - x1, dy = y2 - y1;
-      var len2 = dx*dx + dy*dy;
-      var x0 = Math.max( 0, Math.floor( Math.min( x1, x2 ) - halfW ) );
-      var xN = Math.min( width - 1, Math.ceil( Math.max( x1, x2 ) + halfW ) );
-      var y0 = Math.max( 0, Math.floor( Math.min( y1, y2 ) - halfW ) );
-      var yN = Math.min( height - 1, Math.ceil( Math.max( y1, y2 ) + halfW ) );
-      for ( var y = y0; y <= yN; ++y )
-      {
-         var row = y*width;
-         for ( var x = x0; x <= xN; ++x )
-         {
-            var t = ( len2 > 0 ) ? Math.max( 0, Math.min( 1, ( ( x - x1 )*dx + ( y - y1 )*dy )/len2 ) ) : 0;
-            var px = x1 + t*dx, py = y1 + t*dy;
-            var ddx = x - px, ddy = y - py;
-            if ( ddx*ddx + ddy*ddy <= halfW*halfW )
-               data[row + x] = 0;
-         }
-      }
-   }
-
-   function mergeDuplicateTrails( trails )
-   {
-      // The bright and faint passes can both fire on one streak (or the
-      // faint pass can refind the unerased shoulder of a wide one), a few
-      // pixels apart: near-parallel, near-collinear, overlapping segments
-      // are ONE trail — keep the longest. Real close-formation pairs (NOSS)
-      // fly ~60+ binned px apart and are untouched.
-      function angleDiff( a, b )
-      {
-         var d = Math.abs( a - b ) % 180;
-         return ( d > 90 ) ? 180 - d : d;
-      }
-      var keep = new Array( trails.length );
-      for ( var i = 0; i < trails.length; ++i )
-         keep[i] = true;
-      for ( var i = 0; i < trails.length; ++i )
-      {
-         if ( !keep[i] )
-            continue;
-         for ( var j = i + 1; j < trails.length; ++j )
-         {
-            if ( !keep[j] )
-               continue;
-            var a = trails[i], b = trails[j];
-            if ( angleDiff( a.angleDeg, b.angleDeg ) > 3 )
-               continue;
-            var dxA = a.x2 - a.x1, dyA = a.y2 - a.y1;
-            var lenA = Math.sqrt( dxA*dxA + dyA*dyA );
-            if ( lenA < 1 )
-               continue;
-            var ux = dxA/lenA, uy = dyA/lenA;
-            var mbx = ( b.x1 + b.x2 )/2 - a.x1, mby = ( b.y1 + b.y2 )/2 - a.y1;
-            var perp = Math.abs( -uy*mbx + ux*mby );
-            if ( perp > 10 )
-               continue;
-            // along-extent overlap of at least 30% of the shorter segment
-            var tB1 = ux*( b.x1 - a.x1 ) + uy*( b.y1 - a.y1 );
-            var tB2 = ux*( b.x2 - a.x1 ) + uy*( b.y2 - a.y1 );
-            var lo = Math.min( tB1, tB2 ), hi = Math.max( tB1, tB2 );
-            var lenB = hi - lo;
-            var overlap = Math.min( lenA, hi ) - Math.max( 0, lo );
-            if ( overlap < 0.3*Math.min( lenA, lenB ) )
-               continue;
-            if ( lenB > lenA )
-               keep[i] = false;
-            else
-               keep[j] = false;
-         }
-      }
-      var out = [];
-      for ( var k = 0; k < trails.length; ++k )
-         if ( keep[k] )
-            out.push( trails[k] );
-      return out;
-   }
-
    function detectDiff( image, binnedSelf, model, params, mask )
    {
       // Transient detection: subtract the static-sky model (per-pixel median
@@ -1633,13 +1750,14 @@ var SITrailDetect = ( function()
 
       tP = Date.now();
       for ( var i = 0; i < core.trails.length; ++i )
-         eraseSegmentBinned( diff, binnedSelf.width, binnedSelf.height, core.trails[i], 5 );
+         SITrailCore.eraseSegment( diff, binnedSelf.width, binnedSelf.height, core.trails[i], 5 );
       processEvents();
       var faint = SITrailCore.detectFaintCore( diff, binnedSelf.width, binnedSelf.height, params );
       if ( prof ) prof.faintMs = ( prof.faintMs || 0 ) + ( Date.now() - tP );
       for ( var f = 0; f < faint.trails.length; ++f )
          core.trails.push( faint.trails[f] );
-      core.trails = mergeDuplicateTrails( core.trails );
+      var diagB = Math.sqrt( binnedSelf.width*binnedSelf.width + binnedSelf.height*binnedSelf.height );
+      core.trails = SITrailCore.mergeDuplicateTrails( core.trails, SITrailCore.MERGE_GAP_FRAC*diagB );
 
       tP = Date.now();
       var out = finishDetection( image, core, binnedSelf.binFactor );

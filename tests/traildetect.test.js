@@ -316,3 +316,72 @@ console.log("traildetect: clamped-residual noise override OK");
 }
 
 console.log("traildetect: high-pass flattening OK");
+
+// ---------------------------------------------------------------------------
+// Bright-pass angular refinement: an edge-to-edge trail at a non-integer
+// angle used to come back as 2-3 collinear fragments (1-degree Hough bins,
+// 1-px walk tolerance); it must be ONE trail with true endpoints.
+
+{
+   const W = 1500, H = 1000;
+   let s0 = 123456789, s1 = 362436069, s2 = 521288629, s3 = 88675123;
+   const rnd = () => { let tt = s0^(s0<<11); s0=s1; s1=s2; s2=s3; s3=(s3^(s3>>>19))^(tt^(tt>>>8)); return (s3>>>0)/4294967296; };
+   const gauss = () => { let s = 0; for (let i = 0; i < 12; i++) s += rnd(); return s - 6; };
+   for (const ang of [30.5, 37.3, 0.5, 120.2]) {
+      const a = new Float32Array(W*H);
+      for (let i = 0; i < a.length; i++) a[i] = 100 + 10*gauss();
+      // 1-px edge-to-edge line through the centre, S/N 25
+      const th = ang*Math.PI/180, ux = Math.cos(th), uy = Math.sin(th);
+      const cx = W/2, cy = H/2;
+      let tmin = -1e9, tmax = 1e9;
+      if (Math.abs(ux) > 1e-9) { const t1 = (0 - cx)/ux, t2 = (W - 1 - cx)/ux; tmin = Math.max(tmin, Math.min(t1, t2)); tmax = Math.min(tmax, Math.max(t1, t2)); }
+      if (Math.abs(uy) > 1e-9) { const t1 = (0 - cy)/uy, t2 = (H - 1 - cy)/uy; tmin = Math.max(tmin, Math.min(t1, t2)); tmax = Math.min(tmax, Math.max(t1, t2)); }
+      for (let t = tmin; t <= tmax; t += 0.5)
+         a[Math.round(cy + uy*t)*W + Math.round(cx + ux*t)] = 350;
+      const res = T.detectCore(a, W, H, PARAMS);
+      assert.strictEqual(res.trails.length, 1,
+         `${ang} deg: expected one trail, got ${res.trails.map(t => Math.round(t.lengthPx))}`);
+      const t = res.trails[0];
+      const err = endpointError(t, cx + ux*tmin, cy + uy*tmin, cx + ux*tmax, cy + uy*tmax);
+      assert.ok(err <= 4, `${ang} deg: endpoints off by ${err.toFixed(2)} px (limit 4)`);
+      assert.ok(angleDiff(t.angleDeg, ang) <= 0.3, `${ang} deg: angle ${t.angleDeg.toFixed(2)}`);
+   }
+}
+
+console.log("traildetect: bright-pass angular refinement OK");
+
+// ---------------------------------------------------------------------------
+// mergeDuplicateTrails: collinear fragments join into the union extent,
+// overlapping near-duplicates keep the longest, distant collinear segments
+// (train members) and parallel pairs stay separate.
+
+{
+   const seg = (x1, y1, x2, y2, extra) => Object.assign({
+      x1, y1, x2, y2, lengthPx: Math.hypot(x2 - x1, y2 - y1),
+      angleDeg: ((Math.atan2(y2 - y1, x2 - x1)*180/Math.PI) + 180) % 180,
+      fill: 1, score: 0.5 }, extra || {});
+   // two fragments of one horizontal trail, 5-px gap, 1 px across
+   let out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(205, 101, 400, 101)], 20);
+   assert.strictEqual(out.length, 1, "collinear fragments merge");
+   assert.ok(Math.abs(out[0].lengthPx - 400) < 1.5, `union length ${out[0].lengthPx}`);
+   assert.ok(Math.min(out[0].x1, out[0].x2) < 0.5 && Math.max(out[0].x1, out[0].x2) > 399.5, "union extent");
+   // three fragments chain into one
+   out = T.mergeDuplicateTrails([seg(0, 50, 100, 50), seg(210, 50, 300, 50), seg(104, 50, 205, 50)], 20);
+   assert.strictEqual(out.length, 1, "fragment chain merges");
+   // gap beyond the bound: separate trails (a train)
+   out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(260, 100, 400, 100)], 20);
+   assert.strictEqual(out.length, 2, "distant collinear segments stay separate");
+   // parallel, 8 px apart, overlapping: near-duplicate, keep the longest
+   out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(50, 108, 300, 108)], 20);
+   assert.strictEqual(out.length, 1, "overlapping near-duplicates collapse");
+   assert.ok(Math.abs(out[0].lengthPx - 250) < 1e-9, "the longest survives");
+   // parallel, 30 px apart: a real pair
+   out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(0, 130, 200, 130)], 20);
+   assert.strictEqual(out.length, 2, "a real parallel pair is untouched");
+   // a bright fragment joined to a faint one is not flagged faint
+   out = T.mergeDuplicateTrails([seg(0, 100, 200, 100), seg(203, 100, 400, 100, { faint: true })], 20);
+   assert.strictEqual(out.length, 1);
+   assert.strictEqual(out[0].faint, false, "bright+faint union is not faint");
+}
+
+console.log("traildetect: duplicate / fragment merge OK");

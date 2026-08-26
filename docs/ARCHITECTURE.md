@@ -98,9 +98,18 @@ as a faint streak — so the static sky is removed first:
 5. **Contiguity validation** (kills star-alignment false positives): a candidate
    line must have a contiguous above-threshold run ≥ minLength with ≥60% fill;
    stars along a chance line are sparse, trails are continuous.
-6. Accept → record endpoints (scaled back to full-res pixels), erase a corridor
-   around the line and iterate (multi-trail, cap 10).
-7. Photometry at full res: flux sampled along the segment, perpendicular FWHM
+6. Each Hough peak is refined to sub-degree / sub-pixel (θ, ρ) about a point
+   on the coarse line before the walk, so an edge-to-edge trail at a
+   non-integer angle stays one run instead of 2–3 fragments (1° bins drift
+   ~13 px across a 1500-px frame).
+7. Accept → record endpoints (scaled back to full-res pixels), erase a corridor
+   around the accepted **segment only** (other collinear runs — train
+   members, flasher dashes — are re-proposed) and iterate (multi-trail, cap 10).
+8. Merge: overlapping near-duplicates (bright and faint pass on one streak)
+   keep the longest; collinear fragments within 4 binned px across, 2° in
+   direction and a gap ≤ 3 % of the diagonal become one trail with the union
+   extent. Farther collinear segments stay separate trails.
+9. Photometry at full res: flux sampled along the segment, perpendicular FWHM
    width, brightness-variation index (meteor cue).
 
 ## Matching contracts (internal JS interfaces)

@@ -26,6 +26,16 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Night trails: a bright trail at a non-integer angle is no longer reported
+  as 2–3 collinear fragments. The binary Hough pass now refines each peak to
+  sub-degree / sub-pixel geometry the way the faint pass already did (shared
+  helper; the search pivots on a point of the line, which also makes the
+  faint-pass refinement effective far from the image origin), erases only
+  the accepted segment instead of the whole line (collinear train members
+  and flasher dashes are no longer swallowed), and the merge step joins
+  collinear fragments separated by at most 3 % of the diagonal into one
+  trail with the union extent. A crossing trail is now returned at full
+  length instead of the half beyond the crossing. Fixes #14.
 - `tests/treasure.test.js`: the "no external asset URLs" check was written
   as `A && B || C`, which the credit link made vacuously true; it now lists
   every `http(s)` URL in the report and requires all of them to be the
