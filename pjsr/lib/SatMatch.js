@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * SatMatch.js — SISatMatch: pure-JS orbital matching engine.
  *

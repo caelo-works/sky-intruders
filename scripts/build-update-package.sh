@@ -40,6 +40,9 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 # 1) entry script — stamp the build
 sed -e "s/__BUILD__/${VERSION}/g" "$REPO/pjsr/$NAME.js" > "$DST/$NAME.js"
 
+# 1b) licence text ships next to the entry script (GPL-3.0 — sources carry SPDX headers)
+cp "$REPO/LICENSE" "$DST/LICENSE"
+
 # 2) optional lib/, assets/ (flags etc.) and bin/ (per-OS helper binaries)
 [ -d "$REPO/pjsr/lib" ] && { mkdir -p "$DST/lib"; cp -R "$REPO"/pjsr/lib/. "$DST/lib/"; }
 [ -d "$REPO/pjsr/assets" ] && { mkdir -p "$DST/assets"; cp -R "$REPO"/pjsr/assets/. "$DST/assets/"; }

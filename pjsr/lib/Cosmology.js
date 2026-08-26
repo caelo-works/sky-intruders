@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * Cosmology.js — SICosmology: redshift to lookback time, light-travel
  * distance and comoving distance for a flat LambdaCDM universe.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * Report.js — the night log: chronology, fun stats, personal records and a
  * Reddit-ready markdown post.

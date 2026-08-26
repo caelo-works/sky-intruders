@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * Stats.js — SIStats: robust statistics for Sky Intruders.
  *

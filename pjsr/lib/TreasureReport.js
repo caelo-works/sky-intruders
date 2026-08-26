@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * TreasureReport.js — SITreasureReport: standalone illustrated HTML for the
  * Treasure Hunt. Pure string assembly (Node-testable). Everything is inlined

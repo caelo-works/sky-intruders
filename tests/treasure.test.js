@@ -109,8 +109,11 @@ var WIDTH = 200, HEIGHT = 200;
    assert( html.indexOf( "<!doctype html>" ) === 0, "is an HTML document" );
    assert( html.indexOf( "data:image/png;base64," + png ) >= 0, "embeds PNG as data URI" );
    assert( html.indexOf( "<style>" ) >= 0 && html.indexOf( "</style>" ) >= 0, "inline CSS present" );
-   assert( html.indexOf( "http://" ) < 0 && html.indexOf( "https://" ) < 0 ||
-           html.indexOf( "caelo.works" ) >= 0, "no external asset URLs (only the credit text)" );
+   // Every http(s) URL in the document must be the caelo.works credit link:
+   // no external stylesheets, scripts, fonts or images.
+   var urls = html.match( /https?:\/\/[^\s"'<>)]+/g ) || [];
+   var foreign = urls.filter( function( u ) { return u.indexOf( "caelo.works" ) < 0; } );
+   assert.deepStrictEqual( foreign, [], "no external asset URLs (only the credit text)" );
    assert( html.indexOf( "4-pixel smudge is the quasar 3C 273" ) >= 0, "narrative rendered" );
    assert( html.indexOf( "3C 273 field" ) >= 0, "field descriptor rendered" );
    assert( html.indexOf( "captured without knowing" ) >= 0, "summary headline rendered" );

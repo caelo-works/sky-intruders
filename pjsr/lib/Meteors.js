@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * Meteors.js — meteor-shower heuristics for trails the TLE match left over.
  *

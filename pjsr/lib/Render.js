@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * Render.js — SIRender: the shared PixInsight rendering library for the
  * Treasure Hunt mode (and any future consumer).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * FrameMeta.js — SIFrameMeta: per-frame FITS/XISF metadata and WCS.
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * Catalogs.js — SICatalogs: cone-search URL builders and response parsers
  * for the Treasure Hunt deep catalogs, plus a PixInsight query layer over
