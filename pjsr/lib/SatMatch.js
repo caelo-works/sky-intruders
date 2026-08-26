@@ -12,6 +12,8 @@
  * verbatim from the Go engine (docs/ARCHITECTURE.md, matching contracts):
  * match() returns either a full response with error: null, or a bare
  * { error: "..." } object; it never throws on bad catalog or request data.
+ * One addition: per-frame failures land in the response's errors[] array
+ * (frame + message) while the remaining frames are still matched.
  *
  * Two deliberate departures from the Go reference (its simplifications
  * stacked up to ~0.35-0.9 deg of cross-track error, larger than the
@@ -1128,6 +1130,8 @@ var SISatMatch = ( function()
 
    function matchFrame( fr, obs, opt, sats )
    {
+      if ( !fr )
+         return { error: "missing frame" };
       var startMs = parseRfc3339Ms( fr.startUtc );
       if ( startMs === null )
          return { error: "bad startUtc " + JSON.stringify( fr.startUtc ) };
@@ -1159,6 +1163,10 @@ var SISatMatch = ( function()
       // Entry point: same contract as the Go sidecar's match command.
       // Returns a response object with error: null on success, or a bare
       // { error: "..." } on failure — it never throws on bad data.
+      // Per-frame failures (a corrupt header, a propagation exception) are
+      // collected in errors: [{ frame, message }] and the frame is left out
+      // of frames[]; the other frames are still matched, so one bad frame
+      // never turns a whole night into a silent "nothing identified".
       var tles = parseTles( tleText );
       if ( tles.length === 0 )
          return { error: "match: catalog contains no valid TLE records" };
@@ -1173,13 +1181,27 @@ var SISatMatch = ( function()
       var res = {
          tle: { count: tles.length, source: ( source === undefined || source === null ) ? "" : String( source ) },
          frames: [],
+         errors: [],
          error: null
       };
       for ( var f = 0; f < request.frames.length; ++f )
       {
-         var fres = matchFrame( request.frames[f], request.observer, opt, sats );
+         var fr = request.frames[f];
+         var frameId = ( fr && fr.id !== undefined ) ? fr.id : ( "#" + f );
+         var fres;
+         try
+         {
+            fres = matchFrame( fr, request.observer, opt, sats );
+         }
+         catch ( e )
+         {
+            fres = { error: String( ( e && e.message ) ? e.message : e ) };
+         }
          if ( fres.error )
-            return { error: "match: frame " + JSON.stringify( request.frames[f].id ) + ": " + fres.error };
+         {
+            res.errors.push( { frame: frameId, message: fres.error } );
+            continue;
+         }
          res.frames.push( fres );
       }
       return res;

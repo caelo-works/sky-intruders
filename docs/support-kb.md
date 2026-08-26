@@ -550,6 +550,25 @@ The user will copy-paste. These are the messages, word for word.
   satellite names; crossers are reported as predictions only."* — no plate solve,
   and the fallback fit could not be trusted. **Nothing gets named.** Fix:
   plate-solve at least the first frame in the list.
+- *"plate-solved reference could not be re-opened (…) — falling back to the
+  field-orientation fit"* — the first frame IS solved, but its registered copy
+  could not be opened again after detection (disk full, file locked, temp folder
+  cleaned). The run continues on the header-based orientation fit; the fit line
+  then ends with *"(plate solve unavailable — orientation fit used instead)"*.
+  Names are still trustworthy when the fit locks (3+ pairs). Fix: free disk
+  space / close whatever holds the temp folder, re-run. 0.2.1 and earlier stay
+  silent here and name nothing.
+- *"frame <name>: EXPTIME is 0 — no exposure window, skipped for satellite
+  identification"* — that frame's exposure header is zero or missing a value.
+  Its trails are detected but cannot be named; the other frames are unaffected.
+  Fix the header in that frame.
+- *"frame <name>: satellite matching failed — …"* — one frame's headers broke
+  the matcher (bad date, bad exposure). Only that frame loses its names; the
+  rest of the night is matched. On 0.2.1 and earlier a single such frame
+  silently emptied the whole night's identifications.
+- *"satellite matching failed — …"* (no frame name) — the whole match was
+  refused: no valid orbital elements in the catalog, or no observer/frames in
+  the request. Nothing is named.
 - *"no frame could be analyzed"* — fatal; nothing could be opened at all.
 
 ### 7.3 Console messages, Treasure Hunt
@@ -691,6 +710,7 @@ files.
 | "It found no trails at all" | Fewer than 3 frames, or fewer than 3 **per filter** | Difference detection needs at least 3 frames of the same filter. Check the console for *"filter group … has only N frame(s)"*. |
 | "Trails are found but nothing is identified" | **No observer site** — by far the most common | The frames need site headers (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), or the user fills Lat/Lon in the Night trails tab. Without a site, identification is switched off entirely. |
 | "Still nothing is identified, and my site is filled in" | No plate solve, and the orientation fallback gave up (fewer than 3 matching trails) | Plate-solve at least the **first** frame in the list. |
+| "Nothing is identified since one of my frames has a broken header" | On **0.2.1 or older**, one frame with a bad `DATE-OBS`/`EXPTIME` silently aborted the whole night's matching | Update the script: the bad frame is now reported (*"frame … : satellite matching failed"* / *"EXPTIME is 0"*) and the other frames are named. Then fix or drop that frame. |
 | "The satellite names look wrong" | Stale orbital elements, or a wrong longitude sign | Look for **`(STALE — network unreachable)`** in the console; if present, delete the `tle` folder in `.caeloworks/sky-intruders` and re-run. Then check the longitude sign. |
 | "It says 'unidentified satellite' / orange trail" | No catalog match — a fresh launch, a classified object, or debris | **This is a correct, honest answer, not a failure.** The script refuses to guess a name it cannot support. |
 | "Treasure Hunt says my image has no WCS, but I solved it" | The solve is not on the image the script opened | With an empty input list the script uses the **active window**. Make sure the solved image is the one being read. A WBPP master is normally already solved. |
