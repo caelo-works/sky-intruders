@@ -116,4 +116,15 @@ assert.strictEqual(C.approxFov(300, 45, null, 100, 100), null, "approx needs a s
 close(C.pixScaleFromKeywords(3.76, 250), 206.265 * 3.76 / 250, 1e-12, "plate scale");
 assert.strictEqual(C.pixScaleFromKeywords(null, 250), null);
 
-console.log("framemeta: sexagesimal, DATE-OBS, TAN projection and FOV OK");
+// --- Frame identity ----------------------------------------------------------
+// Index-based tag, zero-padded to three digits (wider only past 1000 frames),
+// prefixed to the base name: two Light_001.fits from two folders stay apart.
+assert.strictEqual(C.frameTag(0, 12), "000");
+assert.strictEqual(C.frameTag(7, 12), "007");
+assert.strictEqual(C.frameTag(999, 1000), "999");
+assert.strictEqual(C.frameTag(1000, 1001), "1000");
+assert.strictEqual(C.frameTag(3, 2000), "0003");
+assert.strictEqual(C.frameId(4, 12, "Light_001.fits"), "004_Light_001.fits");
+assert.notStrictEqual(C.frameId(4, 12, "Light_001.fits"), C.frameId(5, 12, "Light_001.fits"));
+
+console.log("framemeta: sexagesimal, DATE-OBS, TAN projection, FOV and frame identity OK");

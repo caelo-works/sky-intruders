@@ -22,6 +22,19 @@ golden night logs; harness time 32 s → 19 s.
 
 ### Changed
 
+- Structural refactor, no behaviour change: the spherical geometry every
+  library carried a copy of (great-circle separation, position angle, TAN
+  projection, sexagesimal parser) now lives once in `pjsr/lib/Geom.js`
+  (`SIGeom`), the median/MAD copies delegate to `SIStats`, the two
+  `pause()` and the second HTTP getter collapse into `SINet`;
+  `assignTrails` / `assignTrailsLoose` are one `assignTrailsCore` with
+  named rescue thresholds (values unchanged, both modes pinned bit-for-bit
+  on a generated snapshot); `detectDiff` no longer writes to the caller's
+  params; the satellite label/flag/nature formatting
+  (`pjsr/lib/SatLabels.js`), the TLE group merge
+  (`SITleNet.fetchMergedTleText`) and the night event assembly
+  (`pjsr/lib/NightEvents.js`) moved out of `runAnalysis` into Node-testable
+  libraries. Fixes #19.
 - The Release workflow now runs the Node test harness before building and
   refuses to publish on a red run; the harness also syntax-checks the
   unbundled PJSR files (entry script, `Render.js`) and bundles `Net.js` with
@@ -37,9 +50,69 @@ golden night logs; harness time 32 s → 19 s.
   (0.5 and 3 arcsec/min) into the real storm pool instead of four, cutting
   the harness run time by roughly half while keeping the zero-candidate
   storm pin and the drift-artifact family test.
+- Documentation: `docs/ARCHITECTURE.md` rewritten against the code — the
+  full module map (Geom, SatLabels, NightEvents, Render, Cosmology, Catalogs,
+  Treasure, TreasureReport, the vendored satellite.js) with include order,
+  the Node harness and the PixInsight-side scripts and gates, the actual
+  defaults (`diffKSigma` 4.5, the per-filter sky model, the two-pass detector
+  and its faint-pass constants, the width veto, the photometry formula), the
+  observer/TLE/WGS84/TEME→J2000 chain, the start/mid/end coarse gate, the
+  per-sample sunlit test, the strict/loose assigners with their named
+  constants and the cross/along gate (the old midpoint-separation score is
+  gone), the slow-mover gates, the persistent files and window names.
+  `docs/TREASURE-HUNT.md` now documents the `-sort` columns, the VizieR body
+  gate, the SkyBoT `Flag` handling, the `null`-vs-`[]` contract, the cache
+  key versions and the capture scoring. `docs/RELEASING.md` gains explicit
+  gates: harness green, the headless construct/selftest runs, a same-day
+  replay of the previous tag on the reference night (TLE age changes the
+  identities), and the doc re-read against the code. Fixes #20.
 
 ### Fixed
 
+- Satellite matching no longer loses a satellite that enters or leaves the
+  Earth's shadow inside the field. The sunlit test used to run once, at the
+  crossing midpoint: when more than half of the pass was eclipsed the crossing
+  was rejected as a candidate, and the streak that fades out mid-frame — the
+  textbook shadow-entry trail — went to the meteor heuristic, sometimes with a
+  shower name attached. The flag is now evaluated at every fine sample, the
+  transition instant is refined by bisection between samples, and the trail is
+  matched on the lit sub-path (`path`, rate, range and elevation describe that
+  sub-path; `sunlitFraction`, `shadowEntryUtc` and `shadowExitUtc` are new
+  response fields). The night log then reads "entered Earth's shadow at
+  HH:MM:SS UT" / "left Earth's shadow at …" (FR "entré dans l'ombre de la
+  Terre à …" / "sorti de l'ombre de la Terre à …"), and the composite label
+  carries "into shadow …" / "out of shadow …". A crossing lit at no sample is
+  still listed as eclipsed and never matched. In the same pass the
+  orientation gate now compares position angles measured at the segment
+  midpoints instead of at one endpoint, which removed a ~6° spurious
+  misalignment at δ = 80° that depended on which end the detector labelled
+  first. Fixes #16.
+- Night trails: a bright trail at a non-integer angle is no longer reported
+  as 2–3 collinear fragments. The binary Hough pass now refines each peak to
+  sub-degree / sub-pixel geometry the way the faint pass already did (shared
+  helper; the search pivots on a point of the line, which also makes the
+  faint-pass refinement effective far from the image origin), erases only
+  the accepted segment instead of the whole line (collinear train members
+  and flasher dashes are no longer swallowed), and the merge step joins
+  collinear fragments separated by at most 3 % of the diagonal into one
+  trail with the union extent. A crossing trail is now returned at full
+  length instead of the half beyond the crossing. Fixes #14.
+- Night trails: a faint trail whose refined line sat half a pixel off its
+  ridge is no longer vetoed as noise. The faint pass fits the line on a
+  3-px corridor, which is flat to ±0.5 px across a thin trail, while the
+  emptiness veto reads one pixel per step; the line is now re-centred on the
+  1-px ridge before that test (a 24-σ edge-to-edge streak on the reference
+  night read as 39 % empty at the fitted line and 21 % half a pixel away).
+- Night trails: the 12-px width veto now works. The perpendicular profile
+  used to hold 7 samples, so the measured FWHM could never exceed 6 px and
+  the veto never fired; it now spans ±16 px with a robust background from
+  the outer annulus (each side separately), reports `widthPx = null` when
+  no half-max crossing exists inside the window, and the veto drops both
+  cases (`WIDTH_VETO_PX`). Photometry moved into `SITrailCore.measureTrail`
+  and subtracts a per-station local background before `meanFluxAdu` and
+  `brightnessVariation`; the variation is floored at 6 × the per-sample
+  noise so a trail invisible at full resolution no longer fires the 0.35
+  flasher/meteor cue. Fixes #15.
 - `tests/treasure.test.js`: the "no external asset URLs" check was written
   as `A && B || C`, which the credit link made vacuously true; it now lists
   every `http(s)` URL in the report and requires all of them to be the
@@ -90,6 +163,21 @@ golden night logs; harness time 32 s → 19 s.
   `si-frame-annotated-<token>-<n>.png`) so concurrent PixInsight instances do
   not collide. Fixes #6.
 
+- Asteroid candidates: the shared-velocity veto no longer discards real
+  asteroid families. Main-belt asteroids in one ecliptic field near
+  opposition move in step (a few tenths of an arcsec/min, within ~10 % of
+  each other), and the previous rule — any 3 tracks within 25 % of one
+  velocity are a registration-drift artifact family — reported none of them.
+  A family is now vetoed on sensor evidence: when the blobs carry sensor
+  pixel coordinates (single-frame path), 3+ co-moving tracks are dropped only
+  if every member stays within 2 px of one sensor position; without pixels
+  (registered path, whose reference-grid pixels only restate the sky) the
+  blind rule requires 5+ tracks within max(0.2 arcsec/min, 8 % of the rate).
+  The Node harness injects three synthetic asteroids at ~0.4 arcsec/min into
+  the real storm pool (all three reported, with and without pixels), keeps
+  the storm pinned at zero and the drift-artifact family vetoed in both
+  branches, and checks that a pixel-stationary trio is still rejected. Fixes
+  #17.
 - The "Detection threshold (σ)" slider now drives the threshold a normal night
   run actually uses (`diffKSigma`, on the registered difference image; default
   4.5, range 2.5–8) instead of the single-frame fallback value it silently
@@ -112,6 +200,20 @@ golden night logs; harness time 32 s → 19 s.
   as a banner in the report window, in both languages, not only in the
   console; the console also prints the site that was used and where it came
   from. Fixes #9.
+
+- Frames are identified by their position in the input list plus their file
+  name (`NNN_<name>`) instead of the file name alone, so a night assembled
+  from several capture folders that reuse `Light_001.fits` no longer merges
+  two frames' satellite crossings, mover tracks or overlays into one.
+  Registered copies in the scratch folder are named `NNN_<name>_r.xisf`
+  (StarAlignment runs in as many batches as the largest name multiplicity,
+  one in the usual case), the per-frame debug overlays carry the same tag,
+  and the input list warns on duplicate file names in both languages. The
+  night log and console still show the plain file name. The single-frame
+  fallback no longer runs StarDetector on unsolved frames whose sources
+  could never be projected, and the pass-A profiler timer and GUI yield now
+  run on every skip path (a "geometry mismatch" drop is counted in the
+  fallback warning). Fixes #18.
 
 ## [0.2.1] - 2026-08-17
 

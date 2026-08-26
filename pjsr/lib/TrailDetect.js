@@ -27,25 +27,17 @@ var SITrailCore = ( function()
    };
 
    // ------------------------------------------------------------------------
-   // Array statistics (local so the core stays self-contained under Node)
+   // Array statistics (SIStats; short local names for the many call sites)
 
    function medianOf( arr )
    {
-      if ( arr.length === 0 )
-         return 0;
-      var s = Array.prototype.slice.call( arr ).sort( function( a, b ) { return a - b; } );
-      var mid = Math.floor( s.length/2 );
-      return ( s.length % 2 !== 0 ) ? s[mid] : ( s[mid - 1] + s[mid] )/2;
+      return SIStats.arrayMedian( arr );
    }
 
    function madOf( arr )
    {
-      // Sigma-equivalent MAD (x1.4826), like SIStats.arrayMAD.
-      var med = medianOf( arr );
-      var dev = [];
-      for ( var i = 0; i < arr.length; ++i )
-         dev.push( Math.abs( arr[i] - med ) );
-      return medianOf( dev )*1.4826;
+      // Sigma-equivalent MAD (x1.4826).
+      return SIStats.arrayMAD( arr );
    }
 
    function meanOf( arr )
@@ -285,19 +277,100 @@ var SITrailCore = ( function()
                length: run.length, hitCount: run.hitCount, fill: run.fill };
    }
 
-   function eraseCorridor( map, width, height, thetaDeg, rho, halfWidth )
+   function eraseSegment( data, width, height, seg, halfW )
    {
-      // Zero every pixel within halfWidth of the accepted line so the next
-      // iteration finds the next trail instead of the same one.
-      var th = thetaDeg*Math.PI/180;
-      var ct = Math.cos( th ), st = Math.sin( th );
-      for ( var y = 0; y < height; ++y )
+      // Zero every pixel within halfW of the SEGMENT (not the whole line),
+      // bounding-box limited. Erasing the full line would silently swallow
+      // the other collinear runs — the following members of a train, the
+      // next dash of a flasher — before they could be proposed.
+      var x1 = seg.x1, y1 = seg.y1, x2 = seg.x2, y2 = seg.y2;
+      var dx = x2 - x1, dy = y2 - y1;
+      var len2 = dx*dx + dy*dy;
+      var x0 = Math.max( 0, Math.floor( Math.min( x1, x2 ) - halfW ) );
+      var xN = Math.min( width - 1, Math.ceil( Math.max( x1, x2 ) + halfW ) );
+      var y0 = Math.max( 0, Math.floor( Math.min( y1, y2 ) - halfW ) );
+      var yN = Math.min( height - 1, Math.ceil( Math.max( y1, y2 ) + halfW ) );
+      for ( var y = y0; y <= yN; ++y )
       {
          var row = y*width;
-         for ( var x = 0; x < width; ++x )
-            if ( map[row + x] && Math.abs( x*ct + y*st - rho ) <= halfWidth )
-               map[row + x] = 0;
+         for ( var x = x0; x <= xN; ++x )
+         {
+            var t = ( len2 > 0 ) ? Math.max( 0, Math.min( 1, ( ( x - x1 )*dx + ( y - y1 )*dy )/len2 ) ) : 0;
+            var px = x1 + t*dx, py = y1 + t*dy;
+            var ddx = x - px, ddy = y - py;
+            if ( ddx*ddx + ddy*ddy <= halfW*halfW )
+               data[row + x] = 0;
+         }
       }
+   }
+
+   function linePivot( width, height, thetaDeg, rho )
+   {
+      // In-image midpoint of the line rho = x*cos + y*sin, or null.
+      var ext = lineExtent( width, height, thetaDeg, rho );
+      if ( ext === null )
+         return null;
+      var tm = ( ext.t0 + ext.t1 )/2;
+      return { x: rho*ext.ct - tm*ext.st, y: rho*ext.st + tm*ext.ct };
+   }
+
+   function refineGrid( thetaDeg, pivot, dTheta, thetaStep, dRho, rhoStep, evaluate )
+   {
+      // Shared sub-degree / sub-pixel search around a coarse Hough peak.
+      // The candidate lines ROTATE ABOUT `pivot` (a point on the coarse
+      // line): rho is measured from the image origin, so tilting the line by
+      // d(theta) shifts its rho by t*d(theta) at a point t along it — up to
+      // ~28 px over a 0.9-degree tilt at the far end of a 1500-px frame —
+      // and a grid in (theta, rho) about the origin would sample lines that
+      // never cross the trail. evaluate( theta, rho ) returns { score, ... }
+      // or null; the highest score wins. Both passes use it — the faint
+      // pass scores the corridor integral, the bright pass the contiguous
+      // hit count on the binary map.
+      var best = null;
+      for ( var dt = -dTheta; dt <= dTheta + 1e-9; dt += thetaStep )
+      {
+         var t = thetaDeg + dt;
+         var th = t*Math.PI/180;
+         var base = pivot.x*Math.cos( th ) + pivot.y*Math.sin( th );
+         for ( var dr = -dRho; dr <= dRho + 1e-9; dr += rhoStep )
+         {
+            var r = evaluate( t, base + dr );
+            if ( r !== null && ( best === null || r.score > best.score ) )
+               best = r;
+         }
+      }
+      return best;
+   }
+
+   function refineBinaryLine( map, width, height, thetaDeg, rho, perpTol, gapTol )
+   {
+      // Bright-pass refinement. At 1-degree theta resolution an edge-to-edge
+      // trail at a non-integer angle drifts by L*sin(0.5 deg) (~13 px over
+      // 1500 px) across a line walked with perpTol = 1: the best run is a
+      // central chunk and the rest comes back as separate fragments. Two
+      // grids: the faint pass's coarse one about the midpoint of the coarse
+      // run, then a fine one about the midpoint of the coarse-refined run
+      // (residual < 0.02 deg -> < 0.5 px drift over a 1730-px diagonal).
+      function evalRun( t, r )
+      {
+         var run = lineRun( map, width, height, t, r, perpTol, gapTol );
+         if ( run === null )
+            return null;
+         return { thetaDeg: t, rho: r, run: run, score: run.hitCount };
+      }
+      function midpoint( run )
+      {
+         return { x: ( run.x1 + run.x2 )/2, y: ( run.y1 + run.y2 )/2 };
+      }
+      var first = evalRun( thetaDeg, rho );
+      var pivot = ( first !== null ) ? midpoint( first.run ) : linePivot( width, height, thetaDeg, rho );
+      if ( pivot === null )
+         return null;
+      var coarse = refineGrid( thetaDeg, pivot, 0.9, 0.15, 3, 0.5, evalRun );
+      if ( coarse === null )
+         return first;
+      var fine = refineGrid( coarse.thetaDeg, midpoint( coarse.run ), 0.15, 0.03, 0.5, 0.125, evalRun );
+      return ( fine !== null && fine.score >= coarse.score ) ? fine : coarse;
    }
 
    function segmentCorridorSum( data, width, height, seg, halfW )
@@ -459,11 +532,16 @@ var SITrailCore = ( function()
             var peak = findPeak( hough );
             if ( peak === null || peak.count < peakMin )
                break;
-            var run = lineRun( map, width, height, peak.thetaDeg, peak.rho, p.perpTol, p.gapTol );
+            // The peak is at bin resolution; walk the refined line, not the
+            // bin centre (see refineBinaryLine). `peak` stays integer for
+            // suppressPeak.
+            var refined = refineBinaryLine( map, width, height, peak.thetaDeg, peak.rho,
+                                            p.perpTol, p.gapTol );
+            var run = ( refined !== null ) ? refined.run : null;
             if ( run !== null && run.length >= minLen && run.fill >= p.fillRatioMin &&
                  ( acceptSeg === undefined || acceptSeg( run ) ) )
             {
-               accepted = { run: run, thetaDeg: peak.thetaDeg, rho: peak.rho };
+               accepted = { run: run, thetaDeg: refined.thetaDeg, rho: refined.rho };
                break;
             }
             suppressPeak( hough, peak.thetaDeg, peak.rho, 2, 3 );
@@ -483,11 +561,14 @@ var SITrailCore = ( function()
             score: seg.fill*Math.min( 1, 2*seg.length/diag )
          } );
 
-         eraseCorridor( map, width, height, accepted.thetaDeg, accepted.rho, p.corridorHalfWidth );
+         // Only the accepted run is erased: other collinear runs (train
+         // members, flasher dashes) are re-proposed by the next iteration
+         // and joined by mergeDuplicateTrails when they belong together.
+         eraseSegment( map, width, height, seg, p.corridorHalfWidth );
       }
 
       return {
-         trails: trails,
+         trails: mergeDuplicateTrails( trails, MERGE_GAP_FRAC*diag ),
          stats: { median: mm.median, mad: mm.mad,
                   threshold: at.threshold, aboveFrac: at.aboveFrac, kUsed: at.kUsed }
       };
@@ -967,19 +1048,44 @@ var SITrailCore = ( function()
       // spans several rho bins), while a noise peak does not refine
       // coherently. Returns the best refined line and its significance over
       // a 3-wide corridor.
+      var pivot = linePivot( width, height, thetaDeg, rho );
+      if ( pivot === null )
+         return null;
+      return refineGrid( thetaDeg, pivot, 0.9, 0.15, 3, 0.5, function( t, r )
+      {
+         var cs = corridorSum( z, width, height, t, r, 1 );
+         if ( cs === null || cs.count < 10 )
+            return null;
+         var signif = ( cs.sum - mu1*cs.count )/( sigma1*Math.sqrt( cs.count ) );
+         return { thetaDeg: t, rho: r, signif: signif, length: cs.length, score: signif };
+      } );
+   }
+
+   function snapToRidge( z, width, height, thetaDeg, rho, halfRange, step )
+   {
+      // refineLine maximises a 3-wide corridor, which is flat to about
+      // +-0.5 px across a 2-px trail, so the refined rho can sit half a
+      // pixel off the ridge. The emptiness test downstream reads ONE pixel
+      // per step along the line and swings from "continuous" to "holey"
+      // over that same half pixel (measured on a real 24-sigma streak:
+      // zeroFrac 0.21 -> 0.39 and mean occupancy 1.55 -> 1.21 sigma for a
+      // 0.6-px shift, i.e. across both bars of isNoiseLine). Centre the
+      // line on the 1-px ridge first: the offset within +-halfRange whose
+      // 1-wide corridor carries the highest mean z. On pure noise the best
+      // of a handful of overlapping offsets over hundreds of pixels adds
+      // ~0.05 sigma per pixel, far inside the 1.25-sigma bar.
       var best = null;
-      for ( var dt = -0.9; dt <= 0.901; dt += 0.15 )
-         for ( var dr = -3; dr <= 3.01; dr += 0.5 )
-         {
-            var cs = corridorSum( z, width, height, thetaDeg + dt, rho + dr, 1 );
-            if ( cs === null || cs.count < 10 )
-               continue;
-            var signif = ( cs.sum - mu1*cs.count )/( sigma1*Math.sqrt( cs.count ) );
-            if ( best === null || signif > best.signif )
-               best = { thetaDeg: thetaDeg + dt, rho: rho + dr, signif: signif,
-                        length: cs.length };
-         }
-      return best;
+      for ( var dr = -halfRange; dr <= halfRange + 1e-9; dr += step )
+      {
+         var cs = corridorSum( z, width, height, thetaDeg, rho + dr, 0 );
+         if ( cs === null || cs.count < 10 )
+            continue;
+         var mean = cs.sum/cs.count;
+         if ( best === null || mean > best.mean ||
+              ( mean === best.mean && Math.abs( dr ) < Math.abs( best.dr ) ) )
+            best = { rho: rho + dr, dr: dr, mean: mean };
+      }
+      return ( best !== null ) ? best.rho : rho;
    }
 
    function faintProfile( z, width, height, ext, rho, perpTol )
@@ -1149,7 +1255,15 @@ var SITrailCore = ( function()
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
-            ext = lineExtent( width, height, refined.thetaDeg, refined.rho );
+            // The refined line geometry is sub-degree/sub-pixel (floats);
+            // `peak` must stay INTEGER — suppressPeak indexes the
+            // accumulator with it, and a fractional index silently writes
+            // nowhere, so the rejected peak would be re-proposed forever.
+            // rho is re-centred on the 1-px ridge (see snapToRidge) before
+            // the single-pixel tests below read the line.
+            var refT = refined.thetaDeg;
+            var refRho = snapToRidge( z, width, height, refT, refined.rho, 0.75, 0.25 );
+            ext = lineExtent( width, height, refT, refRho );
             if ( ext === null )
             {
                tr( peak, "refined-off-image" );
@@ -1157,11 +1271,6 @@ var SITrailCore = ( function()
                continue;
             }
             signif = refined.signif;
-            // The refined line geometry is sub-degree/sub-pixel (floats);
-            // `peak` must stay INTEGER — suppressPeak indexes the
-            // accumulator with it, and a fractional index silently writes
-            // nowhere, so the rejected peak would be re-proposed forever.
-            var refT = refined.thetaDeg, refRho = refined.rho;
 
             // Endpoints by CUSUM on the perpendicular-max profile; the
             // baseline is the profile's lower quartile (noise level even
@@ -1296,6 +1405,113 @@ var SITrailCore = ( function()
       return { trails: trails, sigma: sigma };
    }
 
+   // ------------------------------------------------------------------------
+   // Duplicate / fragment merging (binned coordinates)
+
+   // Collinear fragments of one trail are joined when their line agrees to
+   // MERGE_PERP_PX across (at both endpoints — a 0.2-degree residual drifts
+   // ~1 px per 300 px) and MERGE_ANGLE_DEG in direction, and the empty
+   // stretch between them is at most MERGE_GAP_FRAC of the image diagonal
+   // (~54 binned px at 1500x1000): a refinement residue or a flasher's dark
+   // dash is shorter than that, while successive train members are usually
+   // farther apart along the track and stay separate trails.
+   var MERGE_PERP_PX = 4;
+   var MERGE_ANGLE_DEG = 2;
+   var MERGE_GAP_FRAC = 0.03;
+
+   function trailAngleDiff( a, b )
+   {
+      var d = Math.abs( a - b ) % 180;
+      return ( d > 90 ) ? 180 - d : d;
+   }
+
+   function unionOfCollinear( a, b )
+   {
+      // One trail spanning both segments, on the longer one's line.
+      var dxA = a.x2 - a.x1, dyA = a.y2 - a.y1;
+      var lenA = Math.sqrt( dxA*dxA + dyA*dyA );
+      var ux = dxA/lenA, uy = dyA/lenA;
+      var ts = [ 0, lenA,
+                 ux*( b.x1 - a.x1 ) + uy*( b.y1 - a.y1 ),
+                 ux*( b.x2 - a.x1 ) + uy*( b.y2 - a.y1 ) ];
+      var lo = Math.min.apply( null, ts ), hi = Math.max.apply( null, ts );
+      var dxB = b.x2 - b.x1, dyB = b.y2 - b.y1;
+      var lenB = Math.sqrt( dxB*dxB + dyB*dyB );
+      var out = {
+         x1: a.x1 + ux*lo, y1: a.y1 + uy*lo,
+         x2: a.x1 + ux*hi, y2: a.y1 + uy*hi,
+         lengthPx: hi - lo,
+         angleDeg: normalizeAngleDeg( Math.atan2( uy, ux )*180/Math.PI ),
+         fill: ( a.fill*lenA + b.fill*lenB )/( lenA + lenB ),
+         score: Math.max( a.score, b.score )
+      };
+      if ( a.faint || b.faint )
+         out.faint = !!( a.faint && b.faint );
+      return out;
+   }
+
+   function mergeDuplicateTrails( trails, maxGap )
+   {
+      // Two kinds of pairs are ONE trail:
+      //  - near-parallel, near-collinear, OVERLAPPING segments (the bright and
+      //    faint passes both firing on one streak, or the faint pass
+      //    refinding the unerased shoulder of a wide one): keep the longest;
+      //  - COLLINEAR, non-overlapping fragments separated by at most maxGap
+      //    along the line: replace both by their union extent.
+      // Real close-formation pairs (NOSS) fly ~60+ binned px apart and are
+      // untouched.
+      if ( !( maxGap >= 0 ) )
+         maxGap = 0;
+      var list = trails.slice();
+      var merged = true;
+      while ( merged )
+      {
+         merged = false;
+         for ( var i = 0; i < list.length && !merged; ++i )
+            for ( var j = i + 1; j < list.length && !merged; ++j )
+            {
+               var a = list[i], b = list[j];
+               if ( trailAngleDiff( a.angleDeg, b.angleDeg ) > 3 )
+                  continue;
+               var dxA = a.x2 - a.x1, dyA = a.y2 - a.y1;
+               var lenA = Math.sqrt( dxA*dxA + dyA*dyA );
+               if ( lenA < 1 )
+                  continue;
+               var ux = dxA/lenA, uy = dyA/lenA;
+               var perp = Math.max( Math.abs( -uy*( b.x1 - a.x1 ) + ux*( b.y1 - a.y1 ) ),
+                                    Math.abs( -uy*( b.x2 - a.x1 ) + ux*( b.y2 - a.y1 ) ) );
+               var tB1 = ux*( b.x1 - a.x1 ) + uy*( b.y1 - a.y1 );
+               var tB2 = ux*( b.x2 - a.x1 ) + uy*( b.y2 - a.y1 );
+               var lo = Math.min( tB1, tB2 ), hi = Math.max( tB1, tB2 );
+               var lenB = hi - lo;
+               var overlap = Math.min( lenA, hi ) - Math.max( 0, lo );
+               var gap = -overlap;
+               var collinear = perp <= MERGE_PERP_PX &&
+                               trailAngleDiff( a.angleDeg, b.angleDeg ) <= MERGE_ANGLE_DEG &&
+                               gap <= maxGap;
+               if ( collinear )
+               {
+                  var longer = ( lenB > lenA ) ? b : a, shorter = ( lenB > lenA ) ? a : b;
+                  list.splice( j, 1 );
+                  list.splice( i, 1, unionOfCollinear( longer, shorter ) );
+                  merged = true;
+               }
+               else
+               {
+                  // midpoint offset, as before, for the overlap rule
+                  var mbx = ( b.x1 + b.x2 )/2 - a.x1, mby = ( b.y1 + b.y2 )/2 - a.y1;
+                  if ( Math.abs( -uy*mbx + ux*mby ) > 10 )
+                     continue;
+                  if ( overlap < 0.3*Math.min( lenA, lenB ) )
+                     continue;
+                  list.splice( ( lenB > lenA ) ? i : j, 1 );
+                  merged = true;
+               }
+            }
+      }
+      return list;
+   }
+
    function scaleSegment( seg, binFactor )
    {
       // Binned -> full-resolution pixels, centered on the binned cell.
@@ -1306,47 +1522,228 @@ var SITrailCore = ( function()
    }
 
    // ------------------------------------------------------------------------
-   // Photometry helpers
+   // Photometry (full-resolution, pure: sample( x, y ) supplied by the caller)
 
-   function fwhmOfProfile( profile )
+   var PHOT = {
+      profileHalf: 16,      // perpendicular profile spans +-16 px
+      annulusInner: 10,     // local background: median of |o| in [10, 16]
+      coreHalf: 6,          // the peak is searched within +-6 px of the line
+      stations: 64,         // flux / variation stations along the trail
+      widthStations: 8,     // FWHM stations
+      probeHalf: 1          // flux = max sample within +-1 px across the line
+   };
+
+   function fwhmOfProfile( profile, bg, peakIdx )
    {
-      // FWHM of a 1-px-step perpendicular profile: background from the
-      // profile ends, peak from the maximum, half-max crossings by linear
-      // interpolation. Returns 0 when there is no peak above background.
+      // FWHM of a 1-px-step perpendicular profile by linear interpolation of
+      // the half-max crossings. bg defaults to the lower profile end, the
+      // peak to the maximum. Returns 0 when nothing rises above bg, and
+      // NULL when the peak exists but a half-max crossing is missing on
+      // either side — the structure is broader than the window, which is
+      // exactly what the width veto must see.
       var n = profile.length;
       if ( n < 3 )
          return 0;
-      var bg = Math.min( profile[0], profile[n - 1] );
-      var peak = profile[0], pi = 0;
-      for ( var i = 1; i < n; ++i )
-         if ( profile[i] > peak )
-         {
-            peak = profile[i];
-            pi = i;
-         }
+      if ( bg === undefined || bg === null )
+         bg = Math.min( profile[0], profile[n - 1] );
+      var peak, pi;
+      if ( peakIdx === undefined || peakIdx === null )
+      {
+         peak = profile[0];
+         pi = 0;
+         for ( var i = 1; i < n; ++i )
+            if ( profile[i] > peak )
+            {
+               peak = profile[i];
+               pi = i;
+            }
+      }
+      else
+      {
+         pi = peakIdx;
+         peak = profile[pi];
+      }
       if ( !( peak > bg ) )
          return 0;
       var half = bg + ( peak - bg )/2;
 
-      var left = 0;
-      for ( var i = pi; i > 0; --i )
-         if ( profile[i - 1] < half )
+      var left = null;
+      for ( var l = pi; l > 0; --l )
+         if ( profile[l - 1] < half )
          {
-            left = ( i - 1 ) + ( half - profile[i - 1] )/( profile[i] - profile[i - 1] );
+            left = ( l - 1 ) + ( half - profile[l - 1] )/( profile[l] - profile[l - 1] );
             break;
          }
-      var right = n - 1;
-      for ( var i = pi; i < n - 1; ++i )
-         if ( profile[i + 1] < half )
+      var right = null;
+      for ( var r = pi; r < n - 1; ++r )
+         if ( profile[r + 1] < half )
          {
-            right = ( i + 1 ) - ( half - profile[i + 1] )/( profile[i] - profile[i + 1] );
+            right = ( r + 1 ) - ( half - profile[r + 1] )/( profile[r] - profile[r + 1] );
             break;
          }
+      if ( left === null || right === null )
+         return null;
       return right - left;
+   }
+
+   function perpProfile( sample, width, height, cx, cy, px, py, half )
+   {
+      // Samples at offsets -half..+half across the line (null off-image).
+      var prof = [];
+      for ( var o = -half; o <= half; ++o )
+      {
+         var xi = Math.round( cx + px*o );
+         var yi = Math.round( cy + py*o );
+         prof.push( ( xi >= 0 && xi < width && yi >= 0 && yi < height ) ? sample( xi, yi ) : null );
+      }
+      return prof;
+   }
+
+   function annulusStats( prof, half, inner )
+   {
+      // Robust local background from the outer annulus of a perpendicular
+      // profile, each side (|o| >= inner) taken separately: a plateau or a
+      // star on ONE side must not pull the level up nor blow up the noise
+      // estimate (a pooled MAD of two levels reads the level difference as
+      // noise and hides the trail). bg = the lower of the two side medians,
+      // for the flux; bgLow = the lower of the two side lower quartiles,
+      // for the width: the wings of a 12-14 px trail still leak into the
+      // annulus and a median background would shave the measured FWHM by
+      // ~10 %, right where the veto decides. noise = mean side MAD.
+      var left = [], right = [];
+      for ( var i = 0; i < prof.length; ++i )
+         if ( prof[i] !== null && Math.abs( i - half ) >= inner )
+            ( i < half ? left : right ).push( prof[i] );
+      var sides = [];
+      if ( left.length >= 3 )
+         sides.push( left );
+      if ( right.length >= 3 )
+         sides.push( right );
+      if ( sides.length === 0 )
+         return null;
+      var bg = Infinity, bgLow = Infinity, noise = 0;
+      for ( var k = 0; k < sides.length; ++k )
+      {
+         bg = Math.min( bg, medianOf( sides[k] ) );
+         bgLow = Math.min( bgLow, quantileOf( sides[k], 0.25 ) );
+         noise += madOf( sides[k] );
+      }
+      return { bg: bg, bgLow: bgLow, noise: noise/sides.length };
+   }
+
+   function profileWidth( prof, half, inner, coreHalf )
+   {
+      // FWHM of one perpendicular profile against its annulus background;
+      // the peak is searched within +-coreHalf of the line so a star in
+      // the annulus cannot become "the trail". Returns { fwhm } with fwhm
+      // = null when the structure has no half-max crossing inside the
+      // window (broad band), or null altogether when unmeasurable.
+      var st = annulusStats( prof, half, inner );
+      if ( st === null )
+         return null;
+      var pi = -1, peak = -Infinity;
+      for ( var i = half - coreHalf; i <= half + coreHalf; ++i )
+         if ( prof[i] !== null && prof[i] > peak )
+         {
+            peak = prof[i];
+            pi = i;
+         }
+      if ( pi < 0 || !( peak - st.bg > 3*st.noise ) )
+         return null; // no trail signal here: neither thin nor broad
+      // off-image samples are read as background for the crossing search
+      var filled = [];
+      for ( var j = 0; j < prof.length; ++j )
+         filled.push( ( prof[j] === null ) ? st.bgLow : prof[j] );
+      return { fwhm: fwhmOfProfile( filled, st.bgLow, pi ), bg: st.bg, noise: st.noise };
+   }
+
+   function measureTrail( sample, width, height, seg, opts )
+   {
+      // Photometry along a full-resolution segment. Every quantity is taken
+      // AGAINST A LOCAL BACKGROUND measured per station in the outer
+      // annulus of the perpendicular profile, so sky level and gradients
+      // cancel and a star crossing the trail only touches its own station.
+      //   meanFlux            mean background-subtracted peak (sample units)
+      //   brightnessVariation MAD / max( median, 6*noise ) of the station
+      //                       excess — the flasher / meteor cue. The noise
+      //                       floor keeps a trail near the per-sample noise
+      //                       (the faint pass finds 0.4-sigma streaks) from
+      //                       reading as a flasher: pure noise lands at
+      //                       ~0.15-0.22 over 64 stations (measured; a
+      //                       3-sigma floor reached 0.37), below the 0.35
+      //                       cue, while a flasher's alternating dashes
+      //                       give ~0.45+.
+      //   widthPx             median FWHM over the width stations, or null
+      //                       when most stations have no half-max crossing
+      //                       inside the +-16 px window (a band broader
+      //                       than ~30 px), which the caller's width veto
+      //                       must treat as "too wide".
+      var P = {};
+      for ( var k in PHOT )
+         P[k] = ( opts && opts[k] !== undefined ) ? opts[k] : PHOT[k];
+      var dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
+      var len = Math.sqrt( dx*dx + dy*dy );
+      if ( len <= 0 )
+         return { meanFlux: 0, brightnessVariation: null, widthPx: null, stations: 0 };
+      var ux = dx/len, uy = dy/len;
+      var px = -uy, py = ux; // unit perpendicular
+
+      var excess = [], noises = [];
+      for ( var i = 0; i < P.stations; ++i )
+      {
+         var t = ( i + 0.5 )/P.stations;
+         var prof = perpProfile( sample, width, height, seg.x1 + dx*t, seg.y1 + dy*t,
+                                 px, py, P.profileHalf );
+         var st = annulusStats( prof, P.profileHalf, P.annulusInner );
+         if ( st === null )
+            continue;
+         var v = -Infinity;
+         for ( var o = -P.probeHalf; o <= P.probeHalf; ++o )
+         {
+            var s = prof[P.profileHalf + o];
+            if ( s !== null && s > v )
+               v = s;
+         }
+         if ( v === -Infinity )
+            continue;
+         excess.push( v - st.bg );
+         noises.push( st.noise );
+      }
+      var meanFlux = 0, brightnessVariation = null;
+      if ( excess.length > 0 )
+      {
+         meanFlux = Math.max( 0, meanOf( excess ) );
+         var med = medianOf( excess );
+         var floor = 6*medianOf( noises );
+         var denom = Math.max( med, floor );
+         brightnessVariation = ( denom > 0 ) ? madOf( excess )/denom : null;
+      }
+
+      var widths = [], broad = 0;
+      for ( var w = 0; w < P.widthStations; ++w )
+      {
+         var tw = ( w + 0.5 )/P.widthStations;
+         var pw = perpProfile( sample, width, height, seg.x1 + dx*tw, seg.y1 + dy*tw,
+                               px, py, P.profileHalf );
+         var r = profileWidth( pw, P.profileHalf, P.annulusInner, P.coreHalf );
+         if ( r === null )
+            continue;
+         if ( r.fwhm === null )
+            ++broad;
+         else if ( r.fwhm > 0 )
+            widths.push( r.fwhm );
+      }
+      var widthPx = ( widths.length > 0 && widths.length >= broad ) ? medianOf( widths ) : null;
+      if ( widths.length === 0 && broad === 0 )
+         widthPx = 0; // no measurable signal at full resolution: not vetoed
+
+      return { meanFlux: meanFlux, brightnessVariation: brightnessVariation,
+               widthPx: widthPx, stations: excess.length };
    }
 
    return {
       DEFAULTS: DEFAULTS,
+      MERGE_GAP_FRAC: MERGE_GAP_FRAC,
       medianOf: medianOf,
       madOf: madOf,
       meanOf: meanOf,
@@ -1376,10 +1773,17 @@ var SITrailCore = ( function()
       suppressPeak: suppressPeak,
       bestRun: bestRun,
       lineRun: lineRun,
-      eraseCorridor: eraseCorridor,
+      eraseSegment: eraseSegment,
+      refineGrid: refineGrid,
+      refineBinaryLine: refineBinaryLine,
+      snapToRidge: snapToRidge,
+      mergeDuplicateTrails: mergeDuplicateTrails,
       detectCore: detectCore,
       scaleSegment: scaleSegment,
-      fwhmOfProfile: fwhmOfProfile
+      PHOT: PHOT,
+      fwhmOfProfile: fwhmOfProfile,
+      profileWidth: profileWidth,
+      measureTrail: measureTrail
    };
 } )();
 
@@ -1390,72 +1794,15 @@ var SITrailDetect = ( function()
    var SCALE = 65535;
    var MAX_SMALL_SIDE = 1500;
 
-   function samplePerpMax( image, x, y, px, py, perpTol, width, height )
-   {
-      // Max sample within perpTol px across the trail — robust to the
-      // trail not being perfectly straight at full resolution.
-      var v = -1;
-      for ( var o = -perpTol; o <= perpTol; ++o )
-      {
-         var xi = Math.round( x + px*o );
-         var yi = Math.round( y + py*o );
-         if ( xi >= 0 && xi < width && yi >= 0 && yi < height )
-         {
-            var s = image.sample( xi, yi, 0 );
-            if ( s > v )
-               v = s;
-         }
-      }
-      return v;
-   }
-
    function measureTrail( image, seg )
    {
-      // Full-resolution photometry along the accepted segment.
-      var width = image.width, height = image.height;
-      var dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
-      var len = Math.sqrt( dx*dx + dy*dy );
-      if ( len <= 0 )
-         return { meanFluxAdu: 0, brightnessVariation: 0, widthPx: 0 };
-      var ux = dx/len, uy = dy/len;
-      var px = -uy, py = ux; // unit perpendicular
-
-      // 64 stations along the trail; per station keep the max of a 3-px
-      // perpendicular probe.
-      var samples = [];
-      var nStations = 64;
-      for ( var i = 0; i < nStations; ++i )
-      {
-         var t = ( i + 0.5 )/nStations;
-         var v = samplePerpMax( image, seg.x1 + dx*t, seg.y1 + dy*t, px, py, 1, width, height );
-         if ( v >= 0 )
-            samples.push( v );
-      }
-      var med = SITrailCore.medianOf( samples );
-      var meanFluxAdu = SITrailCore.meanOf( samples )*SCALE;
-      var brightnessVariation = ( med > 0 ) ? SITrailCore.madOf( samples )/med : 0;
-
-      // Width: mean FWHM of a 7-px perpendicular profile at 8 stations.
-      var widths = [];
-      for ( var s = 0; s < 8; ++s )
-      {
-         var ts = ( s + 0.5 )/8;
-         var cx = seg.x1 + dx*ts, cy = seg.y1 + dy*ts;
-         var profile = [];
-         for ( var o = -3; o <= 3; ++o )
-         {
-            var xi = Math.round( cx + px*o );
-            var yi = Math.round( cy + py*o );
-            if ( xi >= 0 && xi < width && yi >= 0 && yi < height )
-               profile.push( image.sample( xi, yi, 0 ) );
-         }
-         var f = SITrailCore.fwhmOfProfile( profile );
-         if ( f > 0 )
-            widths.push( f );
-      }
-      var widthPx = ( widths.length > 0 ) ? SITrailCore.meanOf( widths ) : 0;
-
-      return { meanFluxAdu: meanFluxAdu, brightnessVariation: brightnessVariation, widthPx: widthPx };
+      // Full-resolution photometry (SITrailCore.measureTrail) read through
+      // image.sample; flux reported in ADU.
+      var phot = SITrailCore.measureTrail( function( x, y ) { return image.sample( x, y, 0 ); },
+                                           image.width, image.height, seg );
+      return { meanFluxAdu: phot.meanFlux*SCALE,
+               brightnessVariation: phot.brightnessVariation,
+               widthPx: phot.widthPx };
    }
 
    function binned( image )
@@ -1517,87 +1864,6 @@ var SITrailDetect = ( function()
       return finishDetection( image, core, b.binFactor );
    }
 
-   function eraseSegmentBinned( data, width, height, seg, halfW )
-   {
-      // Zero every pixel within halfW of the segment (binned coordinates),
-      // bounding-box limited.
-      var x1 = seg.x1, y1 = seg.y1, x2 = seg.x2, y2 = seg.y2;
-      var dx = x2 - x1, dy = y2 - y1;
-      var len2 = dx*dx + dy*dy;
-      var x0 = Math.max( 0, Math.floor( Math.min( x1, x2 ) - halfW ) );
-      var xN = Math.min( width - 1, Math.ceil( Math.max( x1, x2 ) + halfW ) );
-      var y0 = Math.max( 0, Math.floor( Math.min( y1, y2 ) - halfW ) );
-      var yN = Math.min( height - 1, Math.ceil( Math.max( y1, y2 ) + halfW ) );
-      for ( var y = y0; y <= yN; ++y )
-      {
-         var row = y*width;
-         for ( var x = x0; x <= xN; ++x )
-         {
-            var t = ( len2 > 0 ) ? Math.max( 0, Math.min( 1, ( ( x - x1 )*dx + ( y - y1 )*dy )/len2 ) ) : 0;
-            var px = x1 + t*dx, py = y1 + t*dy;
-            var ddx = x - px, ddy = y - py;
-            if ( ddx*ddx + ddy*ddy <= halfW*halfW )
-               data[row + x] = 0;
-         }
-      }
-   }
-
-   function mergeDuplicateTrails( trails )
-   {
-      // The bright and faint passes can both fire on one streak (or the
-      // faint pass can refind the unerased shoulder of a wide one), a few
-      // pixels apart: near-parallel, near-collinear, overlapping segments
-      // are ONE trail — keep the longest. Real close-formation pairs (NOSS)
-      // fly ~60+ binned px apart and are untouched.
-      function angleDiff( a, b )
-      {
-         var d = Math.abs( a - b ) % 180;
-         return ( d > 90 ) ? 180 - d : d;
-      }
-      var keep = new Array( trails.length );
-      for ( var i = 0; i < trails.length; ++i )
-         keep[i] = true;
-      for ( var i = 0; i < trails.length; ++i )
-      {
-         if ( !keep[i] )
-            continue;
-         for ( var j = i + 1; j < trails.length; ++j )
-         {
-            if ( !keep[j] )
-               continue;
-            var a = trails[i], b = trails[j];
-            if ( angleDiff( a.angleDeg, b.angleDeg ) > 3 )
-               continue;
-            var dxA = a.x2 - a.x1, dyA = a.y2 - a.y1;
-            var lenA = Math.sqrt( dxA*dxA + dyA*dyA );
-            if ( lenA < 1 )
-               continue;
-            var ux = dxA/lenA, uy = dyA/lenA;
-            var mbx = ( b.x1 + b.x2 )/2 - a.x1, mby = ( b.y1 + b.y2 )/2 - a.y1;
-            var perp = Math.abs( -uy*mbx + ux*mby );
-            if ( perp > 10 )
-               continue;
-            // along-extent overlap of at least 30% of the shorter segment
-            var tB1 = ux*( b.x1 - a.x1 ) + uy*( b.y1 - a.y1 );
-            var tB2 = ux*( b.x2 - a.x1 ) + uy*( b.y2 - a.y1 );
-            var lo = Math.min( tB1, tB2 ), hi = Math.max( tB1, tB2 );
-            var lenB = hi - lo;
-            var overlap = Math.min( lenA, hi ) - Math.max( 0, lo );
-            if ( overlap < 0.3*Math.min( lenA, lenB ) )
-               continue;
-            if ( lenB > lenA )
-               keep[i] = false;
-            else
-               keep[j] = false;
-         }
-      }
-      var out = [];
-      for ( var k = 0; k < trails.length; ++k )
-         if ( keep[k] )
-            out.push( trails[k] );
-      return out;
-   }
-
    function detectDiff( image, binnedSelf, model, params, mask )
    {
       // Transient detection: subtract the static-sky model (per-pixel median
@@ -1625,21 +1891,27 @@ var SITrailDetect = ( function()
                 ( !mask || SITrailCore.lineEdgeAffinity( mask, binnedSelf.width,
                                                          binnedSelf.height, run, 8 ) <= 0.35 );
       };
-      params.noiseOverride = { median: 0, sigma: sigmaDiff };
-      params.mask = mask;
+      // Local options object: the caller's params are never written to.
+      var opts = {};
+      if ( params )
+         for ( var key in params )
+            opts[key] = params[key];
+      opts.noiseOverride = { median: 0, sigma: sigmaDiff };
+      opts.mask = mask;
       tP = Date.now();
-      var core = SITrailCore.detectCore( diff, binnedSelf.width, binnedSelf.height, params, thinOnly );
+      var core = SITrailCore.detectCore( diff, binnedSelf.width, binnedSelf.height, opts, thinOnly );
       if ( prof ) prof.brightMs = ( prof.brightMs || 0 ) + ( Date.now() - tP );
 
       tP = Date.now();
       for ( var i = 0; i < core.trails.length; ++i )
-         eraseSegmentBinned( diff, binnedSelf.width, binnedSelf.height, core.trails[i], 5 );
+         SITrailCore.eraseSegment( diff, binnedSelf.width, binnedSelf.height, core.trails[i], 5 );
       processEvents();
-      var faint = SITrailCore.detectFaintCore( diff, binnedSelf.width, binnedSelf.height, params );
+      var faint = SITrailCore.detectFaintCore( diff, binnedSelf.width, binnedSelf.height, opts );
       if ( prof ) prof.faintMs = ( prof.faintMs || 0 ) + ( Date.now() - tP );
       for ( var f = 0; f < faint.trails.length; ++f )
          core.trails.push( faint.trails[f] );
-      core.trails = mergeDuplicateTrails( core.trails );
+      var diagB = Math.sqrt( binnedSelf.width*binnedSelf.width + binnedSelf.height*binnedSelf.height );
+      core.trails = SITrailCore.mergeDuplicateTrails( core.trails, SITrailCore.MERGE_GAP_FRAC*diagB );
 
       tP = Date.now();
       var out = finishDetection( image, core, binnedSelf.binFactor );

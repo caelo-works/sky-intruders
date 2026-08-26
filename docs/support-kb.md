@@ -127,7 +127,15 @@ chart, live, in both directions. Every setting is remembered between sessions.
 ### 3.2 The input list (shared by both modes)
 
 **Add files…** accepts `.fits`, `.fit`, `.fts`, `.xisf`. **Add folder…** scans
-one folder (it does not recurse). Duplicates are ignored.
+one folder (it does not recurse). Duplicates (same full path) are ignored.
+Files from **several folders** can be mixed in one list; when two of them share
+a file name (`Light_001.fits` from two capture folders), the status line says
+so — *"Same file name in several folders (Light_001.fits): frames are told apart
+by their position in the list."* — and the run proceeds: since 0.2.2 every frame
+is keyed on its position in the list, not on its name, so nothing collides. The
+log and the report still show the plain file name, so two lines may look alike
+in that case. 0.2.1 and earlier silently mixed such frames up (one registered
+copy overwrote the other).
 
 > **The first file in the list matters more than the others.** In Night trails it
 > is the registration reference and the source of the field's plate solve. If the
@@ -258,8 +266,17 @@ and, silently, none for the OIII pair. That is expected behaviour. One sky model
 per filter is deliberate: mixing narrowband channels into one model was measured
 to lose trails outright.
 
-Trails **wider than about 12 pixels are discarded** as cloud bands or stacking
-artefacts. There is no user setting for this.
+Trails **wider than 12 pixels (FWHM, full resolution) are discarded** as cloud
+bands or stacking artefacts. The width is measured on a ±16 px profile across
+the trail against the local background next to it; a trail with no measurable
+edge inside that window counts as too wide. A bright, slightly defocused
+satellite trail of 6–9 px is kept. There is no user setting for this.
+
+The brightness-variation index behind the meteor / flasher cue (threshold
+0.35) is measured after subtracting the local background at each of 64
+points along the trail, so sky gradients and stars crossing the trail do not
+create false flickering, and a trail too faint to measure at full resolution
+reads as steady rather than flickering.
 
 ### 4.3 How a trail gets a satellite's name
 
@@ -290,6 +307,24 @@ Naming needs three things: **an observer site**, **fresh orbital elements**, and
   trustworthy. It then reports crossers as predictions only, and names nothing.
 - **Satellites in the Earth's shadow are never matched to a trail.** An eclipsed
   object cannot leave a streak, so the model refuses to explain one with it.
+  Since 0.2.2 this is judged along the whole crossing, not at its midpoint: a
+  satellite that **enters or leaves the shadow while inside the field** is
+  matched on the part of its path that was lit, and the night log says so —
+  *"entered Earth's shadow at HH:MM:SS UT"* / *"left Earth's shadow at
+  HH:MM:SS UT"* (FR *"entré dans l'ombre de la Terre à …"* / *"sorti de l'ombre
+  de la Terre à …"*); the composite label carries *"into shadow …"* / *"out of
+  shadow …"* (FR *"entre dans l'ombre …"* / *"sort de l'ombre …"*). A streak
+  that **fades out mid-frame at dusk or dawn** is therefore usually a named
+  satellite, not a meteor. On **0.2.1 and earlier** the same streak was
+  rejected as eclipsed and handed to the meteor heuristic, which could attach
+  a shower name to it — advise updating rather than trusting that label.
+  The shadow model itself is coarse (no penumbra): the instant is good to a
+  few tens of seconds, and the streak's brightness tapers over that span.
+- **Matching is the same whichever way a trail was measured.** Orientation is
+  compared at the middle of each segment, so a trail near the pole (δ > 60°)
+  is treated identically whether the detector listed its endpoints north-first
+  or south-first. On 0.2.1 and earlier, high-declination fields could lose or
+  gain a name on that accident alone.
 
 **Identification quality decays with the age of the orbital elements.**
 Elements are a prediction, and the prediction drifts — mostly along the track —
@@ -317,14 +352,20 @@ Each trail gets a class and a colour on the result image:
   classified object, or debris. **It is a correct result, not a failure.**
 - **meteor** (pink) — needs **two** cues out of: the trail stops inside the frame;
   its brightness varies strongly along its length; it aligns with an active
-  meteor shower's radiant. Radiant alignment **alone is never enough**.
+  meteor shower's radiant. Radiant alignment **alone is never enough**. A
+  satellite entering the Earth's shadow shows the first two cues too; since
+  0.2.2 it is named first (see 4.3) and only unexplained leftovers reach this
+  heuristic.
 - **airplane** (olive) — a parallel bundle whose brightness flickers (strobes).
 - **satellite train** (green) — a parallel bundle of steady brightness, typically
   a recent constellation launch.
 - **unknown** (pale grey) — no distinguishing cue.
 
 Ghost lines for predicted-but-unconfirmed passes are pale yellow (sunlit) or grey
-(in shadow), and only appear if the user ticked the corresponding box.
+(in shadow), and only appear if the user ticked the corresponding box. "In
+shadow" here means lit at **no** point of the crossing; a pass that was lit for
+any part of it is drawn yellow and carries the *"into shadow …"* / *"out of
+shadow …"* tag when it changed state in the field.
 
 ### 4.5 What you get at the end
 
@@ -341,8 +382,9 @@ Ghost lines for predicted-but-unconfirmed passes are pale yellow (sunlit) or gre
   time plus a random number, so two runs — or two PixInsight instances — never
   overwrite each other's image). The **Open image** button in the report window
   reopens it. The registered frames themselves live in a private scratch folder
-  `si-night-reg-<run token>` in the same temp folder for the duration of the
-  run and are deleted when it ends — on success, on a fallback to per-frame
+  `si-night-reg-<run token>` in the same temp folder, named
+  `<NNN>_<file name>_r.xisf` (`NNN` = the frame's position in the input list,
+  from 000), for the duration of the run and are deleted when it ends — on success, on a fallback to per-frame
   detection, and on an error alike. A leftover `si-night-reg-…` folder means
   PixInsight itself was killed mid-run; it is safe to delete.
 - A **night log** in markdown, shown in a window and printed to the console, with
@@ -525,7 +567,7 @@ Everything lives in the user's home folder, under **`.caeloworks/sky-intruders`*
   set as the composite background — every streak in the pixels, and every
   frame's hot pixels too), `debugFrameOverlays` (default `false` — `true`
   writes one annotated PNG per registered frame, `si-frame-annotated-<run
-  token>-<n>.png`, to the temp folder) and `matchDiagnostics` (default
+  token>-<NNN>_<file name>.png`, to the temp folder) and `matchDiagnostics` (default
   `false` — `true` records, for every unnamed trail, the nearest predicted
   crossing and how far it missed the tolerances). Deleting the file resets
   everything to defaults.
@@ -586,6 +628,10 @@ The user will copy-paste. These are the messages, word for word.
 - *"Add one plate-solved image, or open one in PixInsight first."* — Hunt pressed
   in Treasure Hunt with an empty list **and** no active image window.
 - *"Cannot open <path>"* — the listed file could not be read.
+- *"Same file name in several folders (<names>): frames are told apart by their
+  position in the list."* / « Même nom de fichier dans plusieurs dossiers
+  (<noms>) : les brutes sont distinguées par leur position dans la liste. » —
+  informational, shown right after adding files; see 3.2.
 - *"No observer site — satellites not identified."* / « Pas de site
   d'observation — satellites non identifiés. » — shown on the status line of the
   main window after the run and as a banner at the top of the night report
@@ -631,6 +677,13 @@ The user will copy-paste. These are the messages, word for word.
 - *"geometry mismatch, skipped: <file>"* — that frame's dimensions differ from
   the first frame's. Don't mix sensors or crops in one run.
 - *"not registered, skipped: <file>"* — star alignment rejected that frame.
+- *"only N usable registered frame(s) (M geometry mismatch) — falling back to
+  per-frame detection"* — alignment worked but fewer than three frames survived
+  the geometry check above; same consequence as the "only N/M frames registered"
+  line.
+- *"duplicate file names in the set: registering in N batches"* — informational:
+  the list mixes folders with identical file names, alignment runs in several
+  passes so no registered copy overwrites another. Slightly slower, not an error.
 - *"Field orientation fit found only N matched pair(s) — not enough to trust
   satellite names; crossers are reported as predictions only."* — no plate solve,
   and the fallback fit could not be trusted. **Nothing gets named.** Fix:
@@ -761,11 +814,36 @@ Rare, but real. Confirm it rather than arguing with the user, and escalate.
 The slow-mover detector is hardened against sensor artifacts: a candidate must
 hold at least 4 points (3 on a 3-frame set), follow a straight constant-rate
 line within tight residuals, move well beyond centroid noise, never chain
-across gaps longer than 2 hours — and a group of 3+ "candidates" all moving
-with one shared velocity is recognized as a registration-drift artifact family
-and dropped (real asteroids never march in step). On earlier builds (0.2.0 and
-older) this hardening did not exist and plate-solved sets could print dozens
-of false *asteroid candidate* lines: tell those users to update.
+across gaps longer than 2 hours — and a group of "candidates" all moving with
+one shared velocity is tested as a possible registration-drift artifact
+family (sensor-fixed points such as hot pixels, carried together by the
+frame-to-frame alignment offset). On earlier builds (0.2.0 and older) this
+hardening did not exist and plate-solved sets could print dozens of false
+*asteroid candidate* lines: tell those users to update.
+
+The shared-velocity test is deliberately not a blanket veto, because real
+main-belt asteroids in one ecliptic field near opposition **do** move in step
+(retrograde, a few tenths of an arcsec per minute, within ~10 % of each
+other). Builds after 0.2.1 apply this rule:
+
+- **Single-frame runs** (each frame plate-solved on its own grid): the
+  detector knows every source's position on the sensor. A family of 3 or
+  more tracks within max(0.5 arcsec/min, 25 % of the rate) of one velocity is
+  dropped **only if every member stays within 2 pixels of one sensor
+  position** across the frames — the signature of a sensor-fixed point. A
+  family that walks across the sensor is kept whole: those are asteroids.
+- **Registered runs** (the normal 3+ frame night): sources are measured on
+  the reference grid, where pixels merely restate the sky, so the detector
+  has no sensor evidence. It then vetoes a family only when it is both large
+  and tight: **5 or more tracks within max(0.2 arcsec/min, 8 % of the
+  rate)**. Two, three or four co-moving asteroids survive; a drift family of
+  a dozen hot pixels does not.
+
+On **0.2.1 and earlier** any 3 tracks within 25 % of one velocity were
+dropped, so a field holding three or more asteroids reported *none* of them.
+A user on those builds who images ecliptic fields at opposition and never
+sees an asteroid candidate is hitting that limit: the answer is **update the
+script**.
 
 Two behaviours remain by design:
 

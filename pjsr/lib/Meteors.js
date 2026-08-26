@@ -2,7 +2,8 @@
 /*
  * Meteors.js — meteor-shower heuristics for trails the TLE match left over.
  *
- * Pure JS, no PI types: everything here is unit-testable under Node.
+ * Pure JS, no PI types (spherical math from SIGeom): everything here is
+ * unit-testable under Node.
  * Radiants are J2000 at peak, drift ignored (we match within ~8 degrees,
  * far coarser than radiant drift over an activity window).
  */
@@ -29,10 +30,7 @@ var SIMeteors = ( function()
 
    function unitVector( raDeg, decDeg )
    {
-      var ra = raDeg * D2R, dec = decDeg * D2R;
-      return [ Math.cos( dec ) * Math.cos( ra ),
-               Math.cos( dec ) * Math.sin( ra ),
-               Math.sin( dec ) ];
+      return SIGeom.unitVector( raDeg, decDeg );
    }
 
    function cross( a, b )
@@ -55,8 +53,10 @@ var SIMeteors = ( function()
 
    function sepDeg( aRa, aDec, bRa, bDec )
    {
-      var d = dot( unitVector( aRa, aDec ), unitVector( bRa, bDec ) );
-      return Math.acos( Math.max( -1, Math.min( 1, d ) ) ) / D2R;
+      // Dot-product / arccos separation. The slow-mover gates below were
+      // tuned on this form; SIGeom keeps it apart from the haversine one
+      // used by the matching engine (see SIGeom.angularSepDotDeg).
+      return SIGeom.angularSepDotDeg( aRa, aDec, bRa, bDec );
    }
 
    // Angular distance from a point to the great circle through p1-p2.
@@ -221,8 +221,10 @@ var SIMeteors = ( function()
 
    /*
     * Asteroid candidates: compact sources drifting coherently across frames.
-    * blobsByFrame: [ { id, dateObs (Date), blobs: [ {raDeg,decDeg,fluxAdu} ] } ]
-    * (sky coordinates required — the caller skips frames without WCS).
+    * blobsByFrame: [ { id, dateObs (Date), blobs: [ {raDeg,decDeg,fluxAdu,x?,y?} ] } ]
+    * (sky coordinates required — the caller skips frames without WCS; x, y
+    * are optional SENSOR pixel coordinates in the frame's own unregistered
+    * grid, never registered-grid pixels, which only restate the sky).
     *
     * Hardened against sensor-artifact storms (dithered hot pixels, faint
     * sources flickering around the detection cap chain into fake tracks at
@@ -234,17 +236,58 @@ var SIMeteors = ( function()
     *   - fit a constant-velocity line at rms <= 2.5 arcsec, monotonically,
     *     with total motion >= 10 arcsec (beyond centroid noise) and a fitted
     *     rate in [0.1, 120] arcsec/min;
-    * and a population of >= 3 candidates sharing one velocity vector is a
+    * and a family of candidates sharing one velocity vector is tested as a
     * registration-drift artifact family (sensor-fixed points all move with
-    * the frame-to-frame alignment offset), not asteroids: all dropped.
+    * the frame-to-frame alignment offset). Main-belt asteroids in one
+    * ecliptic field near opposition DO march in step (retrograde at a
+    * few tenths of an arcsec/min, position angles within degrees), so the
+    * shared velocity alone is not a verdict:
+    *   - when every blob of the family carries sensor pixel coordinates
+    *     (x, y in the frame's own, unregistered grid) the family is
+    *     dropped only if its members are (near-)stationary in pixels —
+    *     the signature of a sensor-fixed point carried by the drift of the
+    *     astrometric solution; a family moving in pixels is kept whole;
+    *   - without pixel coordinates the fallback is stricter than the
+    *     velocity spread of a real asteroid family: >= 5 members within
+    *     max(0.2 arcsec/min, 8 % of the rate).
     * Validated against the 13-frame reference night (126-candidate storm ->
-    * 0) with synthetic movers at 0.3-8 arcsec/min recovered intact.
+    * 0, already at the track gates) with synthetic movers at 0.3-8 arcsec/min
+    * recovered intact and a 3-asteroid family at ~0.4 arcsec/min kept.
     */
+   // True when every point of the track carries sensor pixel coordinates.
+   function hasPixels( track )
+   {
+      for ( var i = 0; i < track.points.length; ++i )
+         if ( typeof track.points[ i ].x !== "number" || typeof track.points[ i ].y !== "number" )
+            return false;
+      return true;
+   }
+
+   // Largest pixel distance between any two points of the track (its
+   // excursion on the sensor); 0 for a perfectly sensor-fixed point.
+   function pixelExcursion( track )
+   {
+      var worst = 0;
+      for ( var i = 0; i < track.points.length; ++i )
+         for ( var j = i + 1; j < track.points.length; ++j )
+         {
+            var dx = track.points[ i ].x - track.points[ j ].x;
+            var dy = track.points[ i ].y - track.points[ j ].y;
+            var d = Math.sqrt( dx * dx + dy * dy );
+            if ( d > worst )
+               worst = d;
+         }
+      return worst;
+   }
+
    function findMovers( blobsByFrame, minFrames )
    {
       var MAX_GAP_MIN = 120;      // never chain across session/night gaps
       var FIT_RMS_MAX = 2.5;      // arcsec: real movers are linear, chains ragged
       var MIN_TOTAL_ARCSEC = 10;  // motion must clearly exceed centroid noise
+      var PIX_STATIONARY_PX = 2;  // sensor-fixed point: pixel excursion at most this
+      var FAMILY_MIN_PIX = 3;     // family size with pixel evidence
+      var FAMILY_MIN_BLIND = 5;   // family size without pixel evidence
 
       var frames = blobsByFrame.filter( function( f ) { return f.dateObs != null; } )
                                .sort( function( a, b ) { return a.dateObs - b.dateObs; } );
@@ -254,6 +297,20 @@ var SIMeteors = ( function()
          return [];
 
       var candidates = [];
+
+      // Track points keep the blob's sensor pixel coordinates when the
+      // caller supplied them (see the veto below).
+      function trackPoint( frame, blob )
+      {
+         var p = { frame: frame.id, t: frame.dateObs, raDeg: blob.raDeg, decDeg: blob.decDeg };
+         if ( typeof blob.x === "number" && typeof blob.y === "number" &&
+              isFinite( blob.x ) && isFinite( blob.y ) )
+         {
+            p.x = blob.x;
+            p.y = blob.y;
+         }
+         return p;
+      }
 
       // Seed with pairs from consecutive usable frames, then extend.
       for ( var i = 0; i + 1 < frames.length; ++i )
@@ -268,8 +325,7 @@ var SIMeteors = ( function()
                var rate = sepDeg( A.raDeg, A.decDeg, B.raDeg, B.decDeg ) * 3600 / dtMin;
                if ( rate < 0.1 || rate > 120 )
                   continue;
-               var track = { points: [ { frame: frames[ i ].id, t: frames[ i ].dateObs, raDeg: A.raDeg, decDeg: A.decDeg },
-                                       { frame: frames[ i + 1 ].id, t: frames[ i + 1 ].dateObs, raDeg: B.raDeg, decDeg: B.decDeg } ] };
+               var track = { points: [ trackPoint( frames[ i ], A ), trackPoint( frames[ i + 1 ], B ) ] };
                // Extend through subsequent frames by linear extrapolation.
                // The tolerance scales with the time-gap ratio (prediction
                // noise grows with extrapolation length) but stays tight:
@@ -297,8 +353,7 @@ var SIMeteors = ( function()
                      }
                   }
                   if ( best != null )
-                     track.points.push( { frame: frames[ j ].id, t: frames[ j ].dateObs,
-                                          raDeg: best.raDeg, decDeg: best.decDeg } );
+                     track.points.push( trackPoint( frames[ j ], best ) );
                }
                if ( track.points.length < minFrames )
                   continue;
@@ -347,14 +402,17 @@ var SIMeteors = ( function()
          }
       }
 
-      // Shared-velocity veto: sensor-fixed artifacts under a registration
-      // drift all move with the SAME frame-to-frame offset, so they produce
-      // parallel equal-rate tracks. Three or more tracks sharing a velocity
-      // vector are an artifact family; real asteroids never march in step.
-      if ( out.length >= 3 )
+      // Shared-velocity family test. Sensor-fixed artifacts under a
+      // registration drift all move with the SAME frame-to-frame offset, so
+      // they produce parallel equal-rate tracks — but so do main-belt
+      // asteroids sharing an ecliptic field near opposition. The decisive
+      // evidence is the sensor grid: an artifact never moves in pixels, an
+      // asteroid always does. Families are only vetoed with that evidence,
+      // or, blind, when far larger and tighter than any asteroid family.
+      if ( out.length >= FAMILY_MIN_PIX )
       {
          var drop = {};
-         for ( var u = 0; u < out.length; ++u )
+         var family = function( u, tol )
          {
             var fu = out[ u ].fit, same = [ u ];
             for ( var v = 0; v < out.length; ++v )
@@ -364,10 +422,40 @@ var SIMeteors = ( function()
                var fv = out[ v ].fit;
                var dv = Math.sqrt( ( fu.vxArcsecPerMin - fv.vxArcsecPerMin ) * ( fu.vxArcsecPerMin - fv.vxArcsecPerMin ) +
                                    ( fu.vyArcsecPerMin - fv.vyArcsecPerMin ) * ( fu.vyArcsecPerMin - fv.vyArcsecPerMin ) );
-               if ( dv < Math.max( 0.5, 0.25 * fu.rateArcsecPerMin ) )
+               if ( dv < tol )
                   same.push( v );
             }
-            if ( same.length >= 3 )
+            return same;
+         };
+         for ( var u = 0; u < out.length; ++u )
+         {
+            var rate = out[ u ].fit.rateArcsecPerMin;
+            var same = family( u, Math.max( 0.5, 0.25 * rate ) );
+            var pixEvidence = true;
+            for ( var q0 = 0; q0 < same.length && pixEvidence; ++q0 )
+               if ( !hasPixels( out[ same[ q0 ] ] ) )
+                  pixEvidence = false;
+            var veto;
+            if ( pixEvidence )
+            {
+               // Every member must sit still on the sensor: one member
+               // moving in pixels clears the whole family — a real asteroid
+               // family does not mix with sensor-fixed points at one
+               // velocity by chance.
+               veto = ( same.length >= FAMILY_MIN_PIX );
+               for ( var q = 0; q < same.length && veto; ++q )
+                  if ( pixelExcursion( out[ same[ q ] ] ) > PIX_STATIONARY_PX )
+                     veto = false;
+            }
+            else
+            {
+               // Blind: a real asteroid family is a handful of objects
+               // spread over more than 8 % in velocity; a drift family is
+               // larger and tighter.
+               same = family( u, Math.max( 0.2, 0.08 * rate ) );
+               veto = ( same.length >= FAMILY_MIN_BLIND );
+            }
+            if ( veto )
                for ( var w = 0; w < same.length; ++w )
                   drop[ same[ w ] ] = true;
          }

@@ -184,3 +184,35 @@ assert.ok( weird.redditTitle.indexOf( "my M$& 31 session" ) >= 0, "fmt inserts a
 } )();
 
 console.log( "report.test.js: " + Object.keys( results ).length + " goldens checked" );
+
+// --- shadow transitions: a satellite matched on its lit sub-path says so ----
+
+{
+   var d2 = function( s ) { return new Date( s ); };
+   var shadowNight = {
+      dateLabel: "2026-08-20/21", frames: 3, cleanFrames: 1, totalExposureSec: 360,
+      target: "M 31",
+      events: [
+         { timeUtc: d2( "2026-08-20T21:10:00Z" ), klass: "satellite", name: "STARLINK-6001",
+           confidence: "high", frameId: "L_0001.fits", elevationDeg: 55, angularRateDegPerSec: 0.42,
+           sunlitFraction: 0.47, shadowEntryUtc: d2( "2026-08-20T21:10:07Z" ), shadowExitUtc: null },
+         { timeUtc: d2( "2026-08-21T03:02:00Z" ), klass: "satellite", name: "COSMOS 1408 DEB",
+           confidence: "medium", frameId: "L_0003.fits", elevationDeg: 31, angularRateDegPerSec: 0.20,
+           sunlitFraction: 0.6, shadowEntryUtc: null, shadowExitUtc: d2( "2026-08-21T03:02:41Z" ) }
+      ],
+      predicted: [], movers: []
+   };
+   var en = R.build( shadowNight, { nights: [] }, "en" ).markdown;
+   var fr = R.build( shadowNight, { nights: [] }, "fr" ).markdown;
+   assert.ok( en.indexOf( "STARLINK-6001 (55°, 0.42°/s) — entered Earth's shadow at 21:10:07 UT" ) >= 0,
+              "en shadow entry wording:\n" + en );
+   assert.ok( en.indexOf( "COSMOS 1408 DEB [probable] (31°, 0.20°/s) — left Earth's shadow at 03:02:41 UT" ) >= 0,
+              "en shadow exit wording:\n" + en );
+   assert.ok( fr.indexOf( "STARLINK-6001 (55°, 0.42°/s) — entré dans l'ombre de la Terre à 21:10:07 UT" ) >= 0,
+              "fr shadow entry wording:\n" + fr );
+   assert.ok( fr.indexOf( "COSMOS 1408 DEB [probable] (31°, 0.20°/s) — sorti de l'ombre de la Terre à 03:02:41 UT" ) >= 0,
+              "fr shadow exit wording:\n" + fr );
+   // events without a transition are untouched (the goldens above pin that too)
+   assert.strictEqual( en.split( "Earth's shadow" ).length - 1, 2, "one wording per transition, none elsewhere" );
+   console.log( "report: shadow entry/exit wording OK (en/fr)" );
+}

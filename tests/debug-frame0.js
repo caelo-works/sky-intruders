@@ -11,6 +11,7 @@
 
 /* beautify ignore:start */
 #engine v8
+#include "../pjsr/lib/Geom.js"
 #include "../pjsr/lib/Stats.js"
 #include "../pjsr/lib/TrailDetect.js"
 #include "../pjsr/lib/Render.js"

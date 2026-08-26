@@ -61,3 +61,15 @@ assert.deepStrictEqual(SITleNet.parseSatcatInfo("NORAD_CAT_ID,OBJECT_NAME\n1,X\n
 assert.deepStrictEqual(SITleNet.parseSatcatInfo(""), {}, "empty CSV");
 
 console.log("net.test.js: all assertions passed");
+
+// mergeTleTexts: dedup by NORAD id, first occurrence wins, 3-line records
+{
+   const rec = (name, id) => name + "\n" +
+      "1 " + String(id).padStart(5, "0") + "U 62025E   06176.82412014  .00008885  00000-0  12808-3 0  3985\n" +
+      "2 " + String(id).padStart(5, "0") + " 058.5579 054.0425 0049651 218.8006 140.9556 15.03017460318111\n";
+   const merged = SITleNet.mergeTleTexts(rec("A", 6251) + rec("B", 6252) + rec("A-AGAIN", 6251) + rec("C", 6253));
+   assert.strictEqual(merged.count, 3, "duplicate NORAD id dropped");
+   assert.strictEqual(merged.text.split("\n").length, 9, "three 3-line records, no trailing newline");
+   assert.ok(merged.text.indexOf("A-AGAIN") < 0, "first occurrence wins");
+   assert.strictEqual(SITleNet.mergeTleTexts("").count, 0);
+}
