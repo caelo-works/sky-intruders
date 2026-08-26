@@ -761,11 +761,36 @@ Rare, but real. Confirm it rather than arguing with the user, and escalate.
 The slow-mover detector is hardened against sensor artifacts: a candidate must
 hold at least 4 points (3 on a 3-frame set), follow a straight constant-rate
 line within tight residuals, move well beyond centroid noise, never chain
-across gaps longer than 2 hours — and a group of 3+ "candidates" all moving
-with one shared velocity is recognized as a registration-drift artifact family
-and dropped (real asteroids never march in step). On earlier builds (0.2.0 and
-older) this hardening did not exist and plate-solved sets could print dozens
-of false *asteroid candidate* lines: tell those users to update.
+across gaps longer than 2 hours — and a group of "candidates" all moving with
+one shared velocity is tested as a possible registration-drift artifact
+family (sensor-fixed points such as hot pixels, carried together by the
+frame-to-frame alignment offset). On earlier builds (0.2.0 and older) this
+hardening did not exist and plate-solved sets could print dozens of false
+*asteroid candidate* lines: tell those users to update.
+
+The shared-velocity test is deliberately not a blanket veto, because real
+main-belt asteroids in one ecliptic field near opposition **do** move in step
+(retrograde, a few tenths of an arcsec per minute, within ~10 % of each
+other). Builds after 0.2.1 apply this rule:
+
+- **Single-frame runs** (each frame plate-solved on its own grid): the
+  detector knows every source's position on the sensor. A family of 3 or
+  more tracks within max(0.5 arcsec/min, 25 % of the rate) of one velocity is
+  dropped **only if every member stays within 2 pixels of one sensor
+  position** across the frames — the signature of a sensor-fixed point. A
+  family that walks across the sensor is kept whole: those are asteroids.
+- **Registered runs** (the normal 3+ frame night): sources are measured on
+  the reference grid, where pixels merely restate the sky, so the detector
+  has no sensor evidence. It then vetoes a family only when it is both large
+  and tight: **5 or more tracks within max(0.2 arcsec/min, 8 % of the
+  rate)**. Two, three or four co-moving asteroids survive; a drift family of
+  a dozen hot pixels does not.
+
+On **0.2.1 and earlier** any 3 tracks within 25 % of one velocity were
+dropped, so a field holding three or more asteroids reported *none* of them.
+A user on those builds who images ecliptic fields at opposition and never
+sees an asteroid candidate is hitting that limit: the answer is **update the
+script**.
 
 Two behaviours remain by design:
 

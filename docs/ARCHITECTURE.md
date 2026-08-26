@@ -59,6 +59,13 @@ pjsr/lib/Report.js           night log, fun stats, personal records, Reddit mark
    active shower radiant → "probable <shower> meteor"; compact sources drifting
    coherently across ≥3 frames (real WCS required — fitted astrometry is too
    coarse and dither shifts sensor artifacts coherently) → asteroid candidate.
+   Tracks sharing one velocity are tested as a registration-drift family, not
+   vetoed outright (asteroids near opposition co-move): with sensor pixel
+   coordinates (single-frame path, blobs carry `x, y` on the frame's own grid)
+   a family of ≥3 within max(0.5″/min, 25 % of rate) is dropped only when every
+   member stays within 2 px of one sensor position; without them (registered
+   path — reference-grid pixels only restate the sky, so the call site strips
+   them) the blind rule needs ≥5 tracks within max(0.2″/min, 8 % of rate).
 7. Report: chronological night log, stats (counts by operator, Starlink share),
    personal records (persistent history), Markdown export ready for Reddit.
 8. Night result image: the registered set max-combined, auto-stretched, every
