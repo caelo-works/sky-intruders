@@ -1069,6 +1069,33 @@ var SITrailCore = ( function()
       } );
    }
 
+   function snapToRidge( z, width, height, thetaDeg, rho, halfRange, step )
+   {
+      // refineLine maximises a 3-wide corridor, which is flat to about
+      // +-0.5 px across a 2-px trail, so the refined rho can sit half a
+      // pixel off the ridge. The emptiness test downstream reads ONE pixel
+      // per step along the line and swings from "continuous" to "holey"
+      // over that same half pixel (measured on a real 24-sigma streak:
+      // zeroFrac 0.21 -> 0.39 and mean occupancy 1.55 -> 1.21 sigma for a
+      // 0.6-px shift, i.e. across both bars of isNoiseLine). Centre the
+      // line on the 1-px ridge first: the offset within +-halfRange whose
+      // 1-wide corridor carries the highest mean z. On pure noise the best
+      // of a handful of overlapping offsets over hundreds of pixels adds
+      // ~0.05 sigma per pixel, far inside the 1.25-sigma bar.
+      var best = null;
+      for ( var dr = -halfRange; dr <= halfRange + 1e-9; dr += step )
+      {
+         var cs = corridorSum( z, width, height, thetaDeg, rho + dr, 0 );
+         if ( cs === null || cs.count < 10 )
+            continue;
+         var mean = cs.sum/cs.count;
+         if ( best === null || mean > best.mean ||
+              ( mean === best.mean && Math.abs( dr ) < Math.abs( best.dr ) ) )
+            best = { rho: rho + dr, dr: dr, mean: mean };
+      }
+      return ( best !== null ) ? best.rho : rho;
+   }
+
    function faintProfile( z, width, height, ext, rho, perpTol )
    {
       // Perpendicular-max z profile along the line, one sample per t step.
@@ -1236,7 +1263,15 @@ var SITrailCore = ( function()
                suppressPeak( hough, peak.thetaDeg, peak.rho, 1, p.faintSmooth );
                continue;
             }
-            ext = lineExtent( width, height, refined.thetaDeg, refined.rho );
+            // The refined line geometry is sub-degree/sub-pixel (floats);
+            // `peak` must stay INTEGER — suppressPeak indexes the
+            // accumulator with it, and a fractional index silently writes
+            // nowhere, so the rejected peak would be re-proposed forever.
+            // rho is re-centred on the 1-px ridge (see snapToRidge) before
+            // the single-pixel tests below read the line.
+            var refT = refined.thetaDeg;
+            var refRho = snapToRidge( z, width, height, refT, refined.rho, 0.75, 0.25 );
+            ext = lineExtent( width, height, refT, refRho );
             if ( ext === null )
             {
                tr( peak, "refined-off-image" );
@@ -1244,11 +1279,6 @@ var SITrailCore = ( function()
                continue;
             }
             signif = refined.signif;
-            // The refined line geometry is sub-degree/sub-pixel (floats);
-            // `peak` must stay INTEGER — suppressPeak indexes the
-            // accumulator with it, and a fractional index silently writes
-            // nowhere, so the rejected peak would be re-proposed forever.
-            var refT = refined.thetaDeg, refRho = refined.rho;
 
             // Endpoints by CUSUM on the perpendicular-max profile; the
             // baseline is the profile's lower quartile (noise level even
@@ -1754,6 +1784,7 @@ var SITrailCore = ( function()
       eraseSegment: eraseSegment,
       refineGrid: refineGrid,
       refineBinaryLine: refineBinaryLine,
+      snapToRidge: snapToRidge,
       mergeDuplicateTrails: mergeDuplicateTrails,
       detectCore: detectCore,
       scaleSegment: scaleSegment,

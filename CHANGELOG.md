@@ -54,6 +54,12 @@ All notable changes to this project are documented here. The format is based on
   collinear fragments separated by at most 3 % of the diagonal into one
   trail with the union extent. A crossing trail is now returned at full
   length instead of the half beyond the crossing. Fixes #14.
+- Night trails: a faint trail whose refined line sat half a pixel off its
+  ridge is no longer vetoed as noise. The faint pass fits the line on a
+  3-px corridor, which is flat to ±0.5 px across a thin trail, while the
+  emptiness veto reads one pixel per step; the line is now re-centred on the
+  1-px ridge before that test (a 24-σ edge-to-edge streak on the reference
+  night read as 39 % empty at the fitted line and 21 % half a pixel away).
 - Night trails: the 12-px width veto now works. The perpendicular profile
   used to hold 7 samples, so the measured FWHM could never exceed 6 px and
   the veto never fired; it now spans ±16 px with a robust background from

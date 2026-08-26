@@ -240,6 +240,45 @@ console.log("traildetect: median stack + model subtraction OK");
 console.log("traildetect: faint weighted-Hough pass OK");
 
 // ---------------------------------------------------------------------------
+// Ridge snapping: the faint-pass line is fitted on a 3-wide corridor, which
+// is flat to +-0.5 px across a thin trail, while the emptiness veto reads one
+// pixel per step. A 0.6-px offset turns a continuous 1-px trail into a
+// "holey" line; snapToRidge must bring it back onto the ridge (measured on a
+// real 24-sigma streak: zeroFrac 0.21 -> 0.39 over that offset, straddling
+// the 0.38 bar).
+
+{
+   const W = 400, H = 300;
+   const z = new Float32Array(W*H);
+   const thetaDeg = 22.45, rho0 = 100.3;
+   const th = thetaDeg*Math.PI/180, c = Math.cos(th), s = Math.sin(th);
+   for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++)
+         if (Math.abs(x*c + y*s - rho0) <= 0.5) z[y*W + x] = 2; // 2 sigma, 1 px wide
+   const segAt = (rho) => {
+      // in-image chord of the line rho = x cos + y sin, parametrised by t
+      const pts = [];
+      for (let t = -2000; t <= 2000; t++) {
+         const x = rho*c - t*s, y = rho*s + t*c;
+         if (x >= 0 && x < W && y >= 0 && y < H) pts.push({ x, y });
+      }
+      return { x1: pts[0].x, y1: pts[0].y, x2: pts[pts.length - 1].x, y2: pts[pts.length - 1].y };
+   };
+   const off = T.lineEmptiness(z, W, H, segAt(rho0 + 0.6));
+   assert.ok(off.zeroFrac > 0.38, `0.6-px offset line reads holey (zeroFrac ${off.zeroFrac.toFixed(2)})`);
+   const snapped = T.snapToRidge(z, W, H, thetaDeg, rho0 + 0.6, 0.75, 0.25);
+   assert.ok(Math.abs(snapped - rho0) <= 0.3, `snapped rho ${snapped.toFixed(2)} vs ridge ${rho0}`);
+   const on = T.lineEmptiness(z, W, H, segAt(snapped));
+   assert.ok(on.zeroFrac < 0.15, `snapped line is continuous (zeroFrac ${on.zeroFrac.toFixed(2)})`);
+   assert.ok(!T.isNoiseLine(z, W, H, segAt(snapped), 1), "snapped line passes the noise veto");
+   // the other way round too, and an empty map leaves rho alone
+   assert.ok(Math.abs(T.snapToRidge(z, W, H, thetaDeg, rho0 - 0.6, 0.75, 0.25) - rho0) <= 0.3, "snap from below");
+   assert.strictEqual(T.snapToRidge(new Float32Array(W*H), W, H, thetaDeg, 50.5, 0.75, 0.25), 50.5, "empty map: unchanged");
+}
+
+console.log("traildetect: faint-pass ridge snapping OK");
+
+// ---------------------------------------------------------------------------
 // Photometric normalization: a frame seen through a clearer sky (signal
 // scaled up, offset shifted) must be brought back onto the model.
 
