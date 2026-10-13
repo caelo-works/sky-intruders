@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format is based on
   (field cleared, status line "Mirror URL must start with https:// —
   ignored."), dropped from a saved `settings.json`, and skipped by the TLE
   download ("custom mirror URL ignored: not https://").
+- TLE checksum: every downloaded element set (CelesTrak, CaeloWorks mirror,
+  custom mirror) is checked with the standard modulo-10 checksum of lines 1
+  and 2; a failing set is dropped ("<group>: N element set(s) dropped (bad
+  TLE checksum)") and a payload with more than 5% failing sets is rejected
+  as corrupt, so the next source or the cache is used instead.
 
 ## [0.3.0] - 2026-08-26
 

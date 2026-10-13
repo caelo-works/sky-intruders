@@ -37,6 +37,88 @@ var SITleNet = ( function()
       return pairs;
    }
 
+   // Standard TLE modulo-10 checksum of one element line: the digits of
+   // columns 1-68 summed, each minus sign counting 1, everything else 0;
+   // the sum mod 10 must equal the digit in column 69.
+   function tleLineChecksumOk( line )
+   {
+      var l = String( line == null ? "" : line ).replace( /\r$/, "" );
+      if ( l.length < 69 )
+         return false;
+      var want = l.charCodeAt( 68 ) - 48;
+      if ( want < 0 || want > 9 )
+         return false;
+      var sum = 0;
+      for ( var i = 0; i < 68; ++i )
+      {
+         var c = l.charCodeAt( i );
+         if ( c >= 48 && c <= 57 )
+            sum += c - 48;
+         else if ( c == 45 ) // '-'
+            sum += 1;
+      }
+      return ( sum % 10 ) == want;
+   }
+
+   // Drop every element set (name line + line 1 + line 2) whose line 1 or
+   // line 2 fails the checksum. Lines outside a 3-line set pass through.
+   // -> { text, kept, dropped } (text with LF line ends).
+   function filterTleByChecksum( text )
+   {
+      var lines = String( text ).split( "\n" );
+      var out = [];
+      var kept = 0, dropped = 0;
+      for ( var i = 0; i < lines.length; )
+      {
+         var l0 = lines[ i ].replace( /\r$/, "" );
+         if ( i + 2 < lines.length &&
+              lines[ i + 1 ].substring( 0, 2 ) == "1 " &&
+              lines[ i + 2 ].substring( 0, 2 ) == "2 " )
+         {
+            var l1 = lines[ i + 1 ].replace( /\r$/, "" );
+            var l2 = lines[ i + 2 ].replace( /\r$/, "" );
+            if ( tleLineChecksumOk( l1 ) && tleLineChecksumOk( l2 ) )
+            {
+               out.push( l0, l1, l2 );
+               ++kept;
+            }
+            else
+               ++dropped;
+            i += 3;
+         }
+         else
+         {
+            out.push( l0 );
+            ++i;
+         }
+      }
+      return { text: out.join( "\n" ), kept: kept, dropped: dropped };
+   }
+
+   // Above this fraction of failing element sets the whole payload is
+   // treated as corrupt rather than trimmed.
+   var TLE_CHECKSUM_MAX_BAD_FRACTION = 0.05;
+
+   // Checksum gate of a downloaded TLE payload. -> { text, count } with the
+   // bad sets dropped, or { error } when the payload as a whole is rejected.
+   function screenTlePayload( group, text )
+   {
+      var f = filterTleByChecksum( text );
+      var total = f.kept + f.dropped;
+      if ( f.dropped > 0 && f.dropped > TLE_CHECKSUM_MAX_BAD_FRACTION*total )
+      {
+         var why = "payload rejected as corrupt: " + f.dropped + " of " + total +
+                   " element sets fail the TLE checksum";
+         console.warningln( group + ": " + why );
+         return { error: why };
+      }
+      if ( f.kept < 1 )
+         return { error: "payload is not TLE data (0 valid records)" };
+      if ( f.dropped > 0 )
+         console.warningln( group + ": " + f.dropped + " element set(s) dropped (bad TLE checksum)" );
+      return { text: f.text, count: f.kept };
+   }
+
    function readMeta( path )
    {
       try
@@ -79,13 +161,13 @@ var SITleNet = ( function()
             lastError = r.error || ( "HTTP " + r.code );
             continue;
          }
-         var count = countTlePairs( r.text );
-         if ( count < 1 )
+         var screened = screenTlePayload( group, r.text );
+         if ( screened.error )
          {
-            lastError = "payload is not TLE data (0 valid records)";
+            lastError = screened.error;
             continue;
          }
-         return { url: url, text: r.text, count: count };
+         return { url: url, text: screened.text, count: screened.count };
       }
       return { error: lastError };
    }
@@ -315,6 +397,9 @@ var SITleNet = ( function()
       parseSatcatInfo: parseSatcatInfo,
       parseSatcatOwners: parseSatcatOwners,
       countTlePairs: countTlePairs,
+      tleLineChecksumOk: tleLineChecksumOk,
+      filterTleByChecksum: filterTleByChecksum,
+      TLE_CHECKSUM_MAX_BAD_FRACTION: TLE_CHECKSUM_MAX_BAD_FRACTION,
       buildUrl: buildUrl,
       DEFAULT_BASE: DEFAULT_BASE,
       DEFAULT_SOURCES: DEFAULT_SOURCES
