@@ -19,6 +19,14 @@ All notable changes to this project are documented here. The format is based on
   and 2; a failing set is dropped ("<group>: N element set(s) dropped (bad
   TLE checksum)") and a payload with more than 5% failing sets is rejected
   as corrupt, so the next source or the cache is used instead.
+- CaeloWorks mirror files (TLE groups and `satcat.csv`) are checked against
+  the mirror's `tle/SHA256SUMS` manifest, fetched once per run: the SHA-256
+  of the downloaded bytes (PixInsight's native `CryptographicHash`) must
+  match. A mismatch or missing entry refetches the manifest and the file
+  once, then refuses the file ("mirror file <name> failed SHA-256
+  verification — not used"); an unreachable manifest disables the mirror for
+  the run ("mirror manifest unavailable — mirror not used"). CelesTrak and a
+  custom mirror publish no manifest and rely on TLS plus the TLE checksum.
 
 ## [0.3.0] - 2026-08-26
 
