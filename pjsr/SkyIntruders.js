@@ -1540,8 +1540,10 @@ function runAnalysisIn( files, params, run )
                }
             }
             fbmp = SIRender.annotateTrails( fbmp, mine, { flagDir: flagAssetsDir() } );
-            fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + run.token + "-" +
-                       frames[ i ].meta.id.replace( /[^A-Za-z0-9_.-]+/g, "_" ) + ".png" );
+            var overlayPath = File.systemTempDirectory + "/si-frame-annotated-" + run.token + "-" +
+                              frames[ i ].meta.id.replace( /[^A-Za-z0-9_.-]+/g, "_" ) + ".png";
+            fbmp.save( overlayPath );
+            siTrackTempFile( overlayPath );
             gc();
          }
       }
@@ -2155,6 +2157,31 @@ function siIcon( dlg, resourcePath )
 function siProductUrl( lang )
 {
    return SI_PRODUCT_URL[ lang ] || SI_PRODUCT_URL.en;
+}
+
+// Files a dialog session writes to the system temp folder for display only
+// (the Treasure Hunt HTML copy opened in the browser, the debug frame
+// overlays) are removed when the dialog closes. The night result image is
+// kept on purpose: it is the image opened in PixInsight, saved by the user
+// wherever they want.
+var SI_SESSION_TEMP_FILES = [];
+
+function siTrackTempFile( path )
+{
+   if ( SI_SESSION_TEMP_FILES.indexOf( path ) < 0 )
+      SI_SESSION_TEMP_FILES.push( path );
+}
+
+function siCleanupTempFiles()
+{
+   for ( var i = 0; i < SI_SESSION_TEMP_FILES.length; ++i )
+      try
+      {
+         if ( File.exists( SI_SESSION_TEMP_FILES[ i ] ) )
+            File.remove( SI_SESSION_TEMP_FILES[ i ] );
+      }
+      catch ( e ) {}
+   SI_SESSION_TEMP_FILES = [];
 }
 
 // Open a file with the OS default handler (the illustrated report in a browser).
@@ -2822,6 +2849,7 @@ class HtmlResultDialog extends Dialog
          {
             var p = File.systemTempDirectory + "/" + this.suggestedName;
             File.writeTextFile( p, this.html + "\n" );
+            siTrackTempFile( p );
             openInBrowser( p );
             console.writeln( SKYINTRUDERS_TITLE + ": opened " + p );
          }
@@ -3651,7 +3679,14 @@ function main()
    ensureMinimumVersion( 1, 9, 4 );
    var params = loadParams();
    var dialog = new SkyIntrudersDialog( params );
-   dialog.execute();
+   try
+   {
+      dialog.execute();
+   }
+   finally
+   {
+      siCleanupTempFiles();
+   }
    saveParams( params );
 }
 
@@ -3763,6 +3798,13 @@ function siConstructTest()
 
       var cdlg = new SIColorDialog( SIRender.hexToArgb( SI_DEFAULT_ACCENT ), "t" );
       out.colorDialogOk = ( SIRender.argbToHex( cdlg.color ) === SI_DEFAULT_ACCENT );
+
+      // Session temp files are removed by the close-time cleanup.
+      var tmpProbe = File.systemTempDirectory + "/si-construct-tempfile-probe.html";
+      File.writeTextFile( tmpProbe, "x" );
+      siTrackTempFile( tmpProbe );
+      siCleanupTempFiles();
+      out.tempCleanupOk = !File.exists( tmpProbe ) && ( SI_SESSION_TEMP_FILES.length === 0 );
    }
    catch ( e )
    {

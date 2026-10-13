@@ -16,6 +16,14 @@ All notable changes to this project are documented here. The format is based on
   handling (no helper binaries ship; every entry is 0644). The zip stays
   reproducible.
 
+### Fixed
+
+- Temp files: the Treasure Hunt HTML copy opened in the browser and the
+  debug frame overlays (`si-frame-annotated-<token>-*.png`) are deleted from
+  the system temp folder when the dialog closes. The night result image
+  `SkyIntruders-night-<date>-<token>.png` is kept on purpose (it is the image
+  opened in PixInsight).
+
 ### Security
 
 - HTTPS only: `SINet.getText` refuses any URL that does not start with
@@ -37,6 +45,7 @@ All notable changes to this project are documented here. The format is based on
   verification — not used"); an unreachable manifest disables the mirror for
   the run ("mirror manifest unavailable — mirror not used"). CelesTrak and a
   custom mirror publish no manifest and rely on TLS plus the TLE checksum.
+  Part of #21.
 
 ## [0.3.0] - 2026-08-26
 
