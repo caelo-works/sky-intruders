@@ -32,7 +32,7 @@ number. There is no other version display.
 | Internet | Needed for satellite elements and deep-sky catalogs. HTTPS only, no telemetry, no personal data sent (see 6.1). Everything is cached; it degrades gracefully offline |
 | Files | One folder in the home directory, `.caeloworks/sky-intruders` (see 6.3), plus temp files (see 6.6). Nothing inside the PixInsight installation |
 | Repository | https://github.com/caelo-works/sky-intruders |
-| Product page | https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders |
+| Product page | EN https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders · FR https://pixinsight-scripts.caelo.works/scripts/sky-intruders |
 
 **Two modes, one dialog.** *Night trails* (the tab it opens on) scans a night of
 light frames and **names** the satellites that crossed them. *Treasure Hunt*
@@ -702,7 +702,8 @@ choose.
 Sky Intruders ships no executable and starts no program of its own. **Only on a
 user click** — **Open image** (the night PNG), **Open HTML** (the Treasure Hunt
 report), or the **"by CaeloWorks"** link under the title (it opens the product
-page, https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders) — it
+page in the interface language: …/en/scripts/sky-intruders in English,
+…/scripts/sky-intruders in French) — it
 asks the operating system to open the file or address with its default
 application: `cmd /c start` on Windows, `open` on macOS, `xdg-open` on Linux.
 If nothing opens on Linux, `xdg-open` is missing or no default browser /

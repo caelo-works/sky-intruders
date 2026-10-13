@@ -585,8 +585,9 @@ OS default handler — `cmd /c start "" <path>` on Windows, `/usr/bin/open` on
 macOS, `xdg-open` on Linux. Its callers all sit behind an explicit click:
 **Open image** (night result PNG), **Open HTML** (Treasure Hunt report copy)
 and the dialog's "by CaeloWorks" label, which opens the Sky Intruders product
-page (`https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders`; the
-label's tooltip shows that URL and the build). The packaged module ships no
+page in the interface language (`SI_PRODUCT_URL` in `Report.js`: English
+`/en/scripts/sky-intruders`, French `/scripts/sky-intruders` — French is the
+site's default language; the label's tooltip shows that URL and the build). The packaged module ships no
 executable of any kind.
 
 ## Treasure Hunt

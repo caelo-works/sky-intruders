@@ -8,11 +8,11 @@
  */
 
 // The product page, linked from the dialog's "by CaeloWorks" label and from
-// every report footer, per UI language. Only the English page exists, so
-// both languages point to it.
+// every report footer, per UI language. French is the site's default
+// language, so its page has no language prefix.
 var SI_PRODUCT_URL = {
    en: "https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders",
-   fr: "https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders"
+   fr: "https://pixinsight-scripts.caelo.works/scripts/sky-intruders"
 };
 
 var SIReport = ( function()

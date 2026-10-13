@@ -11,4 +11,4 @@
 - 00:12 UT — NORAD 12345  ·  L_0006.fits
 
 ---
-*Rapport généré par Sky Intruders pour PixInsight — https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders*
+*Rapport généré par Sky Intruders pour PixInsight — https://pixinsight-scripts.caelo.works/scripts/sky-intruders*
