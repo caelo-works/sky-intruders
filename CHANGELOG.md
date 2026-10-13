@@ -6,24 +6,6 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-### Changed
-
-- The "by CaeloWorks" label opens the Sky Intruders product page
-  (https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders, used for
-  both languages until a French page exists); its tooltip shows that URL and
-  the build. The night log and Treasure Hunt footers link the same page.
-- Packaging: `scripts/build-update-package.sh` no longer has any `bin/`
-  handling (no helper binaries ship; every entry is 0644). The zip stays
-  reproducible.
-
-### Fixed
-
-- Temp files: the Treasure Hunt HTML copy opened in the browser and the
-  debug frame overlays (`si-frame-annotated-<token>-*.png`) are deleted from
-  the system temp folder when the dialog closes. The night result image
-  `SkyIntruders-night-<date>-<token>.png` is kept on purpose (it is the image
-  opened in PixInsight).
-
 ### Security
 
 - HTTPS only: `SINet.getText` refuses any URL that does not start with
@@ -59,6 +41,24 @@ All notable changes to this project are documented here. The format is based on
   behaviour and matching troubleshooting entries. The architecture notes
   describe the HTTPS guard, the checksum filter, the manifest verification
   flow, temp-file cleanup and the only process launch. Part of #21.
+
+### Changed
+
+- The "by CaeloWorks" label opens the Sky Intruders product page
+  (https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders, used for
+  both languages until a French page exists); its tooltip shows that URL and
+  the build. The night log and Treasure Hunt footers link the same page.
+- Packaging: `scripts/build-update-package.sh` no longer has any `bin/`
+  handling (no helper binaries ship; every entry is 0644). The zip stays
+  reproducible.
+
+### Fixed
+
+- Temp files: the Treasure Hunt HTML copy opened in the browser and the
+  debug frame overlays (`si-frame-annotated-<token>-*.png`) are deleted from
+  the system temp folder when the dialog closes. The night result image
+  `SkyIntruders-night-<date>-<token>.png` is kept on purpose (it is the image
+  opened in PixInsight).
 
 ## [0.3.0] - 2026-08-26
 
