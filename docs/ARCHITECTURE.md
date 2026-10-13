@@ -40,10 +40,12 @@ pjsr/lib/TrailDetect.js      SITrailCore (pure: binning, adaptive threshold, Hou
                              merge, photometry) + SITrailDetect (PI: detect /
                              detectDiff over an Image)
 pjsr/lib/Net.js              SITleNet (TLE + SATCAT download: disk cache, two-pass
-                             source list with a mirror, stale-cache fallback,
+                             source list with a mirror, TLE checksum filter,
+                             mirror SHA-256 manifest check, stale-cache fallback,
                              group merge with NORAD dedup, SATCAT parsers) and
                              SINet, the one HTTP text getter (+ pause) every fetch
-                             in the script goes through
+                             in the script goes through; it refuses any URL that
+                             is not https://
 pjsr/lib/SatMatch.js         SISatMatch — TLE parse/validate, SGP4 via satellite.js,
                              Meeus sun + cylindrical Earth shadow, WGS84 observer,
                              TEME→J2000 rotation, topocentric RA/Dec, FOV crossing
@@ -344,6 +346,43 @@ fail are warned and skipped; the merged text is NORAD-deduped
 sources CelesTrak then the mirror) gives owner/ops/type per NORAD id for flags
 and natures; failure leaves an empty map.
 
+Transport: every fetch goes through `SINet.getText`, which refuses any URL not
+starting (case-insensitive) with `https://` — it returns `{ ok: false, code:
+0, error: "refused: not an https:// URL" }` without creating a
+`NetworkTransfer`. The user mirror `tleBaseUrl` is held to the same rule at
+three points: the dialog field (a non-https value is cleared, the parameter
+set to null and the status line says *"Mirror URL must start with https:// —
+ignored."*), `loadParams` (a saved non-https value is dropped) and
+`fetchTle` (skipped with the console warning *"custom mirror URL ignored: not
+https://"*).
+
+TLE checksum (every source): `SITleNet.tleLineChecksumOk(line)` checks the
+modulo-10 checksum of an element line (digits in columns 1–68 add their
+value, `-` adds 1, everything else 0; the sum mod 10 must equal column 69);
+`filterTleByChecksum(text)` → `{ text, kept, dropped }` drops every element
+set (name + line 1 + line 2) whose line 1 or line 2 fails. Dropped sets are
+reported as *"<group>: N element set(s) dropped (bad TLE checksum)"*; more
+than 5 % dropped rejects the whole payload as corrupt, so that source counts
+as failed and the walk moves on (next source, then stale cache). The cache is
+only ever written from a filtered payload, so a cache read-back needs no
+second check.
+
+Mirror manifest: the CaeloWorks mirror publishes `tle/SHA256SUMS` (standard
+`sha256sum` output, `<64 lowercase hex>  <file name>`, names relative to
+`tle/`, regenerated at every snapshot over every file but itself and
+`.gitkeep`). Whenever a TLE group or `satcat.csv` comes from the mirror, the
+manifest is fetched (once per run, memoized), the SHA-256 of the downloaded
+bytes compared with its entry, and on a mismatch or a missing entry the
+manifest and the file are fetched **once** more (the CDN may briefly serve
+files from two commits). Still no match: the mirror counts as failed for that
+file (*"mirror file <name> failed SHA-256 verification — not used"*) and the
+walk falls through to the next source or the stale cache. An unreachable
+manifest means no mirror file is used (*"mirror manifest unavailable — mirror
+not used"*). CelesTrak and a user mirror publish no manifest: TLS, the TLE
+checksum and the format checks are their protection. VizieR, SkyBoT and the
+CelesTrak SATCAT publish no checksum either — TLS plus the body gates
+(`docs/TREASURE-HUNT.md`) and the SATCAT header check.
+
 ### Matching (`SISatMatch.match(request, tleText)`)
 
 Request: `observer {latDeg, lonDeg, altM}`, `frames[] {id, startUtc,
@@ -518,6 +557,37 @@ and all its predicted crossings as ghost lines.
   `asteroid-v3_<ra>_<dec>_<radius>_<epoch>` for SkyBoT (coordinates rounded to
   3 decimals). Every key-version bump orphans the entries written before it;
   outages are never cached (see `docs/TREASURE-HUNT.md`).
+
+Nothing is written inside the PixInsight installation. User-chosen saves
+(**Save report…**, **Save HTML…**) go where the user picks.
+
+## Temporary files (`File.systemTempDirectory`)
+
+- `si-night-reg-<token>/` — per-run registration scratch, wiped in a `finally`
+  at the end of every run (see Run layout).
+- `si-render-<ms>-<n>.png` — `bitmapToBase64Png` scratch, removed in a
+  `finally` right after encoding.
+- HTML report copies written by **Open HTML**
+  (`SkyIntruders-Treasure-<OBJECT>.html`) and the `debugFrameOverlays` PNGs
+  `si-frame-annotated-<token>-*.png` — display-only, recorded by the dialog
+  session and deleted when the main dialog closes (best effort, each removal
+  in its own try/catch).
+- `SkyIntruders-night-<date label>-<token>.png` — the night result image,
+  **kept on purpose**: it is the file the result window's **Open image**
+  button opens, and the user saves it where they want.
+- `skyintruders-construct.json` — written only by the headless construction
+  gate (`SI_CONSTRUCT_TEST`), never in normal use.
+
+## External programs
+
+`openInBrowser(path)` is the only process launch: `ExternalProcess` runs the
+OS default handler — `cmd /c start "" <path>` on Windows, `/usr/bin/open` on
+macOS, `xdg-open` on Linux. Its callers all sit behind an explicit click:
+**Open image** (night result PNG), **Open HTML** (Treasure Hunt report copy)
+and the dialog's "by CaeloWorks" label, which opens the Sky Intruders product
+page (`https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders`; the
+label's tooltip shows that URL and the build). The packaged module ships no
+executable of any kind.
 
 ## Treasure Hunt
 
