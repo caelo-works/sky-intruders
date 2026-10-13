@@ -819,6 +819,10 @@ The user will copy-paste. These are the messages, word for word.
   element set(s) dropped (bad TLE checksum)"*) — N satellites failed the
   element-line checksum and were left out; the rest of the group is used.
   Harmless when occasional. If it repeats run after run, escalate (6.5).
+- *"<group>: payload rejected as corrupt: N of M element sets fail the TLE
+  checksum"* — more than 5% of the group failed its checksum, so the whole
+  download was refused as damaged; the next source (or the cached copy) was
+  used instead. Harmless once; if it repeats, escalate (6.5).
 - *"mirror manifest unavailable — mirror not used"* — the CaeloWorks mirror's
   SHA-256 manifest could not be fetched, so no file from the mirror was
   trusted. CelesTrak or the cache was used instead. Harmless once; escalate if
