@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-13
+
+**Validation** — all gates green on PixInsight 1.9.5 / Windows, 2026-10-13:
+GUI construction smoke test in both languages including the new product-link
+and temp-cleanup checks; v8 runtime selftest 7/7; a live network check through
+the production code: celestrak.org unreachable from the test network, so the
+CaeloWorks mirror served the data, each file verified against its published
+SHA-256 manifest (all 21 mirror files match it, full catalog 31 109 objects),
+and an `http://` URL refused before any connection; the 13-frame reference
+night detects the same 12 trails at the same endpoints as the 0.3.0 gates
+(satellite names re-rank with elements now three months past the frames, as
+documented). A load failure caught on these gates — a regex literal holding a
+double slash read as a comment by the PixInsight preprocessor, truncating
+`Net.js` — is fixed and now refused by the Node harness, which `node --check`
+alone could not catch. Node harness: all steps green. Fixes #21.
+
 ### Security
 
 - HTTPS only: `SINet.getText` refuses any URL that does not start with
