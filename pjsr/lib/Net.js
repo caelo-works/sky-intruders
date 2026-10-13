@@ -533,11 +533,11 @@ var SINet = ( function()
    // start with https:// (case-insensitive) is refused before any transfer.
    function isHttpsUrl( url )
    {
-      return typeof url == "string" && /^https:\/\//i.test( url );
+      return typeof url == "string" && url.substring( 0, 8 ).toLowerCase() === "https://";
    }
 
    // A native SHA-256 accumulator (PJSR CryptographicHash, probed on
-   // PixInsight 1.9.x under #engine v8), or null when unavailable. The
+   // PixInsight 1.9.x under the v8 engine), or null when unavailable. The
    // CryptographicHash_* header constants are not defined at run time; the
    // static CryptographicHash.SHA256 is.
    function newSha256()

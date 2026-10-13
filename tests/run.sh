@@ -126,6 +126,16 @@ for src in "${UNBUNDLED[@]}"; do
    echo "OK   syntax $(basename "$src") (node --check, unbundled)"
 done
 
+# PixInsight's preprocessor strips `//` line comments without parsing regex
+# literals, so a regex containing an escaped double slash (e.g. the scheme
+# part of a URL pattern) truncates the rest of the file at #include time.
+# node --check cannot see it; refuse the pattern in shipped sources.
+if grep -nE '\\/\\/' "$ROOT"/pjsr/*.js "$ROOT"/pjsr/lib/*.js; then
+   echo "FAIL preprocessor: escaped double slash in a regex literal (see lines above)"
+   exit 1
+fi
+echo "OK   preprocessor (no double slash in regex literals)"
+
 failures=0
 for t in "$ROOT"/tests/*.test.js; do
    if node "$t" > "$BUILD/last.log" 2>&1; then
