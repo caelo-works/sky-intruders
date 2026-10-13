@@ -43,10 +43,9 @@ sed -e "s/__BUILD__/${VERSION}/g" "$REPO/pjsr/$NAME.js" > "$DST/$NAME.js"
 # 1b) licence text ships next to the entry script (GPL-3.0 — sources carry SPDX headers)
 cp "$REPO/LICENSE" "$DST/LICENSE"
 
-# 2) optional lib/, assets/ (flags etc.) and bin/ (per-OS helper binaries)
+# 2) optional lib/ and assets/ (flags etc.)
 [ -d "$REPO/pjsr/lib" ] && { mkdir -p "$DST/lib"; cp -R "$REPO"/pjsr/lib/. "$DST/lib/"; }
 [ -d "$REPO/pjsr/assets" ] && { mkdir -p "$DST/assets"; cp -R "$REPO"/pjsr/assets/. "$DST/assets/"; }
-[ -d "$REPO/bin" ]      && { mkdir -p "$DST/bin"; cp "$REPO"/bin/*        "$DST/bin/"; }
 
 # 3) menu icon (#feature-icon @script_icons_dir/<NAME>.svg)
 cp "$REPO/pjsr/assets/$NAME.svg" "$STAGE/rsc/icons/script/$NAME/$NAME.svg"
@@ -82,7 +81,7 @@ PJSR
 fi
 
 # 4) reproducible zip: sorted entries, fixed mtime (1980-01-01), fixed perms
-#    (0755 for bin/, 0644 otherwise). No OS/timestamp entropy -> stable SHA-1.
+#    (0644). No OS/timestamp entropy -> stable SHA-1.
 python3 - "$STAGE" "$OUT/$ZIPNAME" <<'PY'
 import os, sys, zipfile
 stage, out = sys.argv[1], sys.argv[2]
@@ -96,8 +95,7 @@ files.sort(key=lambda x: x[0])
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
     for arc, full in files:
         zi = zipfile.ZipInfo(arc, date_time=(1980, 1, 1, 0, 0, 0))
-        perm = 0o755 if "/bin/" in ("/" + arc) else 0o644
-        zi.external_attr = (perm & 0xFFFF) << 16
+        zi.external_attr = (0o644 & 0xFFFF) << 16
         zi.compress_type = zipfile.ZIP_DEFLATED
         with open(full, "rb") as f:
             z.writestr(zi, f.read())

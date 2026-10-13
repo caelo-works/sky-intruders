@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format is based on
   (https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders, used for
   both languages until a French page exists); its tooltip shows that URL and
   the build. The night log and Treasure Hunt footers link the same page.
+- Packaging: `scripts/build-update-package.sh` no longer has any `bin/`
+  handling (no helper binaries ship; every entry is 0644). The zip stays
+  reproducible.
 
 ### Security
 
