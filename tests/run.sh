@@ -89,6 +89,7 @@ module.exports = {
    SIFrameMetaCore: SIFrameMetaCore,
    SITrailCore: SITrailCore,
    SITleNet: SITleNet,
+   SINet: SINet,
    SISatMatch: SISatMatch,
    SIMeteors: SIMeteors,
    SISatLabels: SISatLabels,

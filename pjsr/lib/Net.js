@@ -115,6 +115,11 @@ var SITleNet = ( function()
                      fromCache: true, sourceUrl: meta.sourceUrl };
       }
 
+      if ( baseUrl && !SINet.isHttpsUrl( baseUrl ) )
+      {
+         console.warningln( "custom mirror URL ignored: not https://" );
+         baseUrl = null;
+      }
       var sources = baseUrl ? [ baseUrl ].concat( DEFAULT_SOURCES ) : DEFAULT_SOURCES;
 
       // Pass 1 is quick (10 s/source) so a blocked host falls through fast to
@@ -326,10 +331,19 @@ var SITleNet = ( function()
  */
 var SINet = ( function()
 {
+   // Every network access of the script goes over TLS: a URL that does not
+   // start with https:// (case-insensitive) is refused before any transfer.
+   function isHttpsUrl( url )
+   {
+      return typeof url == "string" && /^https:\/\//i.test( url );
+   }
+
    function getText( url, timeoutSec )
    {
       // -> { ok, code, text, error }. code 0 is the NetworkTransfer "no HTTP
       // status" value (e.g. non-HTTP transfer); treat 0 or 200 as success.
+      if ( !isHttpsUrl( url ) )
+         return { ok: false, code: 0, text: "", error: "refused: not an https:// URL" };
       var T = new NetworkTransfer;
       var chunks = [];
       T.onDownloadDataAvailable = function( data )
@@ -361,5 +375,5 @@ var SINet = ( function()
             processEvents();
    }
 
-   return { getText: getText, pause: pause };
+   return { getText: getText, isHttpsUrl: isHttpsUrl, pause: pause };
 } )();

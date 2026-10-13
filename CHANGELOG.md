@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- HTTPS only: `SINet.getText` refuses any URL that does not start with
+  `https://` (case-insensitive) before a transfer is created. A custom
+  orbital data mirror URL over another scheme is rejected in the dialog
+  (field cleared, status line "Mirror URL must start with https:// —
+  ignored."), dropped from a saved `settings.json`, and skipped by the TLE
+  download ("custom mirror URL ignored: not https://").
+
 ## [0.3.0] - 2026-08-26
 
 **Validation** — all gates green on PixInsight 1.9.4 / Windows, 2026-08-26:

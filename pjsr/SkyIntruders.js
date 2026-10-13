@@ -192,6 +192,9 @@ function loadParams()
                out[ k ] = saved[ k ];
          if ( out.nightResultCombine !== "best" && out.nightResultCombine !== "max" )
             out.nightResultCombine = DEFAULT_PARAMS.nightResultCombine;
+         // HTTPS only: a saved mirror URL over any other scheme is dropped.
+         if ( out.tleBaseUrl !== null && !SINet.isHttpsUrl( out.tleBaseUrl ) )
+            out.tleBaseUrl = null;
          // tleExtraGroups has no dialog control, so a saved value is a
          // frozen former default, not a user choice: upgrade the old
          // default in place so existing installs gain the full catalog.
@@ -2267,9 +2270,10 @@ var SI_UI = {
                  "Raise it to work offline on a recent cache; predictions degrade " +
                  "with age. Default 12.",
       tleUrl: "Orbital data mirror URL:",
-      tleUrlTip: "Base URL of a CelesTrak-compatible mirror, tried first when set. " +
+      tleUrlTip: "Base URL (https:// only) of a CelesTrak-compatible mirror, tried first when set. " +
                  "Leave empty for the default sources (CelesTrak, then the " +
                  "CaeloWorks mirror).",
+      tleUrlNotHttps: "Mirror URL must start with https:// \u2014 ignored.",
       predicted: "Draw predicted crossers on the result image",
       predictedTip: "Satellites the orbit propagation puts inside your field " +
                     "during an exposure but that no detected trail matched — " +
@@ -2356,9 +2360,10 @@ var SI_UI = {
                  "ret\u00e9l\u00e9charg\u00e9s. Augmente-le pour travailler hors ligne sur un cache " +
                  "r\u00e9cent ; les pr\u00e9dictions se d\u00e9gradent avec l'\u00e2ge. D\u00e9faut 12.",
       tleUrl: "URL du miroir orbital :",
-      tleUrlTip: "URL de base d'un miroir compatible CelesTrak, essay\u00e9 en premier quand " +
+      tleUrlTip: "URL de base (https:// uniquement) d'un miroir compatible CelesTrak, essay\u00e9 en premier quand " +
                  "il est renseign\u00e9. Vide = sources par d\u00e9faut (CelesTrak, puis le " +
                  "miroir CaeloWorks).",
+      tleUrlNotHttps: "L'URL du miroir doit commencer par https:// \u2014 ignor\u00e9e.",
       predicted: "Tracer les passages pr\u00e9dits sur l'image r\u00e9sultat",
       predictedTip: "Satellites que la propagation orbitale place dans le champ pendant une " +
                     "pose mais qu'aucune tra\u00een\u00e9e d\u00e9tect\u00e9e n'a confirm\u00e9s — trac\u00e9s en " +
@@ -2951,6 +2956,15 @@ class SkyIntrudersDialog extends Dialog
       this.tleUrlEdit.onEditCompleted = () =>
       {
          var t = String( self.tleUrlEdit.text ).trim();
+         if ( t.length > 0 && !SINet.isHttpsUrl( t ) )
+         {
+            // HTTPS only: a mirror over any other scheme is refused.
+            self.params.tleBaseUrl = null;
+            self.tleUrlEdit.text = "";
+            self.updateStatus( "<span style=\"color:#e0a030;\">" +
+                               uiT( self.params.lang, "tleUrlNotHttps" ) + "</span>" );
+            return;
+         }
          self.params.tleBaseUrl = ( t.length > 0 ) ? t : null;
          self.tleUrlEdit.text = t;
       };
@@ -3682,6 +3696,11 @@ function siConstructTest()
       d.tleUrlEdit.text = "";
       d.tleUrlEdit.onEditCompleted();
       out.advancedOk = out.advancedOk && ( d.params.tleBaseUrl === null );
+      d.tleUrlEdit.text = "http://example.invalid/tle";
+      d.tleUrlEdit.onEditCompleted();
+      out.advancedOk = out.advancedOk && ( d.params.tleBaseUrl === null ) &&
+                       ( d.tleUrlEdit.text === "" ) &&
+                       ( d.statusLabel.text.indexOf( uiT( "en", "tleUrlNotHttps" ) ) >= 0 );
 
       // Observer site: decimal comma, sexagesimal, range rejection, echo.
       d.latEdit.edit.text = "48,85";
