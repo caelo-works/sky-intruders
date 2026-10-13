@@ -17,4 +17,4 @@
 - 🏆 Première nuit enregistrée — chaque stat est un record personnel. Bienvenue au club.
 
 ---
-*Rapport généré par Sky Intruders pour PixInsight — pixinsight-scripts.caelo.works*
+*Rapport généré par Sky Intruders pour PixInsight — https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders*

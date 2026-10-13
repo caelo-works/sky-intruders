@@ -192,6 +192,9 @@ function loadParams()
                out[ k ] = saved[ k ];
          if ( out.nightResultCombine !== "best" && out.nightResultCombine !== "max" )
             out.nightResultCombine = DEFAULT_PARAMS.nightResultCombine;
+         // HTTPS only: a saved mirror URL over any other scheme is dropped.
+         if ( out.tleBaseUrl !== null && !SINet.isHttpsUrl( out.tleBaseUrl ) )
+            out.tleBaseUrl = null;
          // tleExtraGroups has no dialog control, so a saved value is a
          // frozen former default, not a user choice: upgrade the old
          // default in place so existing installs gain the full catalog.
@@ -1537,8 +1540,10 @@ function runAnalysisIn( files, params, run )
                }
             }
             fbmp = SIRender.annotateTrails( fbmp, mine, { flagDir: flagAssetsDir() } );
-            fbmp.save( File.systemTempDirectory + "/si-frame-annotated-" + run.token + "-" +
-                       frames[ i ].meta.id.replace( /[^A-Za-z0-9_.-]+/g, "_" ) + ".png" );
+            var overlayPath = File.systemTempDirectory + "/si-frame-annotated-" + run.token + "-" +
+                              frames[ i ].meta.id.replace( /[^A-Za-z0-9_.-]+/g, "_" ) + ".png";
+            fbmp.save( overlayPath );
+            siTrackTempFile( overlayPath );
             gc();
          }
       }
@@ -2148,6 +2153,37 @@ function siIcon( dlg, resourcePath )
    }
 }
 
+// The product page for a UI language (SI_PRODUCT_URL lives in lib/Report.js).
+function siProductUrl( lang )
+{
+   return SI_PRODUCT_URL[ lang ] || SI_PRODUCT_URL.en;
+}
+
+// Files a dialog session writes to the system temp folder for display only
+// (the Treasure Hunt HTML copy opened in the browser, the debug frame
+// overlays) are removed when the dialog closes. The night result image is
+// kept on purpose: it is the image opened in PixInsight, saved by the user
+// wherever they want.
+var SI_SESSION_TEMP_FILES = [];
+
+function siTrackTempFile( path )
+{
+   if ( SI_SESSION_TEMP_FILES.indexOf( path ) < 0 )
+      SI_SESSION_TEMP_FILES.push( path );
+}
+
+function siCleanupTempFiles()
+{
+   for ( var i = 0; i < SI_SESSION_TEMP_FILES.length; ++i )
+      try
+      {
+         if ( File.exists( SI_SESSION_TEMP_FILES[ i ] ) )
+            File.remove( SI_SESSION_TEMP_FILES[ i ] );
+      }
+      catch ( e ) {}
+   SI_SESSION_TEMP_FILES = [];
+}
+
 // Open a file with the OS default handler (the illustrated report in a browser).
 function openInBrowser( path )
 {
@@ -2267,9 +2303,10 @@ var SI_UI = {
                  "Raise it to work offline on a recent cache; predictions degrade " +
                  "with age. Default 12.",
       tleUrl: "Orbital data mirror URL:",
-      tleUrlTip: "Base URL of a CelesTrak-compatible mirror, tried first when set. " +
+      tleUrlTip: "Base URL (https:// only) of a CelesTrak-compatible mirror, tried first when set. " +
                  "Leave empty for the default sources (CelesTrak, then the " +
                  "CaeloWorks mirror).",
+      tleUrlNotHttps: "Mirror URL must start with https:// \u2014 ignored.",
       predicted: "Draw predicted crossers on the result image",
       predictedTip: "Satellites the orbit propagation puts inside your field " +
                     "during an exposure but that no detected trail matched — " +
@@ -2356,9 +2393,10 @@ var SI_UI = {
                  "ret\u00e9l\u00e9charg\u00e9s. Augmente-le pour travailler hors ligne sur un cache " +
                  "r\u00e9cent ; les pr\u00e9dictions se d\u00e9gradent avec l'\u00e2ge. D\u00e9faut 12.",
       tleUrl: "URL du miroir orbital :",
-      tleUrlTip: "URL de base d'un miroir compatible CelesTrak, essay\u00e9 en premier quand " +
+      tleUrlTip: "URL de base (https:// uniquement) d'un miroir compatible CelesTrak, essay\u00e9 en premier quand " +
                  "il est renseign\u00e9. Vide = sources par d\u00e9faut (CelesTrak, puis le " +
                  "miroir CaeloWorks).",
+      tleUrlNotHttps: "L'URL du miroir doit commencer par https:// \u2014 ignor\u00e9e.",
       predicted: "Tracer les passages pr\u00e9dits sur l'image r\u00e9sultat",
       predictedTip: "Satellites que la propagation orbitale place dans le champ pendant une " +
                     "pose mais qu'aucune tra\u00een\u00e9e d\u00e9tect\u00e9e n'a confirm\u00e9s — trac\u00e9s en " +
@@ -2811,6 +2849,7 @@ class HtmlResultDialog extends Dialog
          {
             var p = File.systemTempDirectory + "/" + this.suggestedName;
             File.writeTextFile( p, this.html + "\n" );
+            siTrackTempFile( p );
             openInBrowser( p );
             console.writeln( SKYINTRUDERS_TITLE + ": opened " + p );
          }
@@ -2886,10 +2925,11 @@ class SkyIntrudersDialog extends Dialog
       this.buildLabel.useRichText = true;
       this.buildLabel.text = "by <span style=\"color:#5a8fd0; text-decoration:underline;\">CaeloWorks</span>";
       this.buildLabel.textAlignment = TextAlign.Left | TextAlign.VertCenter;
-      this.buildLabel.toolTip = "https://pixinsight-scripts.caelo.works/ — build " + SKYINTRUDERS_BUILD;
+      // Opens the product page of the current UI language; the tooltip
+      // (set in applyLanguage) shows that URL and the build.
       this.buildLabel.onMousePress = function()
       {
-         openInBrowser( "https://pixinsight-scripts.caelo.works/" );
+         openInBrowser( siProductUrl( self.params.lang ) );
       };
       try { this.buildLabel.cursor = new Cursor( StdCursor_PointingHand ); } catch ( e ) {}
 
@@ -2951,6 +2991,15 @@ class SkyIntrudersDialog extends Dialog
       this.tleUrlEdit.onEditCompleted = () =>
       {
          var t = String( self.tleUrlEdit.text ).trim();
+         if ( t.length > 0 && !SINet.isHttpsUrl( t ) )
+         {
+            // HTTPS only: a mirror over any other scheme is refused.
+            self.params.tleBaseUrl = null;
+            self.tleUrlEdit.text = "";
+            self.updateStatus( "<span style=\"color:#e0a030;\">" +
+                               uiT( self.params.lang, "tleUrlNotHttps" ) + "</span>" );
+            return;
+         }
          self.params.tleBaseUrl = ( t.length > 0 ) ? t : null;
          self.tleUrlEdit.text = t;
       };
@@ -3286,6 +3335,7 @@ class SkyIntrudersDialog extends Dialog
    applyLanguage()
    {
       var L = this.params.lang;
+      this.buildLabel.toolTip = siProductUrl( L ) + " — build " + SKYINTRUDERS_BUILD;
       this.langCombo.toolTip = uiT( L, "languageTip" );
       this.langLabel.text = uiT( L, "language" );
       this.nightHint.text = uiT( L, "hintNight" );
@@ -3629,7 +3679,14 @@ function main()
    ensureMinimumVersion( 1, 9, 4 );
    var params = loadParams();
    var dialog = new SkyIntrudersDialog( params );
-   dialog.execute();
+   try
+   {
+      dialog.execute();
+   }
+   finally
+   {
+      siCleanupTempFiles();
+   }
    saveParams( params );
 }
 
@@ -3665,6 +3722,8 @@ function siConstructTest()
       out.langSwitchOk = ( out.frAnalyze !== out.enAnalyze ) &&
                          ( out.frAnalyze === uiT( "fr", modeKey ) ) &&
                          ( out.enAnalyze === uiT( "en", modeKey ) );
+      // The "by CaeloWorks" label points at the product page.
+      out.productLinkOk = ( d.buildLabel.toolTip.indexOf( siProductUrl( "en" ) + " — build " ) === 0 );
 
       // Advanced group: every control must exist, carry its parameter and
       // round-trip a value through the handlers the GUI would fire.
@@ -3682,6 +3741,11 @@ function siConstructTest()
       d.tleUrlEdit.text = "";
       d.tleUrlEdit.onEditCompleted();
       out.advancedOk = out.advancedOk && ( d.params.tleBaseUrl === null );
+      d.tleUrlEdit.text = "http://example.invalid/tle";
+      d.tleUrlEdit.onEditCompleted();
+      out.advancedOk = out.advancedOk && ( d.params.tleBaseUrl === null ) &&
+                       ( d.tleUrlEdit.text === "" ) &&
+                       ( d.statusLabel.text.indexOf( uiT( "en", "tleUrlNotHttps" ) ) >= 0 );
 
       // Observer site: decimal comma, sexagesimal, range rejection, echo.
       d.latEdit.edit.text = "48,85";
@@ -3734,6 +3798,13 @@ function siConstructTest()
 
       var cdlg = new SIColorDialog( SIRender.hexToArgb( SI_DEFAULT_ACCENT ), "t" );
       out.colorDialogOk = ( SIRender.argbToHex( cdlg.color ) === SI_DEFAULT_ACCENT );
+
+      // Session temp files are removed by the close-time cleanup.
+      var tmpProbe = File.systemTempDirectory + "/si-construct-tempfile-probe.html";
+      File.writeTextFile( tmpProbe, "x" );
+      siTrackTempFile( tmpProbe );
+      siCleanupTempFiles();
+      out.tempCleanupOk = !File.exists( tmpProbe ) && ( SI_SESSION_TEMP_FILES.length === 0 );
    }
    catch ( e )
    {

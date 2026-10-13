@@ -11,6 +11,12 @@
  * NetworkTransfer was probed on PixInsight 1.9.4 under #engine v8
  * (tests/probe-networktransfer.js): setURL/download/onDownloadDataAvailable
  * and setConnectionTimeout all work.
+ *
+ * Integrity: HTTPS only (SINet.getText refuses anything else), the TLE
+ * modulo-10 checksum on every element set from every source, and for the
+ * CaeloWorks mirror the SHA-256 of each downloaded file checked against the
+ * mirror's tle/SHA256SUMS manifest (native CryptographicHash over the raw
+ * downloaded bytes).
  */
 
 var SITleNet = ( function()
@@ -21,10 +27,111 @@ var SITleNet = ( function()
    // canonical, freshest source; the caelo-works mirror (a scheduled GitHub
    // Action snapshot, served from raw.githubusercontent.com) is the fallback
    // for networks that cannot reach celestrak.org.
+   var MIRROR_BASE = "https://raw.githubusercontent.com/caelo-works/tle-mirror/main/tle/";
+   var MIRROR_MANIFEST_URL = MIRROR_BASE + "SHA256SUMS";
+
    var DEFAULT_SOURCES = [
       "https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT=tle",
-      "https://raw.githubusercontent.com/caelo-works/tle-mirror/main/tle/{group}.tle"
+      MIRROR_BASE + "{group}.tle"
    ];
+
+   // --- CaeloWorks mirror SHA-256 manifest ----------------------------------
+   // tle/SHA256SUMS is standard sha256sum output ("<64 hex>  <name>" per
+   // line, names relative to tle/), regenerated at every mirror snapshot.
+
+   // -> { name: lowercase hex } (malformed lines ignored).
+   function parseSha256Sums( text )
+   {
+      var out = {};
+      var lines = String( text == null ? "" : text ).split( "\n" );
+      for ( var i = 0; i < lines.length; ++i )
+      {
+         var m = lines[ i ].replace( /\r$/, "" ).match( /^([0-9a-fA-F]{64}) [ *](\S.*)$/ );
+         if ( m )
+            out[ m[ 2 ].trim() ] = m[ 1 ].toLowerCase();
+      }
+      return out;
+   }
+
+   // The manifest is fetched at most once per run (memoized here, reset by
+   // resetMirrorManifest at the start of a run). undefined: not fetched yet;
+   // null: unavailable, the mirror is not used for the rest of the run.
+   var manifestMemo = undefined;
+
+   function resetMirrorManifest()
+   {
+      manifestMemo = undefined;
+   }
+
+   function fetchManifestMap()
+   {
+      var r = SINet.getText( MIRROR_MANIFEST_URL, 20 );
+      if ( !r.ok || ( r.code != 0 && r.code != 200 ) )
+         return null;
+      var map = parseSha256Sums( r.text );
+      for ( var k in map )
+         return map;
+      return null; // no entry at all: not a manifest
+   }
+
+   function loadMirrorManifest()
+   {
+      if ( manifestMemo === undefined )
+      {
+         manifestMemo = fetchManifestMap();
+         if ( manifestMemo == null )
+            console.warningln( "mirror manifest unavailable \u2014 mirror not used" );
+      }
+      return manifestMemo;
+   }
+
+   // File name relative to tle/ of a CaeloWorks mirror URL, or null.
+   function mirrorFileName( url )
+   {
+      url = String( url );
+      return ( url.indexOf( MIRROR_BASE ) == 0 && url.length > MIRROR_BASE.length )
+             ? url.substring( MIRROR_BASE.length ) : null;
+   }
+
+   function httpOk( r )
+   {
+      return r.ok && ( r.code == 0 || r.code == 200 );
+   }
+
+   /*
+    * getVerified( url, timeoutSec ) -> SINet.getText result.
+    * Any URL outside the CaeloWorks mirror is fetched as is. A mirror file
+    * must hash to its manifest entry; on a mismatch or a missing entry the
+    * manifest and the file are fetched once more (the CDN may briefly serve
+    * files from different commits), then the file is refused.
+    */
+   function getVerified( url, timeoutSec )
+   {
+      var name = mirrorFileName( url );
+      if ( name == null )
+         return SINet.getText( url, timeoutSec );
+      var manifest = loadMirrorManifest();
+      if ( manifest == null )
+         return { ok: false, code: 0, text: "", error: "mirror manifest unavailable" };
+      var r = SINet.getText( url, timeoutSec, { sha256: true } );
+      if ( !httpOk( r ) )
+         return r;
+      if ( manifest[ name ] !== undefined && r.sha256 === manifest[ name ] )
+         return r;
+      var fresh = fetchManifestMap();
+      if ( fresh != null )
+      {
+         manifestMemo = fresh;
+         r = SINet.getText( url, timeoutSec, { sha256: true } );
+         if ( !httpOk( r ) )
+            return r;
+         if ( fresh[ name ] !== undefined && r.sha256 === fresh[ name ] )
+            return r;
+      }
+      console.warningln( "mirror file " + name + " failed SHA-256 verification \u2014 not used" );
+      return { ok: false, code: 0, text: "",
+               error: "mirror file " + name + " failed SHA-256 verification" };
+   }
 
    function countTlePairs( text )
    {
@@ -35,6 +142,88 @@ var SITleNet = ( function()
               lines[ i + 2 ].substring( 0, 2 ) == "2 " )
             ++pairs;
       return pairs;
+   }
+
+   // Standard TLE modulo-10 checksum of one element line: the digits of
+   // columns 1-68 summed, each minus sign counting 1, everything else 0;
+   // the sum mod 10 must equal the digit in column 69.
+   function tleLineChecksumOk( line )
+   {
+      var l = String( line == null ? "" : line ).replace( /\r$/, "" );
+      if ( l.length < 69 )
+         return false;
+      var want = l.charCodeAt( 68 ) - 48;
+      if ( want < 0 || want > 9 )
+         return false;
+      var sum = 0;
+      for ( var i = 0; i < 68; ++i )
+      {
+         var c = l.charCodeAt( i );
+         if ( c >= 48 && c <= 57 )
+            sum += c - 48;
+         else if ( c == 45 ) // '-'
+            sum += 1;
+      }
+      return ( sum % 10 ) == want;
+   }
+
+   // Drop every element set (name line + line 1 + line 2) whose line 1 or
+   // line 2 fails the checksum. Lines outside a 3-line set pass through.
+   // -> { text, kept, dropped } (text with LF line ends).
+   function filterTleByChecksum( text )
+   {
+      var lines = String( text ).split( "\n" );
+      var out = [];
+      var kept = 0, dropped = 0;
+      for ( var i = 0; i < lines.length; )
+      {
+         var l0 = lines[ i ].replace( /\r$/, "" );
+         if ( i + 2 < lines.length &&
+              lines[ i + 1 ].substring( 0, 2 ) == "1 " &&
+              lines[ i + 2 ].substring( 0, 2 ) == "2 " )
+         {
+            var l1 = lines[ i + 1 ].replace( /\r$/, "" );
+            var l2 = lines[ i + 2 ].replace( /\r$/, "" );
+            if ( tleLineChecksumOk( l1 ) && tleLineChecksumOk( l2 ) )
+            {
+               out.push( l0, l1, l2 );
+               ++kept;
+            }
+            else
+               ++dropped;
+            i += 3;
+         }
+         else
+         {
+            out.push( l0 );
+            ++i;
+         }
+      }
+      return { text: out.join( "\n" ), kept: kept, dropped: dropped };
+   }
+
+   // Above this fraction of failing element sets the whole payload is
+   // treated as corrupt rather than trimmed.
+   var TLE_CHECKSUM_MAX_BAD_FRACTION = 0.05;
+
+   // Checksum gate of a downloaded TLE payload. -> { text, count } with the
+   // bad sets dropped, or { error } when the payload as a whole is rejected.
+   function screenTlePayload( group, text )
+   {
+      var f = filterTleByChecksum( text );
+      var total = f.kept + f.dropped;
+      if ( f.dropped > 0 && f.dropped > TLE_CHECKSUM_MAX_BAD_FRACTION*total )
+      {
+         var why = "payload rejected as corrupt: " + f.dropped + " of " + total +
+                   " element sets fail the TLE checksum";
+         console.warningln( group + ": " + why );
+         return { error: why };
+      }
+      if ( f.kept < 1 )
+         return { error: "payload is not TLE data (0 valid records)" };
+      if ( f.dropped > 0 )
+         console.warningln( group + ": " + f.dropped + " element set(s) dropped (bad TLE checksum)" );
+      return { text: f.text, count: f.kept };
    }
 
    function readMeta( path )
@@ -73,19 +262,19 @@ var SITleNet = ( function()
          var url = buildUrl( sources[ i ], group );
          if ( url == null )
             continue;
-         var r = SINet.getText( url, timeoutSec );
+         var r = getVerified( url, timeoutSec );
          if ( !r.ok || ( r.code != 0 && r.code != 200 ) )
          {
             lastError = r.error || ( "HTTP " + r.code );
             continue;
          }
-         var count = countTlePairs( r.text );
-         if ( count < 1 )
+         var screened = screenTlePayload( group, r.text );
+         if ( screened.error )
          {
-            lastError = "payload is not TLE data (0 valid records)";
+            lastError = screened.error;
             continue;
          }
-         return { url: url, text: r.text, count: count };
+         return { url: url, text: screened.text, count: screened.count };
       }
       return { error: lastError };
    }
@@ -115,6 +304,11 @@ var SITleNet = ( function()
                      fromCache: true, sourceUrl: meta.sourceUrl };
       }
 
+      if ( baseUrl && !SINet.isHttpsUrl( baseUrl ) )
+      {
+         console.warningln( "custom mirror URL ignored: not https://" );
+         baseUrl = null;
+      }
       var sources = baseUrl ? [ baseUrl ].concat( DEFAULT_SOURCES ) : DEFAULT_SOURCES;
 
       // Pass 1 is quick (10 s/source) so a blocked host falls through fast to
@@ -150,7 +344,7 @@ var SITleNet = ( function()
    // to its operating country/organization.
    var SATCAT_SOURCES = [
       "https://celestrak.org/pub/satcat.csv",
-      "https://raw.githubusercontent.com/caelo-works/tle-mirror/main/tle/satcat.csv"
+      MIRROR_BASE + "satcat.csv"
    ];
 
    /*
@@ -176,7 +370,7 @@ var SITleNet = ( function()
          {
             for ( var i = 0; i < SATCAT_SOURCES.length; ++i )
             {
-               var r = SINet.getText( SATCAT_SOURCES[ i ], pass == 0 ? 15 : 30 );
+               var r = getVerified( SATCAT_SOURCES[ i ], pass == 0 ? 15 : 30 );
                if ( r.ok && ( r.code == 0 || r.code == 200 ) &&
                     r.text.indexOf( "NORAD_CAT_ID" ) >= 0 )
                {
@@ -274,6 +468,8 @@ var SITleNet = ( function()
    // later step throws.
    function fetchMergedTleText( group, extraGroups, cacheDir, maxAgeHours, baseUrl, onInfo )
    {
+      // A new run: the mirror manifest is fetched again (once) if needed.
+      resetMirrorManifest();
       var info = fetchTle( group, cacheDir, maxAgeHours, baseUrl );
       if ( onInfo )
          onInfo( info );
@@ -310,7 +506,14 @@ var SITleNet = ( function()
       parseSatcatInfo: parseSatcatInfo,
       parseSatcatOwners: parseSatcatOwners,
       countTlePairs: countTlePairs,
+      tleLineChecksumOk: tleLineChecksumOk,
+      filterTleByChecksum: filterTleByChecksum,
+      TLE_CHECKSUM_MAX_BAD_FRACTION: TLE_CHECKSUM_MAX_BAD_FRACTION,
       buildUrl: buildUrl,
+      parseSha256Sums: parseSha256Sums,
+      getVerified: getVerified,
+      resetMirrorManifest: resetMirrorManifest,
+      MIRROR_MANIFEST_URL: MIRROR_MANIFEST_URL,
       DEFAULT_BASE: DEFAULT_BASE,
       DEFAULT_SOURCES: DEFAULT_SOURCES
    };
@@ -326,15 +529,44 @@ var SITleNet = ( function()
  */
 var SINet = ( function()
 {
-   function getText( url, timeoutSec )
+   // Every network access of the script goes over TLS: a URL that does not
+   // start with https:// (case-insensitive) is refused before any transfer.
+   function isHttpsUrl( url )
    {
-      // -> { ok, code, text, error }. code 0 is the NetworkTransfer "no HTTP
-      // status" value (e.g. non-HTTP transfer); treat 0 or 200 as success.
+      return typeof url == "string" && /^https:\/\//i.test( url );
+   }
+
+   // A native SHA-256 accumulator (PJSR CryptographicHash, probed on
+   // PixInsight 1.9.x under #engine v8), or null when unavailable. The
+   // CryptographicHash_* header constants are not defined at run time; the
+   // static CryptographicHash.SHA256 is.
+   function newSha256()
+   {
+      if ( typeof CryptographicHash != "function" )
+         return null;
+      var alg = ( CryptographicHash.SHA256 !== undefined ) ? CryptographicHash.SHA256 : 256;
+      var h = new CryptographicHash( alg );
+      h.initialize();
+      return h;
+   }
+
+   function getText( url, timeoutSec, opts )
+   {
+      // -> { ok, code, text, error[, sha256] }. code 0 is the NetworkTransfer
+      // "no HTTP status" value (e.g. non-HTTP transfer); treat 0 or 200 as
+      // success. opts.sha256: also hash the raw downloaded bytes (lowercase
+      // hex, null when hashing is unavailable) — the bytes as received, not
+      // the decoded text.
+      if ( !isHttpsUrl( url ) )
+         return { ok: false, code: 0, text: "", error: "refused: not an https:// URL" };
+      var hasher = ( opts && opts.sha256 ) ? newSha256() : null;
       var T = new NetworkTransfer;
       var chunks = [];
       T.onDownloadDataAvailable = function( data )
       {
          chunks.push( data );
+         if ( hasher != null )
+            hasher.update( data );
          return true;
       };
       if ( typeof T.setConnectionTimeout == "function" )
@@ -344,8 +576,11 @@ var SINet = ( function()
       var text = "";
       for ( var i = 0; i < chunks.length; ++i )
          text += chunks[ i ].toString();
-      return { ok: ok, code: T.responseCode, text: text,
-               error: String( T.errorInformation || "" ) };
+      var out = { ok: ok, code: T.responseCode, text: text,
+                  error: String( T.errorInformation || "" ) };
+      if ( opts && opts.sha256 )
+         out.sha256 = ( hasher != null ) ? String( hasher.finalize().toHex() ).toLowerCase() : null;
+      return out;
    }
 
    function pause( ms )
@@ -361,5 +596,5 @@ var SINet = ( function()
             processEvents();
    }
 
-   return { getText: getText, pause: pause };
+   return { getText: getText, isHttpsUrl: isHttpsUrl, pause: pause };
 } )();

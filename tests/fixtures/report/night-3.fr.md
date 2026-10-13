@@ -39,4 +39,4 @@
 - 🏆 NOUVEAU RECORD — record de candidats météores en une nuit : 1 (ancien record 0)
 
 ---
-*Rapport généré par Sky Intruders pour PixInsight — pixinsight-scripts.caelo.works*
+*Rapport généré par Sky Intruders pour PixInsight — https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders*
