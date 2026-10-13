@@ -2151,6 +2151,12 @@ function siIcon( dlg, resourcePath )
    }
 }
 
+// The product page for a UI language (SI_PRODUCT_URL lives in lib/Report.js).
+function siProductUrl( lang )
+{
+   return SI_PRODUCT_URL[ lang ] || SI_PRODUCT_URL.en;
+}
+
 // Open a file with the OS default handler (the illustrated report in a browser).
 function openInBrowser( path )
 {
@@ -2891,10 +2897,11 @@ class SkyIntrudersDialog extends Dialog
       this.buildLabel.useRichText = true;
       this.buildLabel.text = "by <span style=\"color:#5a8fd0; text-decoration:underline;\">CaeloWorks</span>";
       this.buildLabel.textAlignment = TextAlign.Left | TextAlign.VertCenter;
-      this.buildLabel.toolTip = "https://pixinsight-scripts.caelo.works/ — build " + SKYINTRUDERS_BUILD;
+      // Opens the product page of the current UI language; the tooltip
+      // (set in applyLanguage) shows that URL and the build.
       this.buildLabel.onMousePress = function()
       {
-         openInBrowser( "https://pixinsight-scripts.caelo.works/" );
+         openInBrowser( siProductUrl( self.params.lang ) );
       };
       try { this.buildLabel.cursor = new Cursor( StdCursor_PointingHand ); } catch ( e ) {}
 
@@ -3300,6 +3307,7 @@ class SkyIntrudersDialog extends Dialog
    applyLanguage()
    {
       var L = this.params.lang;
+      this.buildLabel.toolTip = siProductUrl( L ) + " — build " + SKYINTRUDERS_BUILD;
       this.langCombo.toolTip = uiT( L, "languageTip" );
       this.langLabel.text = uiT( L, "language" );
       this.nightHint.text = uiT( L, "hintNight" );
@@ -3679,6 +3687,8 @@ function siConstructTest()
       out.langSwitchOk = ( out.frAnalyze !== out.enAnalyze ) &&
                          ( out.frAnalyze === uiT( "fr", modeKey ) ) &&
                          ( out.enAnalyze === uiT( "en", modeKey ) );
+      // The "by CaeloWorks" label points at the product page.
+      out.productLinkOk = ( d.buildLabel.toolTip.indexOf( siProductUrl( "en" ) + " — build " ) === 0 );
 
       // Advanced group: every control must exist, carry its parameter and
       // round-trip a value through the handlers the GUI would fire.
