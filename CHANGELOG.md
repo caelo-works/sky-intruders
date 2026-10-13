@@ -46,6 +46,19 @@ All notable changes to this project are documented here. The format is based on
   the run ("mirror manifest unavailable — mirror not used"). CelesTrak and a
   custom mirror publish no manifest and rely on TLS plus the TLE checksum.
   Part of #21.
+- Documentation: the README now states every network connection (hosts, when
+  each is contacted, what is sent and what never is, no telemetry), how
+  downloaded data is integrity-checked (TLE checksums, the mirror's SHA-256
+  manifest, HTTPS plus format validation for VizieR, SkyBoT and the SATCAT),
+  every file and folder written on the user's computer with how to delete it
+  safely and how to turn the night history off, the programs launched on a
+  click, and third-party notices. The "see all scripts" badge is gone and the
+  banner links to the Sky Intruders product page; the obsolete "unsigned
+  repository" warning is removed from the README and the support knowledge
+  base, which also gains the new console and status messages, the temp-file
+  behaviour and matching troubleshooting entries. The architecture notes
+  describe the HTTPS guard, the checksum filter, the manifest verification
+  flow, temp-file cleanup and the only process launch. Part of #21.
 
 ## [0.3.0] - 2026-08-26
 

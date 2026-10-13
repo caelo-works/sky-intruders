@@ -8,9 +8,8 @@
 [![PixInsight](https://img.shields.io/badge/PixInsight-%E2%89%A5%201.9.4-67e8f9?style=for-the-badge&labelColor=0f172a)](https://pixinsight.com/)
 [![Status](https://img.shields.io/badge/status-beta-fbbf24?style=for-the-badge&labelColor=0f172a)](https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders)
 [![License](https://img.shields.io/badge/license-GPL--3.0-94a3b8?style=for-the-badge&labelColor=0f172a)](LICENSE)
-[![Website](https://img.shields.io/badge/%E2%86%92%20see%20all%20scripts-pixinsight--scripts.caelo.works-0f172a?style=for-the-badge&labelColor=22d3ee)](https://pixinsight-scripts.caelo.works/en)
 
-[![CaeloWorks · PixInsight Scripts](https://pixinsight-scripts.caelo.works/assets/readme-banner.png)](https://pixinsight-scripts.caelo.works/en)
+[![Sky Intruders · CaeloWorks](https://pixinsight-scripts.caelo.works/assets/readme-banner.png)](https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders)
 
 </div>
 
@@ -88,10 +87,8 @@ deep-sky neighbors for context — plus a standalone illustrated HTML post.
 In PixInsight, open **Resources → Updates → Manage Repositories** and add
 `https://pixinsight-scripts.caelo.works/update/`, then run
 **Resources → Updates → Check for Updates**, accept the install and restart.
-Updates are then delivered automatically through the same channel.
-
-> The repository is not CPD-signed yet, so PixInsight shows an
-> "unsigned repository" warning; signing is underway.
+Updates are then delivered automatically through the same channel. The
+repository is CPD-signed, so PixInsight shows no signature warning for it.
 
 ### Manual install
 
@@ -102,7 +99,7 @@ folder containing `SkyIntruders.js`. Alternatively, run it once via
 
 > **Requires PixInsight 1.9.4 or newer** — Windows, macOS and Linux.
 > Internet access is needed for the orbital and deep-sky catalogs (all cached,
-> with graceful offline degradation).
+> with graceful offline degradation) — see [Network and privacy](#network-and-privacy).
 
 ## Getting started
 
@@ -121,6 +118,88 @@ folder containing `SkyIntruders.js`. Alternatively, run it once via
 2. Pick which object types to hunt and click **Hunt treasures**.
 3. You get the star chart as a new image window, and an illustrated HTML
    report — open it in your browser, or share it as a single file.
+
+## Network and privacy
+
+Every connection is HTTPS, made through PixInsight's own networking
+(`NetworkTransfer`); a plain `http://` address is refused. The script contacts:
+
+| Host | When | What is sent |
+|---|---|---|
+| `celestrak.org` | Night trails | the name of the orbital-element group (e.g. `active`); the satellite catalog (SATCAT) is a plain file download |
+| `raw.githubusercontent.com/caelo-works/tle-mirror` | Night trails, only when CelesTrak does not answer | the same group name. This is a CaeloWorks-operated snapshot of CelesTrak data, published with a SHA-256 manifest |
+| `vizier.cds.unistra.fr` | Treasure Hunt | the field centre (RA/Dec), the search radius and the catalog columns wanted |
+| `ssp.imcce.fr` (SkyBoT) | Treasure Hunt, asteroids | the field centre (RA/Dec), the search radius and the capture epoch |
+| a mirror of your own | Night trails, only if you fill **Orbital data mirror URL** | the group name. The URL must start with `https://`; anything else is ignored |
+
+What is **not** sent: your observer site (satellite orbits are computed on your
+computer), file names, image data, or any identifier. There is no telemetry and
+no usage tracking. Everything downloaded is data (orbital elements and catalog
+rows); nothing is ever executed.
+
+## Data integrity
+
+- **Orbital elements** — every element line carries a modulo-10 checksum,
+  verified whatever the source. An element set that fails is dropped (the
+  console says how many); a download where more than 5 % fail is rejected as
+  corrupt and the next source, or the cache, is used.
+- **CaeloWorks mirror** — every file downloaded from it is checked against the
+  mirror's SHA-256 manifest (`tle/SHA256SUMS`). After one retry, a file that
+  still does not match, or a manifest that cannot be fetched, means the mirror
+  is not used: CelesTrak or the cache is used instead.
+- **VizieR, SkyBoT and the CelesTrak SATCAT** publish no checksums. They are
+  protected by HTTPS plus strict format validation: an answer that is not
+  genuine catalog data (an error or maintenance page, for instance) is
+  rejected, reported, and never cached.
+
+## Files written on your computer
+
+Everything persistent lives in one folder in your home directory
+(`%USERPROFILE%` on Windows, `~` on macOS and Linux):
+`.caeloworks/sky-intruders/`. Nothing is written inside the PixInsight
+installation.
+
+| Path | Content | Safe to delete? |
+|---|---|---|
+| `settings.json` | dialog settings | yes — resets every setting to its default |
+| `history.json` | your personal night records | yes, but the records are gone for good |
+| `tle/` | orbital-element and SATCAT cache | yes — downloaded again on the next run |
+| `treasure-cache/` | deep-catalog answers, kept 30 days | yes — the catalogs are queried again |
+
+To stop keeping night records, close the script, open `settings.json` in a
+text editor and set `"saveHistory": false`; delete `history.json` if you want
+the existing records gone too. To remove everything the script stores, delete
+the whole `.caeloworks/sky-intruders` folder while the script is closed.
+
+In the system temporary folder:
+
+- `si-night-reg-<token>/` (registered frames) — removed at the end of each run.
+- `si-render-*` (image encoding scratch) — removed right after use.
+- The Treasure Hunt HTML report copy written by **Open in browser**, and the
+  optional debug overlays `si-frame-annotated-<token>-*.png` — removed when the
+  script window closes.
+- `SkyIntruders-night-<date>-<token>.png`, the annotated night image — **kept
+  on purpose**: it is the image the result window opens. Save it where you want
+  it; the copy in the temp folder can be deleted at any time.
+
+Files you save yourself (**Save report…**, **Save HTML…**) go only where you
+choose.
+
+## Programs launched
+
+Sky Intruders starts no program of its own and ships no executable. On your
+click only — **Open image**, **Open in browser**, or the **by CaeloWorks** link
+to the product page — it asks the operating system to open the file or address
+with its default application: `cmd /c start` on Windows, `open` on macOS,
+`xdg-open` on Linux.
+
+## Third-party notices
+
+- [satellite.js](https://github.com/shashwatak/satellite-js) 5.0.0 (SGP4
+  propagation) — MIT License, bundled in `pjsr/lib/vendor/`.
+- [circle-flags](https://github.com/kapowaz/circle-flags) (country flags) —
+  MIT License, see `pjsr/assets/flags/LICENSE.md`.
+- Sky Intruders itself is released under the [GPL-3.0](LICENSE).
 
 ## Development
 

@@ -29,7 +29,8 @@ number. There is no other version display.
 | Version | 0.3.0 · GPL-3.0 · free and open source |
 | Requires | **PixInsight 1.9.4 or newer** — Windows, macOS, Linux |
 | Where it lives | **Script → CaeloWorks → Sky Intruders** |
-| Internet | Needed for satellite elements and deep-sky catalogs. Everything is cached; it degrades gracefully offline |
+| Internet | Needed for satellite elements and deep-sky catalogs. HTTPS only, no telemetry, no personal data sent (see 6.1). Everything is cached; it degrades gracefully offline |
+| Files | One folder in the home directory, `.caeloworks/sky-intruders` (see 6.3), plus temp files (see 6.6). Nothing inside the PixInsight installation |
 | Repository | https://github.com/caelo-works/sky-intruders |
 | Product page | https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders |
 
@@ -53,10 +54,11 @@ before diagnosing anything.
 
 Updates then arrive through the same channel automatically.
 
-> **"Unsigned repository" warning.** Expected. The repository is not CPD-signed
-> yet; signing is underway. It is safe to accept. Make clear to the user that
-> this is a missing signature on the *repository*, not a virus warning and not a
-> sign that anything was tampered with.
+> **The repository is CPD-signed.** PixInsight shows no signature warning for
+> it. If a user reports a signature or "unsigned repository" warning on this
+> repository, something is wrong (a mistyped address, a proxy rewriting the
+> traffic, or a problem on the repository side): tell them **not** to accept
+> it, and escalate (section 10).
 
 ### Route B — manual
 
@@ -188,7 +190,12 @@ why a user with nothing in the list can still get a result.
     user work offline on a recent cache; predictions degrade with age.
   - **Orbital data mirror URL** — empty by default. Base URL of a
     CelesTrak-compatible mirror, tried first when set; empty means the default
-    sources (CelesTrak, then the CaeloWorks mirror — see 6.2).
+    sources (CelesTrak, then the CaeloWorks mirror — see 6.2). **It must start
+    with `https://`.** Anything else is refused on the spot: the field is
+    cleared and the status line reads *"Mirror URL must start with https:// —
+    ignored."* (« L'URL du miroir doit commencer par https:// — ignorée. »).
+    A non-https value written by hand into `settings.json` is dropped when the
+    script starts.
 
 Without an observer site — from the headers *or* from these fields — **satellite
 identification is switched off entirely**. Trails are still detected, they simply
@@ -381,7 +388,9 @@ shadow …"* tag when it changed state in the field.
   `SkyIntruders-night-<date>-<run token>.png` (the token is the run's start
   time plus a random number, so two runs — or two PixInsight instances — never
   overwrite each other's image). The **Open image** button in the report window
-  reopens it. The registered frames themselves live in a private scratch folder
+  reopens it. This PNG is **kept on purpose** when the script closes (it is the
+  result the user may want to keep): they save it where they want, and the temp
+  copy can be deleted at any time (see 6.6). The registered frames themselves live in a private scratch folder
   `si-night-reg-<run token>` in the same temp folder, named
   `<NNN>_<file name>_r.xisf` (`NNN` = the frame's position in the input list,
   from 000), for the duration of the run and are deleted when it ends — on success, on a fallback to per-frame
@@ -493,8 +502,9 @@ claim a detection rather than divide by zero.
 - A **star chart** as a new image window, `Sky Intruders Treasure Map`: thin
   markers, leader lines, corner cards, in the chosen overlay colour.
 - An **illustrated HTML report**, self-contained in a single file. **Nothing is
-  written to disk automatically.** *Open HTML* writes it to a temporary folder and
-  opens the browser; *Save HTML…* offers to save it next to the input image.
+  written to disk automatically.** *Open HTML* writes a copy to the system temp
+  folder and opens the browser (that copy is deleted when the Sky Intruders
+  window is closed); *Save HTML…* offers to save it next to the input image.
 - A **copy-paste forum summary** inside that report.
 
 **The chart deliberately draws fewer objects than the report counts.** Captured
@@ -508,14 +518,34 @@ curated for legibility.
 
 ## 6. Internet, catalogs and caches
 
-### 6.1 What it contacts, and firewalls
+### 6.1 What it contacts, what it sends, and firewalls
 
-Four hosts, all HTTPS. A restrictive firewall must allow them:
+Four hosts, **all HTTPS** — the script refuses any address that does not start
+with `https://`, including a custom mirror (see 3.3). Every request goes
+through PixInsight's own networking (`NetworkTransfer`). A restrictive firewall
+must allow them:
 
-- `celestrak.org` — satellite orbital elements.
-- `raw.githubusercontent.com` — the CaeloWorks mirror of those elements.
-- `vizier.cds.unistra.fr` — galaxies, quasars, planetary nebulae, bright stars.
-- `ssp.imcce.fr` — asteroids.
+- `celestrak.org` — satellite orbital elements and the satellite catalog
+  (SATCAT), **Night trails** only. Sent: the element group name (`active`,
+  `last-30-days`…); the SATCAT is a plain file download.
+- `raw.githubusercontent.com` (`caelo-works/tle-mirror`) — the CaeloWorks
+  snapshot of the same CelesTrak data, used when CelesTrak does not answer
+  (and for the full `catalog` group, which only it provides), with a SHA-256
+  manifest (see 6.5). Sent: the group name.
+- `vizier.cds.unistra.fr` — galaxies, quasars, planetary nebulae, bright stars,
+  **Treasure Hunt** only. Sent: field centre RA/Dec, search radius, the catalog
+  and columns wanted, the row cap.
+- `ssp.imcce.fr` (SkyBoT) — asteroids, **Treasure Hunt** only. Sent: field
+  centre RA/Dec, search radius and the capture epoch.
+- Optionally, the user's own mirror (**Orbital data mirror URL**), https only.
+  Sent: the group name.
+
+**What is never sent:** the observer site (satellite orbits are computed
+locally, on the user's computer), file names, image data, or any identifier.
+**There is no telemetry and no usage tracking.** Everything downloaded is data
+(orbital elements, catalog rows); nothing downloaded is ever executed. If a user
+asks "what does it send about me?", the answer is: nothing that identifies them
+— a group name, or a patch of sky and a date.
 
 **The script sets no proxy of its own.** It uses PixInsight's networking, so a
 user behind a corporate proxy must configure it **in PixInsight**, not in the
@@ -571,8 +601,11 @@ Everything lives in the user's home folder, under **`.caeloworks/sky-intruders`*
   `false` — `true` records, for every unnamed trail, the nearest predicted
   crossing and how far it missed the tolerances). Deleting the file resets
   everything to defaults.
-- **`history.json`** — the personal records. **Deleting it destroys them
-  permanently.**
+- **`history.json`** — the personal records, written after every night run.
+  **Deleting it destroys them permanently.** To stop the script keeping them:
+  close the script, set `"saveHistory": false` in `settings.json` with a text
+  editor (the script rewrites `settings.json` when its window closes, so an edit
+  made while it is open is lost).
 - **`tle/`** — the satellite element cache. **Deleting this folder is the standard
   fix for stale or wrong satellite names.**
 - **`treasure-cache/`** — the deep-catalog cache, kept for **30 days**. Only
@@ -580,9 +613,15 @@ Everything lives in the user's home folder, under **`.caeloworks/sky-intruders`*
   deleting it is rarely needed; it remains the way to force fresh queries on a
   field the user re-runs often.
 
-> **Never tell a user to delete the whole `.caeloworks/sky-intruders` folder.** It
-> takes their settings *and their personal records* with it. Always name the
-> subfolder: `tle` or `treasure-cache`.
+> **Never tell a user to delete the whole `.caeloworks/sky-intruders` folder** to
+> fix a problem. It takes their settings *and their personal records* with it.
+> Always name the subfolder: `tle` or `treasure-cache`. The one exception is a
+> user who explicitly wants to remove everything the script stores (uninstall,
+> privacy): then the whole folder is the answer — with the script closed, and
+> after warning them the records go with it.
+
+Nothing is written inside the PixInsight installation. Temp files are covered
+in 6.6.
 
 ### 6.4 When a deep catalog does not answer
 
@@ -608,6 +647,67 @@ So a report **without** the banner genuinely means every catalog answered, and
 its zeros are real zeros. A report **with** the banner must never be read as
 "the field is empty" for the named catalogs — have the user re-run once their
 network (or the service) is back.
+
+### 6.5 Integrity checks on downloaded data
+
+What the script verifies before it uses or caches a download:
+
+- **Orbital elements (every source: CelesTrak, the CaeloWorks mirror, a custom
+  mirror).** Each element line carries the standard modulo-10 checksum in its
+  last column. An element set whose line 1 or line 2 fails is **dropped**, and
+  the console says *"<group>: N element set(s) dropped (bad TLE checksum)"*. If
+  **more than 5 %** of the sets in one download fail, the whole download is
+  rejected as corrupt: that source counts as failed and the next source (or the
+  cache, possibly stale — 6.2) is used.
+- **The CaeloWorks mirror** publishes a SHA-256 manifest, `tle/SHA256SUMS`.
+  Every file taken from the mirror (element groups and `satcat.csv`) is hashed
+  and compared with it. On a mismatch or a missing entry, the manifest and the
+  file are fetched **once more** (GitHub's CDN can briefly serve files from two
+  different snapshots). Still wrong: the mirror is not used for that file —
+  console *"mirror file <name> failed SHA-256 verification — not used"* — and
+  the next source or the cache takes over. If the manifest itself cannot be
+  fetched, no mirror file is used at all: *"mirror manifest unavailable —
+  mirror not used"*.
+- **CelesTrak and a custom mirror** publish no manifest: HTTPS, the TLE
+  checksum and the format checks are what protect them.
+- **VizieR, SkyBoT and the CelesTrak SATCAT** publish no checksums at all.
+  They are protected by HTTPS plus strict format validation (6.4): an answer
+  that is not genuine catalog data is rejected and never cached.
+
+None of these messages needs action from the user unless it **repeats run
+after run** (see section 9).
+
+### 6.6 Temporary files
+
+Written to the operating system's temp folder, and what happens to them:
+
+- `si-night-reg-<run token>/` — the registered frames of a Night trails run.
+  Deleted at the end of every run (success, fallback or error). A leftover one
+  means PixInsight was killed mid-run; safe to delete.
+- `si-render-*.png` — image-encoding scratch, deleted right after use.
+- The Treasure Hunt **HTML report copy** written by *Open HTML*
+  (`SkyIntruders-Treasure-<OBJECT>.html`) and the optional debug overlays
+  `si-frame-annotated-<run token>-*.png` (only with `debugFrameOverlays: true`)
+  — deleted when the Sky Intruders window is closed (best effort: a file still
+  held open by another program may stay; it is safe to delete by hand).
+- `SkyIntruders-night-<date>-<run token>.png` — the annotated night image.
+  **Kept on purpose**: it is the result the user may want. Tell them to save it
+  where they want it; the temp copy can be deleted at any time.
+
+Files the user saves (**Save report…**, **Save HTML…**) go only where they
+choose.
+
+### 6.7 Programs it launches
+
+Sky Intruders ships no executable and starts no program of its own. **Only on a
+user click** — **Open image** (the night PNG), **Open HTML** (the Treasure Hunt
+report), or the **"by CaeloWorks"** link under the title (it opens the product
+page, https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders) — it
+asks the operating system to open the file or address with its default
+application: `cmd /c start` on Windows, `open` on macOS, `xdg-open` on Linux.
+If nothing opens on Linux, `xdg-open` is missing or no default browser /
+image viewer is set: the file is still in the temp folder (6.6) and can be
+opened by hand.
 
 ---
 
@@ -649,6 +749,10 @@ The user will copy-paste. These are the messages, word for word.
   vidé. », « Coordonnée incomprise — écris 48,85, 48.85 ou 48 51 24. Champ
   vidé. »). The user typed something outside the range or unreadable; the
   parameter is empty until they re-enter it.
+- *"Mirror URL must start with https:// — ignored."* / « L'URL du miroir doit
+  commencer par https:// — ignorée. » — on the status line, after typing an
+  **Orbital data mirror URL** that does not start with `https://`. The field is
+  cleared and the default sources are used. Only https mirrors are accepted.
 
 ### 7.2 Console messages, Night trails
 
@@ -707,6 +811,24 @@ The user will copy-paste. These are the messages, word for word.
 - *"satellite matching failed — …"* (no frame name) — the whole match was
   refused: no valid orbital elements in the catalog, or no observer/frames in
   the request. Nothing is named.
+- *"custom mirror URL ignored: not https://"* — a non-https mirror address
+  reached the download step (normally caught earlier, 3.3); it was skipped and
+  the default sources were used. Fix: an `https://` address, or empty the
+  field.
+- *"<group>: N element set(s) dropped (bad TLE checksum)"* (e.g. *"active: 3
+  element set(s) dropped (bad TLE checksum)"*) — N satellites failed the
+  element-line checksum and were left out; the rest of the group is used.
+  Harmless when occasional. If it repeats run after run, escalate (6.5).
+- *"mirror manifest unavailable — mirror not used"* — the CaeloWorks mirror's
+  SHA-256 manifest could not be fetched, so no file from the mirror was
+  trusted. CelesTrak or the cache was used instead. Harmless once; escalate if
+  it persists.
+- *"mirror file <name> failed SHA-256 verification — not used"* (e.g.
+  `active.tle`, `satcat.csv`) — the file still did not match the manifest
+  after one retry. CelesTrak or the cache was used instead. Escalate if it
+  persists.
+- *"… refused: not an https:// URL"* (inside a fetch error) — the script
+  refused a plain-http address. Same fix as the custom-mirror line above.
 - *"no frame could be analyzed"* — fatal; nothing could be opened at all.
 
 ### 7.3 Console messages, Treasure Hunt
@@ -858,19 +980,21 @@ Two behaviours remain by design:
   a mover slower than ~0.1 arcsec/min or visible in fewer than 3 frames is
   below the detector's floor by construction.
 
-### 8.7 The update repository is unsigned
-
-PixInsight warns that the CaeloWorks repository is not signed. Expected; signing
-is underway. It is safe to accept, and it says nothing about the integrity of the
-files.
-
 ---
 
 ## 9. Troubleshooting — symptom → cause → answer
 
+### 9.1 Installing and the update repository
+
 | The user says | It means | Tell them |
 |---|---|---|
 | "I installed it but there is no menu entry" | PixInsight not restarted, or the feature registry is stale | Restart PixInsight, then **Script → Feature Scripts… → Regenerate**. It lives under **Script → CaeloWorks → Sky Intruders**. |
+| "PixInsight warns about an unsigned repository / a bad signature" | Not expected — the repository is CPD-signed | Do **not** accept it. Check the address is exactly `https://pixinsight-scripts.caelo.works/update/`. If it is, escalate. |
+
+### 9.2 Night trails
+
+| The user says | It means | Tell them |
+|---|---|---|
 | "It found no trails at all" | Fewer than 3 frames, or fewer than 3 **per filter** | Difference detection needs at least 3 frames of the same filter. Check the console for *"filter group … has only N frame(s)"*. |
 | "Trails are found but nothing is identified" | **No observer site** — by far the most common | Since 0.2.2 the window says so: the status line and the report banner read **"No observer site — satellites not identified."** The frames need site headers (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), or the user fills Lat (+N) / Lon (+E) in the Night trails tab — decimal with dot or comma, or sexagesimal. Without a site, identification is switched off entirely. |
 | "I typed my latitude and it disappeared" | The value was out of range or unreadable | The status line said why (7.1). Latitude within ±90, longitude within ±180 (east positive), decimal with dot or comma, or `48 51 24`. On **0.2.1 and earlier** a comma was silently truncated instead (`48,85` → 48): update the script. |
@@ -878,14 +1002,26 @@ files.
 | "Nothing is identified since one of my frames has a broken header" | On **0.2.1 or older**, one frame with a bad `DATE-OBS`/`EXPTIME` silently aborted the whole night's matching | Update the script: the bad frame is now reported (*"frame … : satellite matching failed"* / *"EXPTIME is 0"*) and the other frames are named. Then fix or drop that frame. |
 | "The satellite names look wrong" | Stale orbital elements, or a wrong longitude sign | Look for **`(STALE — network unreachable)`** in the console; if present, delete the `tle` folder in `.caeloworks/sky-intruders` and re-run. Then check the longitude sign. |
 | "It says 'unidentified satellite' / orange trail" | No catalog match — a fresh launch, a classified object, or debris | **This is a correct, honest answer, not a failure.** The script refuses to guess a name it cannot support. |
+| "Lowering the σ slider changed nothing" | Version **0.2.1 or earlier** — the slider did not affect a normal night run | Update the script. On the current version the slider drives the real threshold; going from 4.5 to 3.5 is a visible change. |
+
+### 9.3 Treasure Hunt
+
+| The user says | It means | Tell them |
+|---|---|---|
 | "Treasure Hunt says my image has no WCS, but I solved it" | The solve is not on the image the script opened | With an empty input list the script uses the **active window**. Make sure the solved image is the one being read. A WBPP master is normally already solved. |
 | "Treasure Hunt found nothing" | An empty field — or a catalog outage, which the report now flags | Ask whether the report shows the **"some catalogs did not respond"** banner. No banner: every catalog answered, the zeros are real. Banner: the named catalogs did not answer — re-run once the network or service is back (failures are not cached). On **0.2.0 or older** the banner never fires and a false empty can sit in the cache; on **0.2.1** a catalog-side error could still be cached as empty. Either way: update the script, then delete the `treasure-cache` folder once. |
 | "It found no planetary nebulae" | Normal away from the Milky Way | The nebula catalog essentially only covers the galactic plane. Zero is the correct answer for most fields. |
 | "It says below the noise but I can see the object" | Working as intended in most cases | The object must beat its local surroundings and 12 decoy apertures. Objects on nebulosity or in dense star fields legitimately fail. A blown-out saturated core can also trigger it — that one is a real bug, escalate. |
 | "I got exactly 400 objects" | The per-catalog row cap | Raise **Max catalog rows / type**. |
 | "The map shows far fewer objects than the summary" | Deliberate — the chart is curated | The counts are complete; only the most notable below-noise objects are drawn. |
-| "Lowering the σ slider changed nothing" | Version **0.2.1 or earlier** — the slider did not affect a normal night run | Update the script. On the current version the slider drives the real threshold; going from 4.5 to 3.5 is a visible change. |
-| "PixInsight warns about an unsigned repository" | Expected — not signed yet | Safe to accept. |
+
+### 9.4 Network, downloads and integrity
+
+| The user says | It means | Tell them |
+|---|---|---|
+| "My custom mirror URL is ignored / disappears" | The address is not `https://` | Only https mirrors are accepted (status line: *"Mirror URL must start with https:// — ignored."*). Use the `https://` form of the address, or leave the field empty for the default sources. |
+| "The console says N element set(s) dropped (bad TLE checksum)" | A few element sets failed their checksum and were left out | Harmless: the other satellites are used, only the dropped ones cannot be named this run. If it repeats run after run on the same group, escalate with the console output. |
+| "The console says mirror manifest unavailable / mirror file failed SHA-256 verification" | The CaeloWorks mirror could not be verified, so it was not used | No action: CelesTrak or the cache was used instead. If it persists over several runs (and especially if names go stale), escalate. |
 | "It takes 20 seconds before it finds any satellites" | CelesTrak timing out, mirror taking over | Normal. No action needed. |
 
 ---
@@ -894,7 +1030,9 @@ files.
 
 **Stop and hand over to a human** when: the user reports one of the known bugs
 above (a saturated core called "below the noise", a merged train, a σ slider
-that does nothing on an up-to-date version); when they have lost data (a
+that does nothing on an up-to-date version); when PixInsight shows a signature
+warning for the CaeloWorks repository; when the checksum or SHA-256 messages of
+6.5 persist run after run; when they have lost data (a
 deleted `history.json` cannot be recovered); when the answer is not in this
 document. **Do not improvise a threshold, a file path, or a compatibility claim.**
 
