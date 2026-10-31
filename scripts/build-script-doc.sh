@@ -66,9 +66,30 @@ rm -rf "$WORK"
 mkdir -p "$WORK/sys"
 trap 'rm -rf "$WORK"' EXIT
 
+# The compiler turns a source line break into nothing (a line marker renders
+# as an empty string), so the last word of a line and the first word of the
+# next one are glued together in the page ("do not" + "belong" -> "do
+# notbelong"). Leading whitespace is kept as a separator, so the working copy
+# indents every continuation line (a non-empty line that follows a non-empty,
+# non-comment line) by one space. Comment lines are left alone: once its
+# comment is stripped, an indented comment line would become a blank line,
+# that is, a paragraph break. The sources have no verbatim or code blocks,
+# where the extra space would be visible.
 for page in "${PAGES[@]}"; do
    [ -f "$SRC_DIR/$page.pidoc" ] || die "source not found: $SRC_DIR/$page.pidoc"
-   cp "$SRC_DIR/$page.pidoc" "$WORK/"
+   if grep -qE '#:|\\code|\\verbatim' "$SRC_DIR/$page.pidoc"; then
+      die "$page.pidoc has a verbatim or code block: the line-break workaround would alter it"
+   fi
+   python3 - "$SRC_DIR/$page.pidoc" "$WORK/$page.pidoc" <<'PY'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+out, prev_text = [], False
+for line in lines:
+    text = line.strip() != "" and not line.lstrip().startswith("%")
+    out.append(" " + line if text and prev_text and not line[:1].isspace() else line)
+    prev_text = text
+open(sys.argv[2], "w", encoding="utf-8", newline="\n").write("\n".join(out))
+PY
 done
 
 WORK_WIN="$(win "$WORK")"

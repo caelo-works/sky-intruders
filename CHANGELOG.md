@@ -18,6 +18,12 @@ All notable changes to this project are documented here. The format is based on
   Hunt still produces the star chart and the HTML report, without the embedded
   pictures, and the report and the console say why. The requirement is
   documented in the README, the reference pages and the support knowledge base.
+- In the reference pages shown by the documentation button, the last word of
+  every source line was glued to the first word of the next one ("runs" +
+  "inside" -> "runsinside"): 77 places in the English page, about 100 in the
+  French one. The Documentation Compiler drops source line breaks, so the
+  build now indents continuation lines in its working copy of the sources.
+  The text is unchanged otherwise.
 
 ## [0.4.0] - 2026-10-31
 
