@@ -260,3 +260,18 @@ console.log( "report.test.js: " + Object.keys( results ).length + " goldens chec
       }
    console.log( "report: attribution opt-in OK (on: footer + forum + goldens; off: every format, en/fr)" );
 }
+
+// PNG unavailable (PixInsight 1.9.6 without the PNG module): the Treasure
+// report carries no picture and says why, in both languages; otherwise no
+// such notice.
+{
+   const { SITreasureReport } = require( __dirname + "/build/module.js" );
+   const en = SITreasureReport.buildHtml( { lang: "en", treasures: [], pngUnavailable: true } );
+   const fr = SITreasureReport.buildHtml( { lang: "fr", treasures: [], pngUnavailable: true } );
+   assert.ok( en.indexOf( "could not write PNG images" ) >= 0 && en.indexOf( "Install Modules" ) >= 0, "EN no-PNG notice" );
+   assert.ok( fr.indexOf( "pas pu \u00e9crire d'images PNG" ) >= 0 && fr.indexOf( "Install Modules" ) >= 0, "FR no-PNG notice" );
+   assert.ok( en.indexOf( "data:image/png" ) < 0, "no embedded picture" );
+   const ok = SITreasureReport.buildHtml( { lang: "en", treasures: [], mapPng: "AAAA" } );
+   assert.ok( ok.indexOf( "could not write PNG" ) < 0 && ok.indexOf( "data:image/png;base64,AAAA" ) >= 0, "normal report untouched" );
+   console.log( "report: no-PNG notice OK (en/fr)" );
+}

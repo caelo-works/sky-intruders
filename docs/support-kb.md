@@ -787,6 +787,13 @@ The user will copy-paste. These are the messages, word for word.
 
 ### 7.2 Console messages, Night trails
 
+- *"Sky Intruders: night image not saved — PNG files cannot be written: install the PNG module once (Process > Modules > Install Modules), then restart PixInsight."* (0.4.1+) — PixInsight
+  **1.9.6 or newer without its PNG module** (from 1.9.6, PNG is a separate
+  module installed once). The annotated composite still opens as an image
+  window, but no PNG is written, so the report window has no **Open image**
+  button. Fix: **Process → Modules → Install Modules**, install the PNG module,
+  restart PixInsight.
+
 - *"no observer site in the FITS headers (SITELAT, OBSGEO-B/L, LAT/LONG-OBS) or
   dialog fallback — satellite identification disabled."* — **the number one
   cause of "nothing was identified"**. Trails are detected but cannot be named.
@@ -867,6 +874,12 @@ The user will copy-paste. These are the messages, word for word.
 - *"no frame could be analyzed"* — fatal; nothing could be opened at all.
 
 ### 7.3 Console messages, Treasure Hunt
+
+- *"Sky Intruders: report pictures omitted — PNG files cannot be written: install the PNG module once (Process > Modules > Install Modules), then restart PixInsight."* (0.4.1+) — same cause:
+  PixInsight 1.9.6+ without the PNG module. The star chart window and the HTML
+  report are still produced, without the embedded map and thumbnails, and the
+  report says so at the top ("No pictures in this report…" / « Pas d'images
+  dans ce rapport… »). Same fix: install the PNG module, restart, hunt again.
 
 - *"Treasure/Catalogs: galaxy query failed: …"* (also `quasar`, `pne`,
   `asteroid`) — **a catalog was unreachable.** The run continues, the count for
@@ -1032,6 +1045,7 @@ Two behaviours remain by design:
 
 | The user says | It means | Tell them |
 |---|---|---|
+| "No Open image button" / "night image not saved" (PixInsight 1.9.6+) | The PNG module is not installed (separate from 1.9.6) | **Process → Modules → Install Modules**, install the PNG module, restart PixInsight. The composite window itself was still shown. |
 | "It found no trails at all" | Fewer than 3 frames, or fewer than 3 **per filter** | Difference detection needs at least 3 frames of the same filter. Check the console for *"filter group … has only N frame(s)"*. |
 | "Trails are found but nothing is identified" | **No observer site** — by far the most common | Since 0.2.2 the window says so: the status line and the report banner read **"No observer site — satellites not identified."** The frames need site headers (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), or the user fills Lat (+N) / Lon (+E) in the Night trails tab — decimal with dot or comma, or sexagesimal. Without a site, identification is switched off entirely. |
 | "I typed my latitude and it disappeared" | The value was out of range or unreadable | The status line said why (7.1). Latitude within ±90, longitude within ±180 (east positive), decimal with dot or comma, or `48 51 24`. On **0.2.1 and earlier** a comma was silently truncated instead (`48,85` → 48): update the script. |
@@ -1045,6 +1059,7 @@ Two behaviours remain by design:
 
 | The user says | It means | Tell them |
 |---|---|---|
+| "The HTML report has no map and no pictures" (PixInsight 1.9.6+) | The PNG module is not installed (separate from 1.9.6) | Install the PNG module (**Process → Modules → Install Modules**), restart PixInsight, run the hunt again. |
 | "Treasure Hunt says my image has no WCS, but I solved it" | The solve is not on the image the script opened | With an empty input list the script uses the **active window**. Make sure the solved image is the one being read. A WBPP master is normally already solved. |
 | "Treasure Hunt found nothing" | An empty field — or a catalog outage, which the report now flags | Ask whether the report shows the **"some catalogs did not respond"** banner. No banner: every catalog answered, the zeros are real. Banner: the named catalogs did not answer — re-run once the network or service is back (failures are not cached). On **0.2.0 or older** the banner never fires and a false empty can sit in the cache; on **0.2.1** a catalog-side error could still be cached as empty. Either way: update the script, then delete the `treasure-cache` folder once. |
 | "It found no planetary nebulae" | Normal away from the Milky Way | The nebula catalog essentially only covers the galactic plane. Zero is the correct answer for most fields. |

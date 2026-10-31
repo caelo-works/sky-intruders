@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- PixInsight 1.9.6 moved PNG support into a separate module that the user
+  installs once. Without it, Treasure Hunt stopped on the map with a raw
+  error, and Night trails lost its night image with an unclear warning. Every
+  PNG write now goes through one check that the file was really written. When
+  it was not: Night trails still shows the composite window and says "night
+  image not saved — PNG files cannot be written: install the PNG module once
+  (Process > Modules > Install Modules), then restart PixInsight."; Treasure
+  Hunt still produces the star chart and the HTML report, without the embedded
+  pictures, and the report and the console say why. The requirement is
+  documented in the README, the reference pages and the support knowledge base.
+
 ## [0.4.0] - 2026-10-31
 
 Answers the PixInsight Development Team's CPD notice of October 2026 (rules

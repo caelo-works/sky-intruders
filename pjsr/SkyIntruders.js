@@ -1373,7 +1373,19 @@ function runAnalysisIn( files, params, run )
                                            { flagDir: flagAssetsDir() } );
             resultImagePath = File.systemTempDirectory + "/SkyIntruders-night-" +
                               night.dateLabel.replace( "/", "-" ) + "-" + run.token + ".png";
-            bmp.save( resultImagePath );
+            try
+            {
+               SIRender.savePng( bmp, resultImagePath );
+            }
+            catch ( ePng )
+            {
+               // No PNG (1.9.6 without the PNG module): the composite is
+               // still shown as an image window, there is just no file to
+               // reopen — the report dialog hides Open image when the file
+               // does not exist.
+               resultImagePath = null;
+               console.warningln( SKYINTRUDERS_TITLE + ": night image not saved — " + ePng.message );
+            }
 
             try
             {
@@ -1431,7 +1443,7 @@ function runAnalysisIn( files, params, run )
             fbmp = SIRender.annotateTrails( fbmp, mine, { flagDir: flagAssetsDir() } );
             var overlayPath = File.systemTempDirectory + "/si-frame-annotated-" + run.token + "-" +
                               frames[ i ].meta.id.replace( /[^A-Za-z0-9_.-]+/g, "_" ) + ".png";
-            fbmp.save( overlayPath );
+            SIRender.savePng( fbmp, overlayPath );
             siTrackTempFile( overlayPath );
             gc();
          }
@@ -1983,7 +1995,22 @@ function runTreasureHunt( window, filePath, params, onProgress )
       try { mapForHtml = mapBmp.scaledTo( Math.round( mapBmp.width*sc ), Math.round( mapBmp.height*sc ) ); }
       catch ( e ) { mapForHtml = mapBmp; }
    }
-   var mapPng = SIRender.bitmapToBase64Png( mapForHtml );
+   // Without the PNG module (PixInsight 1.9.6+) nothing can be embedded: the
+   // chart window and the HTML text are still produced, the report says why
+   // the pictures are missing.
+   var pngUnavailable = false;
+   var mapPng = null;
+   try
+   {
+      mapPng = SIRender.bitmapToBase64Png( mapForHtml );
+   }
+   catch ( e )
+   {
+      if ( e.siPngUnavailable !== true )
+         throw e;
+      pngUnavailable = true;
+      console.warningln( SKYINTRUDERS_TITLE + ": report pictures omitted — " + e.message );
+   }
 
    // Thumbnails for the most notable treasures.
    var topN = treasures.slice( 0, Math.min( treasures.length, 8 ) );
@@ -1993,6 +2020,8 @@ function runTreasureHunt( window, filePath, params, onProgress )
    {
       var tt = topN[ k ];
       tt.id = "T" + k;
+      if ( pngUnavailable )
+         continue;
       try
       {
          var crop = SIRender.cropThumbnail( base, tt.x, tt.y, boxPx, 96 );
@@ -2000,6 +2029,12 @@ function runTreasureHunt( window, filePath, params, onProgress )
       }
       catch ( e )
       {
+         if ( e.siPngUnavailable === true )
+         {
+            pngUnavailable = true;
+            console.warningln( SKYINTRUDERS_TITLE + ": report pictures omitted — " + e.message );
+            continue;
+         }
          console.warningln( "   thumbnail failed for " + tt.name + ": " + e.message );
       }
    }
@@ -2014,6 +2049,7 @@ function runTreasureHunt( window, filePath, params, onProgress )
    var html = SITreasureReport.buildHtml( {
       treasures: displayTreasures, narratives: narratives, summary: summary,
       mapPng: mapPng, thumbs: thumbs, issues: queryFailures,
+      pngUnavailable: pngUnavailable,
       fieldInfo: { raDeg: raDeg, decDeg: decDeg, radiusDeg: radiusDeg,
                    target: meta.keywords[ "OBJECT" ] || null },
       attribution: params.reportAttribution === true,
@@ -3785,6 +3821,35 @@ function siConstructTest()
       // The documentation button, and the page it opens shipped next to the
       // script when this runs from an installed package.
       out.helpButtonOk = ( d.helpButton != null ) && ( d.helpButton.toolTip === uiT( "en", "helpTip" ) );
+      // PNG guard (PixInsight 1.9.6+ ships PNG as a separate module): a
+      // bitmap that writes nothing must raise the one clear message; a real
+      // write reports whether this installation can write PNG at all.
+      var noPngPath = File.systemTempDirectory + "/si-construct-nopng.png";
+      try
+      {
+         SIRender.savePng( { save: function() { return false; } }, noPngPath );
+         out.pngGuardOk = false;
+      }
+      catch ( ePng )
+      {
+         out.pngGuardOk = ( ePng.siPngUnavailable === true ) &&
+                          ( ePng.message.indexOf( "Install Modules" ) >= 0 ) &&
+                          !File.exists( noPngPath );
+      }
+      var pngProbe = File.systemTempDirectory + "/si-construct-png-probe.png";
+      try
+      {
+         var pb = new Bitmap( 4, 4 );
+         pb.fill( 0xff000000 );
+         SIRender.savePng( pb, pngProbe );
+         out.pngWritable = true;
+      }
+      catch ( ePng2 )
+      {
+         out.pngWritable = String( ePng2.message || ePng2 );
+      }
+      try { if ( File.exists( pngProbe ) ) File.remove( pngProbe ); } catch ( ePng3 ) {}
+
       // Every check above must hold for the gate to pass.
       for ( var ck in out )
          if ( /Ok$/.test( ck ) && out[ ck ] !== true )

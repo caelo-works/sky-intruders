@@ -16,6 +16,61 @@ var SIRender = ( function()
 {
    var tmpCounter = 0;
 
+   // From PixInsight 1.9.6, PNG support is a separate module the user installs
+   // once; without it no PNG can be written. Every PNG write goes through
+   // savePng, which turns that case into one clear, actionable message.
+   var PNG_UNAVAILABLE_MSG = "PNG files cannot be written: install the PNG module once " +
+                             "(Process > Modules > Install Modules), then restart PixInsight.";
+
+   function pngUnavailableError( cause )
+   {
+      var e = new Error( PNG_UNAVAILABLE_MSG + ( cause ? " (" + cause + ")" : "" ) );
+      e.siPngUnavailable = true;
+      return e;
+   }
+
+   function fileIsNonEmpty( path )
+   {
+      try
+      {
+         if ( !File.exists( path ) )
+            return false;
+      }
+      catch ( e )
+      {
+         return false;
+      }
+      try
+      {
+         if ( typeof FileInfo == "function" )
+            return ( new FileInfo( path ) ).size > 0;
+      }
+      catch ( e ) {}
+      return true;
+   }
+
+   // Bitmap -> PNG file. Judged on the file actually written, not on the
+   // return value of Bitmap.save (which differs across core versions): an
+   // exception or a missing/empty file throws pngUnavailableError.
+   function savePng( bitmap, path )
+   {
+      var cause = null;
+      try { if ( File.exists( path ) ) File.remove( path ); } catch ( e0 ) {}
+      try
+      {
+         bitmap.save( path );
+      }
+      catch ( e )
+      {
+         cause = String( e.message || e );
+      }
+      if ( !fileIsNonEmpty( path ) )
+      {
+         try { if ( File.exists( path ) ) File.remove( path ); } catch ( e1 ) {}
+         throw pngUnavailableError( cause );
+      }
+   }
+
    // ------------------------------------------------------------------------
    // Pure helper: "#rrggbb" (or "#rgb") -> opaque uint32 ARGB. Separable and
    // side-effect free so it can be reasoned about and tested on its own.
@@ -208,7 +263,7 @@ var SIRender = ( function()
                 ( new Date ).getTime() + "-" + ( ++tmpCounter ) + ".png";
       try
       {
-         bitmap.save( tmp );
+         savePng( bitmap, tmp );
          var ba = File.readFile( tmp );
          var b64 = ba.toBase64();
          return b64;
@@ -1112,6 +1167,8 @@ var SIRender = ( function()
       argbToHex: argbToHex,
       withAlpha: withAlpha,
       stretchedBitmap: stretchedBitmap,
+      PNG_UNAVAILABLE_MSG: PNG_UNAVAILABLE_MSG,
+      savePng: savePng,
       bitmapToBase64Png: bitmapToBase64Png,
       annotateField: annotateField,
       chartField: chartField,

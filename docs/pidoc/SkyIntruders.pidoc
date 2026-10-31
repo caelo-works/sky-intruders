@@ -60,6 +60,10 @@ the script stores.
 
 The script is available from the \s { Script > CaeloWorks > Sky Intruders }
 menu item. It requires PixInsight 1.9.4 or newer, on Windows, macOS and Linux.
+On PixInsight 1.9.6 and newer, PNG support is a separate module: install it
+once with \s { Process > Modules > Install Modules } . Without it, the
+annotated night image is shown but not saved, and the Treasure Hunt report has
+no pictures; the console, and the report, say so.
 
 \subsection { Input list } {
 
