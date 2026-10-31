@@ -15,7 +15,7 @@ Three rules when you use it:
 - **"I can't find it" and "it found nothing" are usually two different bugs.**
   Read the Known bugs section before answering either one.
 
-Applies to **0.4.0**. To check a user's version: in the script window, hover the
+Applies to **0.4.1**. To check a user's version: in the script window, hover the
 **"by CaeloWorks"** line just under the title — the tooltip ends with the build
 number. There is no other version display.
 
@@ -26,7 +26,7 @@ number. There is no other version display.
 | | |
 |---|---|
 | What it is | A PixInsight script that finds who crossed your light frames, and what hid in your image |
-| Version | 0.4.0 · GPL-3.0 · free and open source |
+| Version | 0.4.1 · GPL-3.0 · free and open source |
 | Requires | **PixInsight 1.9.4 or newer** — Windows, macOS, Linux |
 | Where it lives | **Script → CaeloWorks → Sky Intruders** |
 | Internet | Needed for satellite elements and deep-sky catalogs. HTTPS only, no telemetry, no personal data sent (see 6.1). Everything is cached; it degrades gracefully offline |
@@ -1045,6 +1045,7 @@ Two behaviours remain by design:
 
 | The user says | It means | Tell them |
 |---|---|---|
+| "Pressing Return in a field starts the analysis" / "Return saved the report" (PixInsight 1.9.6+) | Version **0.4.0 or older** on PixInsight 1.9.6, whose contained windows send Return to a push button | **Update the script** (fixed in 0.4.1: Return no longer presses Analyze, Hunt or Save). Until then, use Tab to leave a field. |
 | "No Open image button" / "night image not saved" (PixInsight 1.9.6+) | The PNG module is not installed (separate from 1.9.6) | **Process → Modules → Install Modules**, install the PNG module, restart PixInsight. The composite window itself was still shown. |
 | "It found no trails at all" | Fewer than 3 frames, or fewer than 3 **per filter** | Difference detection needs at least 3 frames of the same filter. Check the console for *"filter group … has only N frame(s)"*. |
 | "Trails are found but nothing is identified" | **No observer site** — by far the most common | Since 0.2.2 the window says so: the status line and the report banner read **"No observer site — satellites not identified."** The frames need site headers (`SITELAT`/`SITELONG`, `OBSGEO-B`/`OBSGEO-L` or `LAT-OBS`/`LONG-OBS`), or the user fills Lat (+N) / Lon (+E) in the Night trails tab — decimal with dot or comma, or sexagesimal. Without a site, identification is switched off entirely. |
