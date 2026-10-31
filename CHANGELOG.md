@@ -24,6 +24,12 @@ All notable changes to this project are documented here. The format is based on
   French one. The Documentation Compiler drops source line breaks, so the
   build now indents continuation lines in its working copy of the sources.
   The text is unchanged otherwise.
+- PixInsight 1.9.6 runs dialogs in contained windows, where Return in any
+  field presses a push button. Return in the mirror URL or in the observer
+  latitude, longitude and altitude fields started the analysis, and Return in
+  the night report and Treasure Hunt result dialogs saved the report. The
+  dialogs no longer have an automatic default button; only the colour picker
+  keeps OK as its default, so Return still validates a colour.
 
 ## [0.4.0] - 2026-10-31
 

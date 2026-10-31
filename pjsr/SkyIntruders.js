@@ -2682,6 +2682,10 @@ class ReportDialog extends Dialog
    constructor( result, params, suggestedDir )
    {
       super();
+      // Contained windowing (PixInsight 1.9.6): Return in any control would
+      // otherwise press a push button (Qt auto-default picks the first one).
+      // Before 1.9.6 the property does not exist and this is a plain expando.
+      this.autoDefaultButton = false;
       this.windowTitle = SKYINTRUDERS_TITLE + " — " + result.night.dateLabel;
 
       this.titleLabel = new Label( this );
@@ -2778,6 +2782,10 @@ class HtmlResultDialog extends Dialog
    constructor( title, bodyRich, html, suggestedName, suggestedDir, lang )
    {
       super();
+      // Contained windowing (PixInsight 1.9.6): Return in any control would
+      // otherwise press a push button (Qt auto-default picks the first one).
+      // Before 1.9.6 the property does not exist and this is a plain expando.
+      this.autoDefaultButton = false;
       this.windowTitle = title;
       this.html = html;
       this.suggestedName = suggestedName || "SkyIntruders.html";
@@ -2855,6 +2863,10 @@ class SkyIntrudersDialog extends Dialog
    constructor( params )
    {
       super();
+      // Contained windowing (PixInsight 1.9.6): Return in any control would
+      // otherwise press a push button (Qt auto-default picks the first one).
+      // Before 1.9.6 the property does not exist and this is a plain expando.
+      this.autoDefaultButton = false;
       this.params = params;
       this.files = [];
       this.lastResult = null;
@@ -3216,7 +3228,6 @@ class SkyIntrudersDialog extends Dialog
       this.statusLabel.textAlignment = TextAlign.Left | TextAlign.VertCenter;
 
       this.analyzeButton = new PushButton( this );
-      this.analyzeButton.defaultButton = true;
       this.analyzeButton.icon = siIcon( this, ":/icons/play.png" );
       this.analyzeButton.onClick = () => self.runNow();
 
