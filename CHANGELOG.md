@@ -4,7 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.1] - 2026-10-31
+
+PixInsight 1.9.6 compatibility. Refs #22.
+
+**Validation**, PixInsight 1.9.6 / Windows, 2026-10-31, against the 0.4.0
+baseline taken on 1.9.5. Headless: GUI construction test green, including the
+new PNG checks; v8 runtime selftest 7/7; Treasure Hunt integration selftest
+8/8. The reference Treasure Hunt field gives the same report as on 1.9.5. The
+strict FITS WCS reading of 1.9.6 gives the same coordinates as our own TAN
+projection in 24 orientations of both parities, and a linear solution
+survives FastRotation and IntegerResample. The 13-frame reference night finds
+13 of 13 trails (12 on 1.9.5: the twilight corner-cut of frame 7 is now
+found). Both documentation pages compile with documentation compiler 1.8.1,
+warnings treated as errors, and no word is glued at a line break any more. By
+hand, in contained mode: Return in every field and dialog,
+both modes on the reference data, and both modes with the PNG module removed.
+`check-package.sh` passes on the unsigned build. Node harness: all steps
+green, including the new dialog test.
 
 ### Fixed
 
