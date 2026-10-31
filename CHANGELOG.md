@@ -11,6 +11,19 @@ All notable changes to this project are documented here. The format is based on
 Answers the PixInsight Development Team's CPD notice of October 2026 (rules
 5.1, 6.1 and 6.4). Refs #22.
 
+**Validation**, PixInsight 1.9.5 / Windows, headless, 2026-10-31. GUI
+construction test on the built package: 20/20 checks in both languages,
+including the new attribution checkbox and documentation button. v8 runtime
+selftest 7/7, live NetworkTransfer included. Treasure Hunt integration
+selftest 8/8. 13-frame reference night, run on this build and on 0.3.1 the
+same day: identical events, names, confidences, orientation fit and movers;
+the only difference is the attribution line, now absent by default. Both
+documentation pages compile with the PixInsight documentation compiler, with
+warnings treated as errors. `check-package.sh` passes on the unsigned build,
+and the zip is reproducible. `sign-package.sh` exits non-zero with `dist/`
+untouched on an empty password and on an invalid key file. Node harness: all
+steps green.
+
 ### Added
 
 - Reference documentation shipped in the package (rule 6.1), in English and
