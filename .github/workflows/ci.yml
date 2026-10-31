@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
@@ -26,8 +27,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Every PIDoc source has its compiled page
+        run: |
+          for src in docs/pidoc/*.pidoc; do
+            page="$(basename "$src" .pidoc)"
+            [ -f "doc/scripts/$page/$page.html" ] \
+              || { echo "::error::doc/scripts/$page/$page.html missing (run scripts/build-script-doc.sh)"; exit 1; }
+          done
       - name: Build the update package
         run: bash scripts/build-update-package.sh 0.0.0-ci
+      - name: Package contract (unsigned development build)
+        run: bash scripts/check-package.sh dist/*.zip
       - name: Zip is reproducible (same content -> same SHA-1)
         run: |
           name="$(ls dist/*.zip)"

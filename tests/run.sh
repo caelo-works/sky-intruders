@@ -39,6 +39,7 @@ LIBS=(
    "$ROOT/pjsr/lib/FrameMeta.js"
    "$ROOT/pjsr/lib/TrailDetect.js"
    "$ROOT/pjsr/lib/Net.js"
+   "$ROOT/pjsr/lib/Params.js"
    "$ROOT/pjsr/lib/SatMatch.js"
    "$ROOT/pjsr/lib/Meteors.js"
    "$ROOT/pjsr/lib/SatLabels.js"
@@ -90,6 +91,7 @@ module.exports = {
    SITrailCore: SITrailCore,
    SITleNet: SITleNet,
    SINet: SINet,
+   SIParams: SIParams,
    SISatMatch: SISatMatch,
    SIMeteors: SIMeteors,
    SISatLabels: SISatLabels,

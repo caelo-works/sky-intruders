@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+   <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+   <title>PixInsight Reference Documentation | SkyIntruders</title>
+   <meta name="keywords" content="satellite trails, satellite identification, TLE, SGP4, meteors, asteroids, deep-sky catalogs, plate solving" />
+   <meta name="author" content="Caelo Works" />
+   <meta name="description" content="Detects the trails that crossed a night of light frames and identifiesthe satellites by name, and finds the catalogued objects hiding in aplate-solved image." />
+   <meta name="robots" content="INDEX,FOLLOW" />
+   <meta name="generator" content="PixInsight Documentation Compiler script version 1.7.4" />
+   <meta name="pidoc-document-class" content="PIScriptDoc" />
+   <script type="text/javascript" src="../../pidoc/scripts/pidoc-utility.js"></script>
+   <link type="text/css" href="../../pidoc/css/pidoc-common.css" rel="stylesheet" />
+   <link type="text/css" href="../../pidoc/css/pidoc-highlight.css" rel="stylesheet" />
+   <link type="text/css" href="../../pidoc/css/pidoc-tool.css" rel="stylesheet" />
+   <link rel="icon" href="../../pidoc/icons/pidoc-icon.svg" />
+</head>
+<body>
+<script type="text/javascript">
+   pidoc_generateDynamicContents();
+</script>
+
+<h1>SkyIntruders</h1>
+
+<div id="authors">
+<p>By Caelo Works</p>
+</div>
+
+<hr class="separator"/>
+
+<div id="brief">
+<p>Detects the trails that crossed a night of light frames and identifiesthe satellites by name, and finds the catalogued objects hiding in aplate-solved image. <a href="#__contents__">[more]</a></p></div>
+
+<div id="keywords">
+<p><strong>Keywords:</strong> satellite trails, satellite identification, TLE, SGP4, meteors, asteroids, deep-sky catalogs, plate solving</p>
+</div>
+
+<h3 class="pidoc_sectionTitle" id="__toc__">Contents</h3>
+<p class="pidoc_sectionToggleButton" onclick="pidoc_toggleSection( 'toc', this );">[hide]</p>
+<div id="toc">
+<ul>
+<li class="pidoc_tocItem"><a href="#__Description__">1&emsp;Description</a></li>
+<li class="pidoc_tocItem"><a href="#__Usage__">2&emsp;Usage</a>
+<ul>
+<li class="pidoc_tocSubitem"><a href="#__Usage_:_Input_list__">2.1&emsp;Input list</a></li>
+<li class="pidoc_tocSubitem"><a href="#__Usage_:_Night_trails_tab__">2.2&emsp;Night trails tab</a></li>
+<li class="pidoc_tocSubitem"><a href="#__Usage_:_Treasure_Hunt_tab__">2.3&emsp;Treasure Hunt tab</a></li>
+<li class="pidoc_tocSubitem"><a href="#__Usage_:_Shared_option_report_attribution__">2.4&emsp;Shared option: report attribution</a></li>
+</ul>
+</li>
+<li class="pidoc_tocItem"><a href="#__Network_connections__">3&emsp;Network connections</a>
+<ul>
+<li class="pidoc_tocSubitem"><a href="#__Network_connections_:_Hosts_contacted__">3.1&emsp;Hosts contacted</a></li>
+<li class="pidoc_tocSubitem"><a href="#__Network_connections_:_What_is_never_sent__">3.2&emsp;What is never sent</a></li>
+<li class="pidoc_tocSubitem"><a href="#__Network_connections_:_Data_integrity__">3.3&emsp;Data integrity</a></li>
+</ul>
+</li>
+<li class="pidoc_tocItem"><a href="#__Report_attribution__">4&emsp;Report attribution</a></li>
+<li class="pidoc_tocItem"><a href="#__External_programs__">5&emsp;External programs</a></li>
+<li class="pidoc_tocItem"><a href="#__Files_written_on_your_computer__">6&emsp;Files written on your computer</a>
+<ul>
+<li class="pidoc_tocSubitem"><a href="#__Files_written_on_your_computer_:_The_data_folder__">6.1&emsp;The data folder</a></li>
+<li class="pidoc_tocSubitem"><a href="#__Files_written_on_your_computer_:_The_temporary_folder__">6.2&emsp;The temporary folder</a></li>
+</ul>
+</li>
+<li class="pidoc_tocItem"><a href="#__Code_signature__">7&emsp;Code signature</a></li>
+<li class="pidoc_tocItem"><a href="#__Thirdparty_notices_and_licence__">8&emsp;Third-party notices and licence</a></li>
+</ul>
+</div>
+
+<div id="__contents__">
+
+<div class="pidoc_section" id="__Description__">
+   <h3 class="pidoc_sectionTitle">1&emsp;Description</h3>
+   <p class="pidoc_sectionToggleButton" onclick="pidoc_toggleSection( 'Description', this );">[hide]</p>
+   <div id="Description">
+<p><a href="../SkyIntruders-fr/SkyIntruders-fr.html" title="../SkyIntruders-fr/SkyIntruders-fr.html">Version française de cette documentation</a></p>
+<p>Sky Intruders works in two modes, one per tab of its dialog. Everything runsinside PixInsight: there is no native helper to install.</p>
+
+<ul class="pidoc_list">
+<li><strong>Night trails</strong> scans the light frames of one night. The frames areregistered internally and trails are detected on the registered differenceimage, so nebulosity is not mistaken for a trail. Every trail is cross-matchedagainst orbital elements propagated with SGP4, so that an identified trailcarries the name of the satellite. Unmatched trails are tested against theactive meteor showers, and slow, coherent movers become asteroid candidates.The result is an annotated composite image and a night log with a ready-to-postforum text.</li>
+<li class="pidoc_spaced_list_item"><strong>Treasure Hunt</strong> takes one plate-solved image and queries deep catalogsfor the galaxies, quasars, planetary nebulae and asteroids inside the field.Every catalog position is then measured on the image, so the report separatesthe objects actually captured from those in the field but below the noise ofthe image. The result is a star chart, opened as a new image window, and anillustrated HTML report.</li>
+</ul>
+
+<p>Both modes download catalog data over HTTPS; see<a href="#network">Network connections</a> for every host contacted and what issent to it, and <a href="#files">Files written on your computer</a> for everythingthe script stores.</p>
+   </div>
+</div>
+
+<div class="pidoc_section" id="__Usage__">
+   <h3 class="pidoc_sectionTitle">2&emsp;Usage</h3>
+   <p class="pidoc_sectionToggleButton" onclick="pidoc_toggleSection( 'Usage', this );">[hide]</p>
+   <div id="Usage">
+<p>The script is available from the <strong>Script &gt; CaeloWorks &gt; Sky Intruders</strong>menu item. It requires PixInsight 1.9.4 or newer, on Windows, macOS and Linux.</p>
+<div class="pidoc_subsection" id="__Usage_:_Input_list__">
+   <h4 class="pidoc_subsectionTitle">2.1&emsp;Input list</h4>
+<p>The <strong>Input</strong> list is shared by both modes. <strong>Add files…</strong> accepts<span class="pidoc_code">.fits</span>, <span class="pidoc_code">.fit</span>, <span class="pidoc_code">.fts</span> and <span class="pidoc_code">.xisf</span> files, <strong>Add folder…</strong>adds the frames of one folder (it does not recurse into subfolders), and<strong>Clear</strong> empties the list. A file already in the list is not added twice.</p>
+<p>In <strong>Night trails</strong> the list holds the light frames of one night, whichneed the <span class="pidoc_code">DATE-OBS</span> and <span class="pidoc_code">EXPTIME</span> keywords. The first frame of the list isthe registration reference and the source of the plate solution of the field:put a plate-solved frame first. Satellite identification also needs anobserver site, read from the <span class="pidoc_code">SITELAT</span> / <span class="pidoc_code">SITELONG,</span> <span class="pidoc_code">OBSGEO-B</span> /<span class="pidoc_code">OBSGEO-L</span> or <span class="pidoc_code">LAT-OBS</span> / <span class="pidoc_code">LONG-OBS</span> keywords, or entered by hand in thedialog. Without a site, trails are still detected but cannot be named, and thedialog says <strong>No observer site — satellites not identified.</strong></p>
+<p>In <strong>Treasure Hunt</strong> the list holds one plate-solved image. When the listis empty, the active image window is used. An image without an astrometricsolution is refused with a message.</p>
+<p>The <strong>Language</strong> list switches the interface, the reports and the star chartbetween English and French. Every setting is remembered between sessions.The documentation button at the left of the <strong>Language</strong> list opens this page,in the interface language, in the PixInsight documentation browser.</p>
+</div>
+
+<div class="pidoc_subsection" id="__Usage_:_Night_trails_tab__">
+   <h4 class="pidoc_subsectionTitle">2.2&emsp;Night trails tab</h4>
+
+<table class="pidoc_table">
+<caption><a id="__table_1__"></a>
+<span class="pidoc_table_title">Table 1</span></caption>
+<tr>
+<th><p>Control</p>
+</th>
+<th><p>Default</p>
+</th>
+<th><p>Effect</p>
+</th>
+</tr>
+<tr>
+<td><p><strong>Detection threshold (σ):</strong></p>
+</td>
+<td><p>4.5</p>
+</td>
+<td><p>Threshold, in robust sigmas, on the registered difference image used by every normal run of three frames or more. Range 2.5 to 8; a lower value catches fainter trails at the cost of false detections.</p>
+</td>
+</tr>
+<tr>
+<td><p><strong>Draw predicted crossers on the result image</strong></p>
+</td>
+<td><p>off</p>
+</td>
+<td><p>Draws, as pale ghost lines, the satellites the orbit model places inside the field during an exposure but that no detected trail confirmed.</p>
+</td>
+</tr>
+<tr>
+<td><p><strong>Also draw shadow crossers</strong></p>
+</td>
+<td><p>off</p>
+</td>
+<td><p>Same, for the satellites the model places in the shadow of the Earth, drawn in grey.</p>
+</td>
+</tr>
+<tr>
+<td><p><strong>Observer site — only if the FITS headers carry none</strong></p>
+</td>
+<td><p>empty</p>
+</td>
+<td><p><strong>Lat (°, +N):</strong> , <strong>Lon (°, +E):</strong> and <strong>Alt (m):</strong> . Used only when no frame carries a site. North and east are positive. Decimal values with a dot or a comma and sexagesimal values are accepted; an out-of-range or unreadable value is cleared and the status line says why.</p>
+</td>
+</tr>
+<tr>
+<td><p><strong>Single-frame threshold (σ):</strong></p>
+</td>
+<td><p>5.0</p>
+</td>
+<td><p>In the <strong>Advanced</strong> group. Used only in the degraded per-frame path: fewer than three frames, or a set that could not be registered. Range 3 to 12.</p>
+</td>
+</tr>
+<tr>
+<td><p><strong>Flag slow movers as asteroid candidates</strong></p>
+</td>
+<td><p>on</p>
+</td>
+<td><p>In the <strong>Advanced</strong> group. Unchecked, the slow-mover search is skipped.</p>
+</td>
+</tr>
+<tr>
+<td><p><strong>Orbital data max age (h):</strong></p>
+</td>
+<td><p>12</p>
+</td>
+<td><p>In the <strong>Advanced</strong> group. Cached orbital elements older than this are downloaded again. Range 1 to 168.</p>
+</td>
+</tr>
+<tr>
+<td><p><strong>Orbital data mirror URL:</strong></p>
+</td>
+<td><p>empty</p>
+</td>
+<td><p>In the <strong>Advanced</strong> group. Base URL of a CelesTrak-compatible mirror, tried first when set. It must start with <span class="pidoc_code">https://</span> ; any other value is cleared and the status line reads <strong>Mirror URL must start with https:// — ignored.</strong></p>
+</td>
+</tr>
+</table>
+
+<p><strong>Analyze night</strong> runs the analysis. The result window shows the nightlog; <strong>Save report…</strong> saves it to a file you choose, and <strong>Open image</strong>opens the annotated night image with the default image viewer of your system.</p>
+</div>
+
+<div class="pidoc_subsection" id="__Usage_:_Treasure_Hunt_tab__">
+   <h4 class="pidoc_subsectionTitle">2.3&emsp;Treasure Hunt tab</h4>
+
+<table class="pidoc_table">
+<caption><a id="__table_2__"></a>
+<span class="pidoc_table_title">Table 2</span></caption>
+<tr>
+<th><p>Control</p>
+</th>
+<th><p>Default</p>
+</th>
+<th><p>Effect</p>
+</th>
+</tr>
+<tr>
+<td><p><strong>Max catalog rows / type:</strong></p>
+</td>
+<td><p>400</p>
+</td>
+<td><p>Maximum number of objects fetched per catalog. Range 50 to 2000. Each catalog is asked to sort its answer, so the faintest or smallest objects are the ones dropped.</p>
+</td>
+</tr>
+<tr>
+<td><p><strong>Hunt for:</strong></p>
+</td>
+<td><p>all checked</p>
+</td>
+<td><p><strong>Galaxies</strong> , <strong>Quasars</strong> , <strong>Planetary nebulae</strong> and <strong>Asteroids</strong> . An unchecked type is not queried.</p>
+</td>
+</tr>
+<tr>
+<td><p><strong>Overlay color:</strong></p>
+</td>
+<td><p><span class="pidoc_code">&#35;9FD8D2</span></p>
+</td>
+<td><p>Color of the markers, leader lines, labels and cards of the star chart. The swatch button opens a color picker.</p>
+</td>
+</tr>
+</table>
+
+<p><strong>Hunt treasures</strong> runs the search. The star chart opens as a new imagewindow. The result window shows the illustrated report; <strong>Open HTML</strong>opens it in your web browser, and <strong>Save HTML…</strong> saves it to a file youchoose.</p>
+</div>
+
+<div class="pidoc_subsection" id="__Usage_:_Shared_option_report_attribution__">
+   <h4 class="pidoc_subsectionTitle">2.4&emsp;Shared option: report attribution</h4>
+<p>A checkbox under the mode tabs, <strong>Credit Sky Intruders at the end ofreports</strong> , applies to both modes. It is off by default. See<a href="#attribution">Report attribution</a> .</p>
+</div>
+
+   </div>
+</div>
+
+<div class="pidoc_section" id="__Network_connections__">
+   <h3 class="pidoc_sectionTitle">3&emsp;<a id="network"></a>Network connections</h3>
+   <p class="pidoc_sectionToggleButton" onclick="pidoc_toggleSection( 'Network_connections', this );">[hide]</p>
+   <div id="Network_connections">
+<div class="pidoc_subsection" id="__Network_connections_:_Hosts_contacted__">
+   <h4 class="pidoc_subsectionTitle">3.1&emsp;Hosts contacted</h4>
+<p>Every connection is made over HTTPS, through the networking of PixInsightitself ( <span class="pidoc_code">NetworkTransfer</span> ). An address that does not start with<span class="pidoc_code">https://</span> is refused before any transfer, including a mirror addressentered by you. The script sets no proxy of its own: a proxy must beconfigured in PixInsight. The script contacts the following hosts, and onlythese:</p>
+
+<table class="pidoc_table">
+<caption><a id="__table_3__"></a>
+<span class="pidoc_table_title">Table 3</span></caption>
+<tr>
+<th><p>Host</p>
+</th>
+<th><p>When</p>
+</th>
+<th><p>What is sent</p>
+</th>
+</tr>
+<tr>
+<td><p><span class="pidoc_code">celestrak.org</span></p>
+</td>
+<td><p>Night trails.</p>
+</td>
+<td><p>The name of the orbital element group requested, for example <span class="pidoc_code">active</span> . The satellite catalog (SATCAT) is a plain file download.</p>
+</td>
+</tr>
+<tr>
+<td><p><span class="pidoc_code">raw.githubusercontent.com/caelo-works/tle-mirror</span></p>
+</td>
+<td><p>Night trails, when CelesTrak does not answer.</p>
+</td>
+<td><p>The same group name. This is a mirror of CelesTrak data operated by CaeloWorks on GitHub, published with a SHA-256 manifest. It also provides the full catalog group, which only the mirror publishes, and a copy of the SATCAT.</p>
+</td>
+</tr>
+<tr>
+<td><p>The mirror you enter</p>
+</td>
+<td><p>Night trails, only when <strong>Orbital data mirror URL:</strong> is filled.</p>
+</td>
+<td><p>The group name. Only an <span class="pidoc_code">https://</span> address is accepted.</p>
+</td>
+</tr>
+<tr>
+<td><p><span class="pidoc_code">vizier.cds.unistra.fr</span></p>
+</td>
+<td><p>Treasure Hunt: VizieR at the CDS, for galaxies, quasars, planetary nebulae and bright stars.</p>
+</td>
+<td><p>The field centre (RA/Dec), the search radius, the catalog and the columns wanted, and the row cap.</p>
+</td>
+</tr>
+<tr>
+<td><p><span class="pidoc_code">ssp.imcce.fr</span></p>
+</td>
+<td><p>Treasure Hunt: SkyBoT at the IMCCE, for asteroids.</p>
+</td>
+<td><p>The field centre (RA/Dec), the search radius and the capture epoch.</p>
+</td>
+</tr>
+</table>
+
+</div>
+
+<div class="pidoc_subsection" id="__Network_connections_:_What_is_never_sent__">
+   <h4 class="pidoc_subsectionTitle">3.2&emsp;What is never sent</h4>
+<p>Your observer site is never sent: satellite orbits are computed on yourcomputer. File names, image data and identifiers of any kind are never senteither. There is no telemetry and no usage tracking. Everything downloaded isdata, orbital elements and catalog rows; nothing downloaded is ever executed.</p>
+<p>The script makes no automatic connection to the CaeloWorks website. The<em>by CaeloWorks</em> label in the header of the dialog opens the product page,<a href="https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders" title="https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders">pixinsight-scripts.caelo.works</a> , in your web browser only when you clickit (the French interface opens the French page).</p>
+</div>
+
+<div class="pidoc_subsection" id="__Network_connections_:_Data_integrity__">
+   <h4 class="pidoc_subsectionTitle">3.3&emsp;Data integrity</h4>
+
+<ul class="pidoc_list">
+<li><strong>Orbital elements</strong> , from every source: each element line carries amodulo-10 checksum, verified on download. An element set that fails isdropped, and the console says how many were dropped. A download in which morethan 5 % of the element sets fail is rejected as corrupt, and the nextsource, or the cache, is used instead.</li>
+<li class="pidoc_spaced_list_item"><strong>CaeloWorks mirror</strong> : every file taken from the mirror is checkedagainst its SHA-256 manifest, <span class="pidoc_code">tle/SHA256SUMS</span> . After one retry, a filethat still does not match is not used; if the manifest cannot be fetched, nomirror file is used at all. CelesTrak or the cache is then used instead.</li>
+<li class="pidoc_spaced_list_item"><strong>VizieR, SkyBoT and the CelesTrak SATCAT</strong> publish no checksums. Theyare protected by HTTPS and by strict format validation: an answer that is notgenuine catalog data, such as an error or maintenance page, is rejected,reported, and never cached.</li>
+</ul>
+
+</div>
+
+   </div>
+</div>
+
+<div class="pidoc_section" id="__Report_attribution__">
+   <h3 class="pidoc_sectionTitle">4&emsp;<a id="attribution"></a>Report attribution</h3>
+   <p class="pidoc_sectionToggleButton" onclick="pidoc_toggleSection( 'Report_attribution', this );">[hide]</p>
+   <div id="Report_attribution">
+<p>The checkbox <strong>Credit Sky Intruders at the end of reports</strong> sits under themode tabs and is shared by both modes. Its tooltip reads: <em>Adds the line“Report generated by Sky Intruders for PixInsight” and the product pageaddress at the end of the night log, its forum text and the Treasure Hunt HTMLreport. Off by default: what you publish is up to you.</em></p>
+<p>The option is saved in <span class="pidoc_code">settings.json</span> as <span class="pidoc_code">reportAttribution</span> . It is<span class="pidoc_code">false</span> by default, including for settings files written by older versions.When it is off, no attribution line is added to any report format.</p>
+<p>The <em>by CaeloWorks</em> label in the header of the dialog is not affected bythis option. It stays in the dialog, and opens the product page only when youclick it.</p>
+   </div>
+</div>
+
+<div class="pidoc_section" id="__External_programs__">
+   <h3 class="pidoc_sectionTitle">5&emsp;External programs</h3>
+   <p class="pidoc_sectionToggleButton" onclick="pidoc_toggleSection( 'External_programs', this );">[hide]</p>
+   <div id="External_programs">
+<p>Sky Intruders starts no program of its own, and no executable is shipped withit. Only when you click <strong>Open image</strong> , <strong>Open HTML</strong> or the<em>by CaeloWorks</em> label, it asks your operating system to open the file orthe address with its default application. It runs <span class="pidoc_code">cmd /c start</span> onWindows, <span class="pidoc_code">/usr/bin/open</span> on macOS and <span class="pidoc_code">xdg-open</span> on Linux, with thefile path or the address as argument. Nothing is launched without an explicitclick from you.</p>
+   </div>
+</div>
+
+<div class="pidoc_section" id="__Files_written_on_your_computer__">
+   <h3 class="pidoc_sectionTitle">6&emsp;<a id="files"></a>Files written on your computer</h3>
+   <p class="pidoc_sectionToggleButton" onclick="pidoc_toggleSection( 'Files_written_on_your_computer', this );">[hide]</p>
+   <div id="Files_written_on_your_computer">
+<div class="pidoc_subsection" id="__Files_written_on_your_computer_:_The_data_folder__">
+   <h4 class="pidoc_subsectionTitle">6.1&emsp;The data folder</h4>
+<p>Everything persistent is stored in one folder of your home directory( <span class="pidoc_code">%USERPROFILE%</span> on Windows, <span class="pidoc_code">~</span> on macOS and Linux):<span class="pidoc_code">.caeloworks/sky-intruders/</span> . Nothing is written inside the PixInsightinstallation.</p>
+
+<table class="pidoc_table">
+<caption><a id="__table_4__"></a>
+<span class="pidoc_table_title">Table 4</span></caption>
+<tr>
+<th><p>Path</p>
+</th>
+<th><p>Content</p>
+</th>
+<th><p>Safe to delete?</p>
+</th>
+</tr>
+<tr>
+<td><p><span class="pidoc_code">settings.json</span></p>
+</td>
+<td><p>The dialog settings.</p>
+</td>
+<td><p>Yes: every setting is reset to its default.</p>
+</td>
+</tr>
+<tr>
+<td><p><span class="pidoc_code">history.json</span></p>
+</td>
+<td><p>Your personal night records.</p>
+</td>
+<td><p>Yes, but the records are lost for good.</p>
+</td>
+</tr>
+<tr>
+<td><p><span class="pidoc_code">tle/</span></p>
+</td>
+<td><p>The orbital element and SATCAT cache.</p>
+</td>
+<td><p>Yes: the data is downloaded again on the next run.</p>
+</td>
+</tr>
+<tr>
+<td><p><span class="pidoc_code">treasure-cache/</span></p>
+</td>
+<td><p>The deep catalog answers, kept 30 days.</p>
+</td>
+<td><p>Yes: the catalogs are queried again.</p>
+</td>
+</tr>
+</table>
+
+<p>To stop keeping night records, close the script, open <span class="pidoc_code">settings.json</span> in atext editor and set <span class="pidoc_code">&quot;saveHistory&quot;: false</span> ; delete <span class="pidoc_code">history.json</span> if youwant the existing records gone too. The script rewrites <span class="pidoc_code">settings.json</span> whenits window closes, so edit it while the script is closed. To remove everythingthe script stores, delete the whole <span class="pidoc_code">.caeloworks/sky-intruders</span> folderwhile the script is closed.</p>
+</div>
+
+<div class="pidoc_subsection" id="__Files_written_on_your_computer_:_The_temporary_folder__">
+   <h4 class="pidoc_subsectionTitle">6.2&emsp;The temporary folder</h4>
+<p>The script also writes to the system temporary folder, as reported byPixInsight:</p>
+
+<ul class="pidoc_list">
+<li><span class="pidoc_code">si-night-reg-&lt;token&gt;/</span> , the registered frames of a Night trails run:removed at the end of every run. A leftover one means that PixInsight wasstopped during a run; it is safe to delete.</li>
+<li class="pidoc_spaced_list_item"><span class="pidoc_code">si-render-*</span> , image encoding scratch files: removed right afteruse.</li>
+<li class="pidoc_spaced_list_item">The copy of the Treasure Hunt HTML report written by <strong>Open HTML</strong> , andthe optional debug overlays <span class="pidoc_code">si-frame-annotated-&lt;token&gt;-*.png</span> : removedwhen the script window closes.</li>
+<li class="pidoc_spaced_list_item"><span class="pidoc_code">SkyIntruders-night-&lt;date&gt;-&lt;token&gt;.png</span> , the annotated night image:<strong>kept on purpose, and not cleaned up automatically</strong> . It stays in thesystem temporary folder because it is the image the result window opens. Saveit elsewhere if you want to keep it; the copy in the temporary folder can bedeleted at any time.</li>
+</ul>
+
+<p>Files you save yourself, with <strong>Save report…</strong> or <strong>Save HTML…</strong> , arewritten only where you choose.</p>
+</div>
+
+   </div>
+</div>
+
+<div class="pidoc_section" id="__Code_signature__">
+   <h3 class="pidoc_sectionTitle">7&emsp;Code signature</h3>
+   <p class="pidoc_sectionToggleButton" onclick="pidoc_toggleSection( 'Code_signature', this );">[hide]</p>
+   <div id="Code_signature">
+<p>The entry script of the package is signed with the CaeloWorks CertifiedPixInsight Developer identity; the signature is the <span class="pidoc_code">SkyIntruders.xsgn</span> fileinstalled next to it. The script therefore runs with the <em>Allow executionof unsigned scripts</em> option of PixInsight turned off. Modifying the installedfiles invalidates the signature.</p>
+   </div>
+</div>
+
+<div class="pidoc_section" id="__Thirdparty_notices_and_licence__">
+   <h3 class="pidoc_sectionTitle">8&emsp;Third-party notices and licence</h3>
+   <p class="pidoc_sectionToggleButton" onclick="pidoc_toggleSection( 'Thirdparty_notices_and_licence', this );">[hide]</p>
+   <div id="Thirdparty_notices_and_licence">
+
+<ul class="pidoc_list">
+<li>Sky Intruders is released under the GNU General Public License, version 3(GPL-3.0). The licence text is installed next to the script.</li>
+<li class="pidoc_spaced_list_item"><a href="https://github.com/shashwatak/satellite-js" title="https://github.com/shashwatak/satellite-js">satellite.js</a> 5.0.0,used for SGP4 propagation: MIT License, bundled in <span class="pidoc_code">lib/vendor/</span> .</li>
+<li class="pidoc_spaced_list_item"><a href="https://github.com/kapowaz/circle-flags" title="https://github.com/kapowaz/circle-flags">circle-flags</a> , used forthe country flags: MIT License, see <span class="pidoc_code">assets/flags/LICENSE.md</span> .</li>
+</ul>
+
+   </div>
+</div>
+
+<hr class="separator"/>
+
+<div id="copyright">
+   <p>Copyright &copy; 2026 Caelo Works</p>
+</div>
+
+<div id="footer">
+   <p>Generated by the PixInsight Documentation Compiler script version 1.7.4 on 2026-10-31 11:10:09 UTC</p>
+</div>
+<br/>
+<br/>
+
+</div> <!-- contents -->
+
+</body>
+</html>
