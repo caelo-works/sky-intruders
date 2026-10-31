@@ -103,6 +103,9 @@ folder containing `SkyIntruders.js`. Alternatively, run it once via
 **Script → Execute Script File…**.
 
 > **Requires PixInsight 1.9.4 or newer** — Windows, macOS and Linux.
+> On PixInsight 1.9.6 and newer, PNG support is a separate module: install it
+> once (**Process → Modules → Install Modules**), or the night image and the
+> Treasure Hunt report pictures cannot be written (the script says so).
 > Internet access is needed for the orbital and deep-sky catalogs (all cached,
 > with graceful offline degradation) — see [Network and privacy](#network-and-privacy).
 

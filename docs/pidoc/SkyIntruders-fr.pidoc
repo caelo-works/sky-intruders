@@ -64,7 +64,11 @@ tout ce que le script enregistre.
 
 Le script est accessible par le menu
 \s { Script > CaeloWorks > Sky Intruders } . Il demande PixInsight 1.9.4 ou
-plus récent, sous Windows, macOS et Linux. La langue de l'interface se choisit
+plus récent, sous Windows, macOS et Linux. À partir de PixInsight 1.9.6, la
+prise en charge du PNG est un module séparé : installez-le une fois avec
+\s { Process > Modules > Install Modules } . Sans lui, l'image annotée de la
+nuit est affichée mais pas enregistrée, et le rapport de la chasse au trésor
+n'a pas d'images ; la console, et le rapport, le signalent. La langue de l'interface se choisit
 dans la liste \s { Langue : } du dialogue ; les libellés ci-dessous sont ceux
 de l'interface en français.
 
