@@ -7,8 +7,8 @@
  * History is a full-rewrite JSON file (PJSR append is broken under v8).
  */
 
-// The product page, linked from the dialog's "by CaeloWorks" label and from
-// every report footer, per UI language. French is the site's default
+// The product page, linked from the dialog's "by CaeloWorks" label and, when
+// the user opts in (reportAttribution), from the report footers, per UI language. French is the site's default
 // language, so its page has no language prefix.
 var SI_PRODUCT_URL = {
    en: "https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders",
@@ -335,8 +335,11 @@ var SIReport = ( function()
       return fmt( single ? T.redditTitleOne : T.redditTitle, parts.join( T.redditAnd ), session, dateLabel );
    }
 
-   function build( night, history, lang )
+   // opts.attribution: end the log with T.generatedBy. Opt-in (CPD rule
+   // 6.4, settings "reportAttribution"): absent unless explicitly true.
+   function build( night, history, lang, opts )
    {
+      var attribution = !!( opts && opts.attribution === true );
       var T = STRINGS[ lang ] || STRINGS.en;
       var summary = summarizeNight( night );
       var records = computeRecords( summary, history, lang );
@@ -456,9 +459,12 @@ var SIReport = ( function()
             L.push( "- 🏆 " + records[ r ] );
       }
 
-      L.push( "" );
-      L.push( "---" );
-      L.push( "*" + T.generatedBy + "*" );
+      if ( attribution )
+      {
+         L.push( "" );
+         L.push( "---" );
+         L.push( "*" + T.generatedBy + "*" );
+      }
 
       var markdown = L.join( "\n" );
       var redditTitle = forumTitle( summary, target, night.dateLabel, lang );

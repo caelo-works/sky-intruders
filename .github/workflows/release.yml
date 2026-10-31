@@ -1,7 +1,14 @@
 name: Release
 
-# Push a semver tag (e.g. `v1.0.0`) to cut a release: this builds the distribution
-# artifact and publishes it as release assets for the CaeloWorks update site to ingest.
+# Push a semver tag (e.g. `v0.4.0`): once the full CI passes, this builds the
+# package and opens a DRAFT release carrying it, unsigned. Drafts are invisible
+# to the public and to the update site.
+#
+# The draft is signed and published by the CaeloWorks signing run
+# (scripts/sign-releases.sh in caelo-works/pixinsight-scripts), which CI cannot
+# do: it has neither PixInsight nor the keys. That run checks out this tag,
+# calls scripts/sign-package.sh on the draft's zip, uploads the signed zip and
+# update-package.json over the draft's, and publishes.
 on:
   push:
     tags: ['v*']
@@ -10,26 +17,61 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Run test harness (a red harness blocks the release)
-        run: bash tests/run.sh
+
       - name: Version from tag
         id: v
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: The tag must be documented
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          grep -q "^## \[$v\]" CHANGELOG.md \
+            || { echo "::error::CHANGELOG.md has no [$v] section"; exit 1; }
+
       - name: Build the distribution artifact
         run: bash scripts/build-update-package.sh "${{ steps.v.outputs.version }}"
-      - name: Publish release + assets
+
+      - name: Contents match the update site's ingest contract
+        # Unsigned at this point; sign-package.sh checks it again, --signed.
+        run: bash scripts/check-package.sh dist/*.zip
+
+      - name: Open the draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            --title "$(ls dist/*.zip | xargs -n1 basename | sed 's/-[^-]*\.zip$//') $GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --title "Sky Intruders $GITHUB_REF_NAME" \
             --generate-notes \
             dist/*.zip \
             dist/update-package.json
+
+      - name: Say what is left to do
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          {
+            echo "### Draft opened for $GITHUB_REF_NAME, unsigned"
+            echo
+            echo "Nothing is public yet. It is signed and published by the CaeloWorks signing run"
+            echo "(scripts/sign-releases.sh in caelo-works/pixinsight-scripts), or by hand:"
+            echo
+            echo '```'
+            echo "gh release download $GITHUB_REF_NAME -R $GITHUB_REPOSITORY -D dist"
+            echo "XSSK_PATH=/path/to/caeloworks.xssk scripts/sign-package.sh dist/SkyIntruders-$v.zip"
+            echo "gh release upload $GITHUB_REF_NAME -R $GITHUB_REPOSITORY --clobber dist/SkyIntruders-$v.zip dist/update-package.json"
+            echo '```'
+            echo
+            echo "A signed zip is not reproducible: give the site the sha1 of the signed update-package.json."
+          } >> "$GITHUB_STEP_SUMMARY"

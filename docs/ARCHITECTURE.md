@@ -46,6 +46,9 @@ pjsr/lib/Net.js              SITleNet (TLE + SATCAT download: disk cache, two-pa
                              SINet, the one HTTP text getter (+ pause) every fetch
                              in the script goes through; it refuses any URL that
                              is not https://
+pjsr/lib/Params.js           DEFAULT_PARAMS, SI_DEFAULT_ACCENT and the pure
+                             settings.json merge (siMergeSavedParams / SIParams);
+                             the file I/O stays in the entry script
 pjsr/lib/SatMatch.js         SISatMatch — TLE parse/validate, SGP4 via satellite.js,
                              Meeus sun + cylindrical Earth shadow, WGS84 observer,
                              TEME→J2000 rotation, topocentric RA/Dec, FOV crossing
@@ -62,7 +65,8 @@ pjsr/lib/NightEvents.js      SINightEvents.build — frame by frame: matched
                              passes, the segments the composite draws, clean-frame
                              and exposure totals
 pjsr/lib/Report.js           SIReport — night log Markdown, fun stats, personal
-                             records, forum title; history.json load/save (PI)
+                             records, forum title, opt-in attribution footer;
+                             history.json load/save (PI)
 pjsr/lib/Cosmology.js        SICosmology — redshift → lookback time, light-travel
                              and comoving distance (flat ΛCDM, Simpson)
 pjsr/lib/Catalogs.js         SICatalogs — VizieR/SkyBoT URL builders and parsers
@@ -72,12 +76,14 @@ pjsr/lib/Treasure.js         SITreasure — cross-match to pixels, notability,
                              aperture detection + decoy verdict, magnitude
                              consistency, display names, narrative, summary
 pjsr/lib/TreasureReport.js   SITreasureReport — the standalone illustrated HTML
-                             (pure string assembly, everything inlined)
+                             (pure string assembly, everything inlined; the
+                             attribution footer and forum line only on
+                             opts.attribution === true)
 pjsr/lib/Render.js           SIRender — PI-only rendering: STF-like autostretch to
                              Bitmap, trail annotation with flags, star-chart
                              rendering, thumbnails, PNG→base64, StarAlignment
                              registration, max-combine, showBitmap
-pjsr/SkyIntruders.js         entry: feature-id, DEFAULT_PARAMS + settings.json,
+pjsr/SkyIntruders.js         entry: feature-id, settings.json load/save,
                              night pipeline orchestration (analyzeNightSet,
                              runAnalysis), Treasure Hunt orchestration
                              (runTreasureHunt), dialogs, headless gates
@@ -89,17 +95,17 @@ it is the one library that is not bundled by the Node harness.
 ## Test harness
 
 `bash tests/run.sh` (also run by `.github/workflows/ci.yml` and by the Release
-workflow, which refuses to publish on a red run):
+workflow, which opens no draft release on a red run):
 
 1. `export TZ=UTC` — the night log prints every clock in UT and the report
    goldens are written that way; a host-local regression must fail everywhere.
 2. Builds `tests/build/module.js`: the vendored satellite.js first (with
    `module`/`exports` hidden so the UMD takes the global branch), then every
    library with PixInsight preprocessor lines stripped, in this order: Geom,
-   Stats, FrameMeta, TrailDetect, Net, SatMatch, Meteors, SatLabels,
+   Stats, FrameMeta, TrailDetect, Net, Params, SatMatch, Meteors, SatLabels,
    NightEvents, Report, Cosmology, Catalogs, Treasure, TreasureReport; then a
    `module.exports` block exposing `SIGeom`, `SIStats`, `SIFrameMetaCore`,
-   `SITrailCore`, `SITleNet`, `SISatMatch`, `SIMeteors`, `SISatLabels`,
+   `SITrailCore`, `SITleNet`, `SINet`, `SIParams`, `SISatMatch`, `SIMeteors`, `SISatLabels`,
    `SINightEvents`, `SIReport`, `SICosmology`, `SICatalogs`, `SITreasure`,
    `SITreasureReport`.
 3. `node --check` on that bundle, then on the two unbundled PI-facing files
@@ -164,9 +170,10 @@ includes the libraries directly and needs none.
 
 ### Parameters
 
-`DEFAULT_PARAMS` (entry script), persisted as JSON at
+`DEFAULT_PARAMS` (`lib/Params.js`), persisted as JSON at
 `~/.caeloworks/sky-intruders/settings.json` — full rewrite on every save; on
-load each saved value is taken only when it has the default's type (finite
+load (`siMergeSavedParams`, tested by `params.test.js`) a key the file lacks
+keeps its default, and each saved value is taken only when it has the default's type (finite
 numbers, arrays of strings, typed nullables `tleBaseUrl` / `observerLatDeg` /
 `observerLonDeg`), and a saved `tleExtraGroups` equal to the pre-0.2.0 default
 `["last-30-days"]` is upgraded in place:
@@ -198,6 +205,7 @@ numbers, arrays of strings, typed nullables `tleBaseUrl` / `observerLatDeg` /
 | `nightResultImage` | true | settings.json only |
 | `nightResultCombine` | `"best"` | settings.json only; `"max"` = max-combine of the set |
 | `debugFrameOverlays` / `matchDiagnostics` | false | settings.json only |
+| `reportAttribution` | false | "Credit Sky Intruders at the end of reports" checkbox under the tabs; opt-in (CPD rule 6.4): only `true` adds the "Report generated by Sky Intruders for PixInsight — <product page>" line to the night log, the Treasure forum text and the HTML footer. A 0.3.x settings.json has no key → false |
 
 ### Run layout
 
@@ -573,7 +581,7 @@ Nothing is written inside the PixInsight installation. User-chosen saves
   session and deleted when the main dialog closes (best effort, each removal
   in its own try/catch).
 - `SkyIntruders-night-<date label>-<token>.png` — the night result image,
-  **kept on purpose**: it is the file the result window's **Open image**
+  **kept on purpose, never deleted by the script**: it is the file the result window's **Open image**
   button opens, and the user saves it where they want.
 - `skyintruders-construct.json` — written only by the headless construction
   gate (`SI_CONSTRUCT_TEST`), never in normal use.
@@ -588,7 +596,28 @@ and the dialog's "by CaeloWorks" label, which opens the Sky Intruders product
 page in the interface language (`SI_PRODUCT_URL` in `Report.js`: English
 `/en/scripts/sky-intruders`, French `/scripts/sky-intruders` — French is the
 site's default language; the label's tooltip shows that URL and the build). The packaged module ships no
-executable of any kind.
+executable of any kind. The documentation button (left of the language list)
+is not a process launch: `Dialog.browseScriptDocumentation` / `Dialog.openBrowser`
+open the installed page in PixInsight's own documentation browser.
+
+## Shipped documentation and code signature
+
+`docs/pidoc/SkyIntruders.pidoc` and `SkyIntruders-fr.pidoc` are compiled by
+`scripts/build-script-doc.sh` (PixInsight's PIDocCompiler, headless, against a
+throwaway documentation system) into `doc/scripts/SkyIntruders[-fr]/`, which is
+**versioned** and shipped as is by `build-update-package.sh` — the package
+build needs no PixInsight. Recompile and commit after every `.pidoc` change;
+CI fails when a source has no page. The pages are the in-product disclosure of
+CPD rule 6.1: every host contacted and what is sent, the external programs,
+every file and folder written. Keep them in step with the README and
+`support-kb.md`.
+
+Releases are signed after the build, never in CI: `scripts/sign-package.sh`
+signs the entry script as stamped inside the zip (one `SkyIntruders.xsgn`,
+covering every `#include`), re-zips it with `repro-zip.py`, rewrites the
+sidecar sha1, and swaps the pair into `dist/` only after
+`check-package.sh --signed` and `verify-signature.sh` pass. See
+`docs/RELEASING.md`.
 
 ## Treasure Hunt
 

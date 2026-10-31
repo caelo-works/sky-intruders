@@ -1,0 +1,397 @@
+%% ============================================================================
+%% SkyIntruders-fr.pidoc — PixInsight reference documentation, French
+%% ----------------------------------------------------------------------------
+%% French counterpart of SkyIntruders.pidoc; keep both in sync. The English
+%% page is the one PixInsight integrates (named after #feature-id); this page
+%% ships next to it as doc/scripts/SkyIntruders-fr/SkyIntruders-fr.html and is
+%% linked from it. UI strings are quoted exactly as the French interface shows
+%% them. Special characters: write \% for a percent sign (% starts a comment),
+%% and never write two consecutive hyphens (the compiler turns them into a
+%% dash).
+%% ============================================================================
+
+\documentclass PIScriptDoc
+
+\script SkyIntruders-fr
+
+\keywords { traînées de satellites, identification de satellites, TLE, SGP4, météores, astéroïdes, catalogues du ciel profond, résolution astrométrique }
+
+\author { Caelo Works }
+
+\copyright { 2026 Caelo Works }
+
+\brief { Détecte les traînées qui ont traversé une nuit de brutes et identifie
+les satellites par leur nom, et trouve les objets catalogués cachés dans une
+image résolue astrométriquement. }
+
+\section { Présentation } {
+
+\xref ../SkyIntruders/SkyIntruders.html { English version of this documentation }
+
+Sky Intruders fonctionne selon deux modes, un par onglet de son dialogue. Tout
+s'exécute dans PixInsight : aucun programme natif n'est à installer.
+
+\list [spaced] {
+
+{ \s { Traînées de nuit } analyse les brutes d'une nuit. Les brutes sont
+recalées en interne et les traînées sont détectées sur l'image de différence
+recalée, si bien que la nébulosité n'est pas prise pour une traînée. Chaque
+traînée est confrontée aux éléments orbitaux propagés avec SGP4, de sorte
+qu'une traînée identifiée porte le nom du satellite. Les traînées non
+identifiées sont comparées aux essaims de météores actifs, et les objets lents
+au déplacement cohérent deviennent des candidats astéroïdes. Le résultat est
+une image composite annotée et un journal de nuit accompagné d'un texte prêt à
+publier sur un forum. }
+
+{ \s { Chasse au trésor } prend une image résolue astrométriquement et
+interroge des catalogues du ciel profond pour trouver les galaxies, quasars,
+nébuleuses planétaires et astéroïdes présents dans le champ. Chaque position
+de catalogue est ensuite mesurée sur l'image, si bien que le rapport distingue
+les objets réellement capturés de ceux présents dans le champ mais sous le
+bruit de l'image. Le résultat est une carte du ciel, ouverte dans une nouvelle
+fenêtre d'image, et un rapport HTML illustré. }
+
+}
+
+Les deux modes téléchargent des données de catalogue en HTTPS ; voir
+\lref reseau { Connexions réseau } pour chaque serveur contacté et ce qui lui
+est envoyé, et \lref fichiers { Fichiers écrits sur votre ordinateur } pour
+tout ce que le script enregistre.
+
+}
+
+\section { Utilisation } {
+
+Le script est accessible par le menu
+\s { Script > CaeloWorks > Sky Intruders } . Il demande PixInsight 1.9.4 ou
+plus récent, sous Windows, macOS et Linux. La langue de l'interface se choisit
+dans la liste \s { Langue : } du dialogue ; les libellés ci-dessous sont ceux
+de l'interface en français.
+
+\subsection { Liste d'entrée } {
+
+La liste \s Entrée est commune aux deux modes. \s { Ajouter des fichiers… }
+accepte les fichiers \c { .fits }, \c { .fit }, \c { .fts } et \c { .xisf },
+\s { Ajouter un dossier… } ajoute les images d'un dossier (sans descendre dans
+ses sous-dossiers), et \s Vider vide la liste. Un fichier déjà présent dans la
+liste n'est pas ajouté deux fois.
+
+En mode \s { Traînées de nuit } , la liste contient les brutes d'une nuit, qui
+doivent porter les mots-clés \c DATE-OBS et \c EXPTIME . La première brute de
+la liste sert de référence de recalage et de source pour la solution
+astrométrique du champ : placez une brute résolue en premier. L'identification
+des satellites demande aussi un site d'observation, lu dans les mots-clés
+\c SITELAT / \c SITELONG , \c OBSGEO-B / \c OBSGEO-L ou \c LAT-OBS /
+\c LONG-OBS , ou saisi à la main dans le dialogue. Sans site, les traînées
+sont quand même détectées mais ne peuvent pas être nommées, et le dialogue
+affiche \s { Pas de site d'observation — satellites non identifiés. }
+
+En mode \s { Chasse au trésor } , la liste contient une image résolue
+astrométriquement. Quand la liste est vide, la fenêtre d'image active est
+utilisée. Une image sans solution astrométrique est refusée avec un message.
+
+La liste \s { Langue : } bascule l'interface, les rapports et la carte du ciel
+entre l'anglais et le français. Tous les réglages sont conservés d'une session
+à l'autre. Le bouton de documentation, à gauche de la liste \s { Langue : },
+ouvre cette page, dans la langue de l'interface, dans le navigateur de
+documentation de PixInsight.
+
+}
+
+\subsection { Onglet Traînées de nuit } {
+
+\table [header] {
+   { { Contrôle } { Défaut } { Effet } }
+   { { \s { Seuil de détection (σ) : } } { 4,5 } { Seuil, en sigmas robustes,
+     sur l'image de différence recalée qu'utilise toute analyse normale de
+     trois brutes ou plus. Plage de 2,5 à 8 ; une valeur plus basse capte des
+     traînées plus faibles au prix de fausses détections. } }
+   { { \s { Tracer les passages prédits sur l'image résultat } } { désactivé }
+     { Trace, en lignes fantômes pâles, les satellites que le modèle orbital
+     place dans le champ pendant une pose mais qu'aucune traînée détectée n'a
+     confirmés. } }
+   { { \s { Tracer aussi les passages dans l'ombre } } { désactivé } { Idem,
+     pour les satellites que le modèle place dans l'ombre de la Terre, tracés
+     en gris. } }
+   { { \s { Site d'observation — seulement si les headers FITS n'en ont
+     pas } } { vide } { \s { Lat (°, +N) : } , \s { Lon (°, +E) : } et
+     \s { Alt (m) : } . Utilisés seulement quand aucune brute ne porte de
+     site. Le nord et l'est sont positifs. Les valeurs décimales avec point ou
+     virgule et les valeurs sexagésimales sont acceptées ; une valeur hors
+     plage ou illisible est effacée et la ligne d'état en donne la
+     raison. } }
+   { { \s { Seuil brute par brute (σ) : } } { 5,0 } { Dans le groupe
+     \s Avancé . Utilisé seulement dans le mode dégradé brute par brute :
+     moins de trois brutes, ou un lot impossible à recaler. Plage de 3 à
+     12. } }
+   { { \s { Signaler les objets lents comme candidats astéroïdes } }
+     { activé } { Dans le groupe \s Avancé . Décoché, la recherche des objets
+     lents est sautée. } }
+   { { \s { Âge max des données orbitales (h) : } } { 12 } { Dans le groupe
+     \s Avancé . Les éléments orbitaux en cache plus anciens que cette durée
+     sont téléchargés à nouveau. Plage de 1 à 168. } }
+   { { \s { URL du miroir orbital : } } { vide } { Dans le groupe
+     \s Avancé . URL de base d'un miroir compatible CelesTrak, essayé en
+     premier quand il est renseigné. Elle doit commencer par
+     \c { https:// } ; toute autre valeur est effacée et la ligne d'état
+     affiche \s { L'URL du miroir doit commencer par https:// — ignorée. } }
+     }
+}
+
+\s { Analyser la nuit } lance l'analyse. La fenêtre de résultat affiche le
+journal de nuit ; \s { Enregistrer le rapport… } l'enregistre dans un fichier
+de votre choix, et \s { Ouvrir l'image } ouvre l'image de nuit annotée avec la
+visionneuse d'images par défaut de votre système.
+
+}
+
+\subsection { Onglet Chasse au trésor } {
+
+\table [header] {
+   { { Contrôle } { Défaut } { Effet } }
+   { { \s { Objets max / type de catalogue : } } { 400 } { Nombre maximal
+     d'objets récupérés par catalogue. Plage de 50 à 2000. Chaque catalogue
+     est invité à trier sa réponse, si bien que ce sont les objets les plus
+     faibles ou les plus petits qui sont écartés. } }
+   { { \s { Chercher : } } { tous cochés } { \s Galaxies , \s Quasars ,
+     \s { Nébuleuses planétaires } et \s Astéroïdes . Un type décoché n'est
+     pas interrogé. } }
+   { { \s { Couleur du tracé : } } { \c { &#35;9FD8D2 } } { Couleur des
+     marqueurs, lignes de renvoi, étiquettes et cartouches de la carte du
+     ciel. Le bouton de la pastille ouvre un sélecteur de couleur. } }
+}
+
+\s { Chasser les trésors } lance la recherche. La carte du ciel s'ouvre dans
+une nouvelle fenêtre d'image. La fenêtre de résultat affiche le rapport
+illustré ; \s { Ouvrir le HTML } l'ouvre dans votre navigateur web, et
+\s { Enregistrer le HTML… } l'enregistre dans un fichier de votre choix.
+
+}
+
+\subsection { Option commune : mention dans les rapports } {
+
+Une case à cocher placée sous les onglets des modes,
+\s { Mentionner Sky Intruders à la fin des rapports } , s'applique aux deux
+modes. Elle est désactivée par défaut. Voir
+\lref attribution { Mention dans les rapports } .
+
+}
+
+}
+
+\section { \label reseau Connexions réseau } {
+
+\subsection { Serveurs contactés } {
+
+Toutes les connexions passent par HTTPS, via le réseau de PixInsight lui-même
+( \c NetworkTransfer ). Une adresse qui ne commence pas par \c { https:// }
+est refusée avant tout transfert, y compris une adresse de miroir que vous
+avez saisie. Le script ne définit aucun proxy de lui-même : un proxy doit être
+configuré dans PixInsight. Le script contacte les serveurs suivants, et
+seulement ceux-là :
+
+\table [header] {
+   { { Serveur } { Quand } { Ce qui est envoyé } }
+   { { \c celestrak.org } { Traînées de nuit. } { Le nom du groupe
+     d'éléments orbitaux demandé, par exemple \c active . Le catalogue des
+     satellites (SATCAT) est un simple téléchargement de fichier. } }
+   { { \c raw.githubusercontent.com/caelo-works/tle-mirror } { Traînées de
+     nuit, quand CelesTrak ne répond pas. } { Le même nom de groupe. Il
+     s'agit d'un miroir des données de CelesTrak exploité par CaeloWorks sur
+     GitHub, publié avec un manifeste SHA-256. Il fournit aussi le groupe du
+     catalogue complet, que seul le miroir publie, et une copie du
+     SATCAT. } }
+   { { Le miroir que vous saisissez } { Traînées de nuit, seulement quand
+     \s { URL du miroir orbital : } est renseigné. } { Le nom du groupe. Seule
+     une adresse \c { https:// } est acceptée. } }
+   { { \c vizier.cds.unistra.fr } { Chasse au trésor : VizieR au CDS, pour
+     les galaxies, quasars, nébuleuses planétaires et étoiles brillantes. }
+     { Le centre du champ (AD/Déc), le rayon de recherche, le catalogue et les
+     colonnes voulues, et le plafond de lignes. } }
+   { { \c ssp.imcce.fr } { Chasse au trésor : SkyBoT à l'IMCCE, pour les
+     astéroïdes. } { Le centre du champ (AD/Déc), le rayon de recherche et
+     l'époque de la prise de vue. } }
+}
+
+}
+
+\subsection { Ce qui n'est jamais envoyé } {
+
+Votre site d'observation n'est jamais envoyé : les orbites des satellites sont
+calculées sur votre ordinateur. Les noms de fichiers, les données d'image et
+tout identifiant ne sont jamais envoyés non plus. Il n'y a ni télémétrie ni
+suivi d'utilisation. Tout ce qui est téléchargé est de la donnée, éléments
+orbitaux et lignes de catalogue ; rien de ce qui est téléchargé n'est jamais
+exécuté.
+
+Le script n'établit aucune connexion automatique avec le site de CaeloWorks.
+Le libellé \e { by CaeloWorks } de l'en-tête du dialogue ouvre la page du
+produit,
+\xref https://pixinsight-scripts.caelo.works/scripts/sky-intruders
+{ pixinsight-scripts.caelo.works } , dans votre navigateur web, uniquement
+quand vous cliquez dessus (l'interface en anglais ouvre la page en anglais).
+
+}
+
+\subsection { Intégrité des données } {
+
+\list [spaced] {
+
+{ \s { Éléments orbitaux } , quelle que soit la source : chaque ligne
+d'éléments porte une somme de contrôle modulo 10, vérifiée au
+téléchargement. Un jeu d'éléments qui échoue est écarté, et la console indique
+combien l'ont été. Un téléchargement dans lequel plus de 5 \% des jeux
+d'éléments échouent est rejeté comme corrompu, et la source suivante, ou le
+cache, est utilisée à la place. }
+
+{ \s { Miroir CaeloWorks } : chaque fichier pris sur le miroir est vérifié
+par rapport à son manifeste SHA-256, \c { tle/SHA256SUMS } . Après une
+nouvelle tentative, un fichier qui ne correspond toujours pas n'est pas
+utilisé ; si le manifeste ne peut pas être récupéré, aucun fichier du miroir
+n'est utilisé. CelesTrak ou le cache prend alors le relais. }
+
+{ \s { VizieR, SkyBoT et le SATCAT de CelesTrak } ne publient aucune somme de
+contrôle. Ils sont protégés par HTTPS et par une validation stricte du
+format : une réponse qui n'est pas une vraie donnée de catalogue, par exemple
+une page d'erreur ou de maintenance, est rejetée, signalée, et jamais mise en
+cache. }
+
+}
+
+}
+
+}
+
+\section { \label attribution Mention dans les rapports } {
+
+La case \s { Mentionner Sky Intruders à la fin des rapports } est placée sous
+les onglets des modes et commune aux deux modes. Son infobulle indique :
+\e { Ajoute la ligne « Rapport généré par Sky Intruders pour PixInsight » et
+l'adresse de la page du produit à la fin du journal de nuit, de son texte pour
+forum et du rapport HTML de la chasse au trésor. Désactivé par défaut : tu
+décides de ce que tu publies. }
+
+L'option est enregistrée dans \c settings.json sous la clé
+\c reportAttribution . Elle vaut \c false par défaut, y compris pour les
+fichiers de réglages écrits par des versions antérieures. Quand elle est
+désactivée, aucune ligne de mention n'est ajoutée, quel que soit le format du
+rapport.
+
+Le libellé \e { by CaeloWorks } de l'en-tête du dialogue ne dépend pas de
+cette option. Il reste dans le dialogue, et n'ouvre la page du produit que si
+vous cliquez dessus.
+
+}
+
+\section { Programmes externes } {
+
+Sky Intruders ne lance aucun programme de lui-même, et aucun exécutable n'est
+distribué avec lui. Seulement quand vous cliquez sur \s { Ouvrir l'image } ,
+\s { Ouvrir le HTML } ou sur le libellé \e { by CaeloWorks } , il demande à
+votre système d'exploitation d'ouvrir le fichier ou l'adresse avec son
+application par défaut. Il exécute \c { cmd /c start } sous Windows,
+\c { /usr/bin/open } sous macOS et \c { xdg-open } sous Linux, avec le chemin
+du fichier ou l'adresse pour argument. Rien n'est lancé sans un clic explicite
+de votre part.
+
+}
+
+\section { \label fichiers Fichiers écrits sur votre ordinateur } {
+
+\subsection { Le dossier de données } {
+
+Tout ce qui est conservé l'est dans un seul dossier de votre répertoire
+personnel ( \c { \%USERPROFILE\% } sous Windows, \c { ~ } sous macOS et
+Linux) : \c { .caeloworks/sky-intruders/ } . Rien n'est écrit dans
+l'installation de PixInsight.
+
+\table [header] {
+   { { Chemin } { Contenu } { Suppression sans risque ? } }
+   { { \c settings.json } { Les réglages du dialogue. } { Oui : tous les
+     réglages reviennent à leur valeur par défaut. } }
+   { { \c history.json } { Vos records de nuit personnels. } { Oui, mais les
+     records sont perdus définitivement. } }
+   { { \c { tle/ } } { Le cache des éléments orbitaux et du SATCAT. } { Oui :
+     les données sont téléchargées à nouveau à l'analyse suivante. } }
+   { { \c { treasure-cache/ } } { Les réponses des catalogues du ciel profond,
+     conservées 30 jours. } { Oui : les catalogues sont interrogés à
+     nouveau. } }
+}
+
+Pour ne plus conserver de records de nuit, fermez le script, ouvrez
+\c settings.json dans un éditeur de texte et mettez
+\c { "saveHistory": false } ; supprimez \c history.json si vous voulez aussi
+effacer les records existants. Le script réécrit \c settings.json à la
+fermeture de sa fenêtre : modifiez-le donc quand le script est fermé. Pour
+supprimer tout ce que le script enregistre, supprimez le dossier \c { .caeloworks/sky-intruders }
+entier, script fermé.
+
+}
+
+\subsection { Le dossier temporaire } {
+
+Le script écrit aussi dans le dossier temporaire du système, tel que
+PixInsight l'indique :
+
+\list [spaced] {
+
+{ \c { si-night-reg-<token>/ } , les brutes recalées d'une analyse de
+Traînées de nuit : supprimé à la fin de chaque analyse. S'il en reste un,
+c'est que PixInsight a été arrêté pendant une analyse ; il peut être supprimé
+sans risque. }
+
+{ \c { si-render-* } , des fichiers de travail pour l'encodage des images :
+supprimés juste après usage. }
+
+{ La copie du rapport HTML de la Chasse au trésor écrite par
+\s { Ouvrir le HTML } , et les calques de débogage optionnels
+\c { si-frame-annotated-<token>-*.png } : supprimés à la fermeture de la
+fenêtre du script. }
+
+{ \c { SkyIntruders-night-<date>-<token>.png } , l'image de nuit annotée :
+\s { conservée volontairement, et non nettoyée automatiquement } . Elle reste
+dans le dossier temporaire du système parce que c'est l'image qu'ouvre la
+fenêtre de résultat. Enregistrez-la ailleurs si vous voulez la garder ; la
+copie du dossier temporaire peut être supprimée à tout moment. }
+
+}
+
+Les fichiers que vous enregistrez vous-même, avec
+\s { Enregistrer le rapport… } ou \s { Enregistrer le HTML… } , ne sont
+écrits que là où vous le choisissez.
+
+}
+
+}
+
+\section { Signature du code } {
+
+Le script d'entrée du paquet est signé avec l'identité de développeur certifié
+PixInsight (Certified PixInsight Developer) de CaeloWorks ; la signature est
+le fichier \c SkyIntruders.xsgn installé à côté de lui. Le script s'exécute
+donc avec l'option \e { Allow execution of unsigned scripts } de PixInsight
+désactivée. Toute modification des fichiers installés invalide la signature.
+
+}
+
+\section { Mentions des tiers et licence } {
+
+\list [spaced] {
+
+{ Sky Intruders est distribué sous la licence publique générale GNU,
+version 3 (GPL-3.0). Le texte de la licence est installé à côté du
+script. }
+
+{ \xref https://github.com/shashwatak/satellite-js { satellite.js } 5.0.0,
+utilisé pour la propagation SGP4 : licence MIT, inclus dans
+\c { lib/vendor/ } . }
+
+{ \xref https://github.com/kapowaz/circle-flags { circle-flags } , utilisé
+pour les drapeaux des pays : licence MIT, voir
+\c { assets/flags/LICENSE.md } . }
+
+}
+
+}
+
+\make

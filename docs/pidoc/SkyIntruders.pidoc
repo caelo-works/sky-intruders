@@ -1,0 +1,359 @@
+%% ============================================================================
+%% SkyIntruders.pidoc — PixInsight reference documentation, English
+%% ----------------------------------------------------------------------------
+%% Compile with the Documentation Compiler script. The generated page ships
+%% in the update package as doc/scripts/SkyIntruders/SkyIntruders.html.
+%% The French page lives in SkyIntruders-fr.pidoc; keep both in sync.
+%% Special characters: write \% for a percent sign (% starts a comment), and
+%% never write two consecutive hyphens (the compiler turns them into a dash).
+%% ============================================================================
+
+\documentclass PIScriptDoc
+
+\script SkyIntruders
+
+\keywords { satellite trails, satellite identification, TLE, SGP4, meteors, asteroids, deep-sky catalogs, plate solving }
+
+\author { Caelo Works }
+
+\copyright { 2026 Caelo Works }
+
+\brief { Detects the trails that crossed a night of light frames and identifies
+the satellites by name, and finds the catalogued objects hiding in a
+plate-solved image. }
+
+\description {
+
+\xref ../SkyIntruders-fr/SkyIntruders-fr.html { Version française de cette documentation }
+
+Sky Intruders works in two modes, one per tab of its dialog. Everything runs
+inside PixInsight: there is no native helper to install.
+
+\list [spaced] {
+
+{ \s { Night trails } scans the light frames of one night. The frames are
+registered internally and trails are detected on the registered difference
+image, so nebulosity is not mistaken for a trail. Every trail is cross-matched
+against orbital elements propagated with SGP4, so that an identified trail
+carries the name of the satellite. Unmatched trails are tested against the
+active meteor showers, and slow, coherent movers become asteroid candidates.
+The result is an annotated composite image and a night log with a ready-to-post
+forum text. }
+
+{ \s { Treasure Hunt } takes one plate-solved image and queries deep catalogs
+for the galaxies, quasars, planetary nebulae and asteroids inside the field.
+Every catalog position is then measured on the image, so the report separates
+the objects actually captured from those in the field but below the noise of
+the image. The result is a star chart, opened as a new image window, and an
+illustrated HTML report. }
+
+}
+
+Both modes download catalog data over HTTPS; see
+\lref network { Network connections } for every host contacted and what is
+sent to it, and \lref files { Files written on your computer } for everything
+the script stores.
+
+}
+
+\usage {
+
+The script is available from the \s { Script > CaeloWorks > Sky Intruders }
+menu item. It requires PixInsight 1.9.4 or newer, on Windows, macOS and Linux.
+
+\subsection { Input list } {
+
+The \s Input list is shared by both modes. \s { Add files… } accepts
+\c { .fits }, \c { .fit }, \c { .fts } and \c { .xisf } files, \s { Add folder… }
+adds the frames of one folder (it does not recurse into subfolders), and
+\s Clear empties the list. A file already in the list is not added twice.
+
+In \s { Night trails } the list holds the light frames of one night, which
+need the \c DATE-OBS and \c EXPTIME keywords. The first frame of the list is
+the registration reference and the source of the plate solution of the field:
+put a plate-solved frame first. Satellite identification also needs an
+observer site, read from the \c SITELAT / \c SITELONG, \c OBSGEO-B /
+\c OBSGEO-L or \c LAT-OBS / \c LONG-OBS keywords, or entered by hand in the
+dialog. Without a site, trails are still detected but cannot be named, and the
+dialog says \s { No observer site — satellites not identified. }
+
+In \s { Treasure Hunt } the list holds one plate-solved image. When the list
+is empty, the active image window is used. An image without an astrometric
+solution is refused with a message.
+
+The \s Language list switches the interface, the reports and the star chart
+between English and French. Every setting is remembered between sessions.
+The documentation button at the left of the \s Language list opens this page,
+in the interface language, in the PixInsight documentation browser.
+
+}
+
+\subsection { Night trails tab } {
+
+\table [header] {
+   { { Control } { Default } { Effect } }
+   { { \s { Detection threshold (σ): } } { 4.5 } { Threshold, in robust
+     sigmas, on the registered difference image used by every normal run of
+     three frames or more. Range 2.5 to 8; a lower value catches fainter
+     trails at the cost of false detections. } }
+   { { \s { Draw predicted crossers on the result image } } { off } { Draws,
+     as pale ghost lines, the satellites the orbit model places inside the
+     field during an exposure but that no detected trail confirmed. } }
+   { { \s { Also draw shadow crossers } } { off } { Same, for the satellites
+     the model places in the shadow of the Earth, drawn in grey. } }
+   { { \s { Observer site — only if the FITS headers carry none } } { empty }
+     { \s { Lat (°, +N): } , \s { Lon (°, +E): } and \s { Alt (m): } . Used
+     only when no frame carries a site. North and east are positive. Decimal
+     values with a dot or a comma and sexagesimal values are accepted; an
+     out-of-range or unreadable value is cleared and the status line says
+     why. } }
+   { { \s { Single-frame threshold (σ): } } { 5.0 } { In the \s Advanced
+     group. Used only in the degraded per-frame path: fewer than three frames,
+     or a set that could not be registered. Range 3 to 12. } }
+   { { \s { Flag slow movers as asteroid candidates } } { on } { In the
+     \s Advanced group. Unchecked, the slow-mover search is skipped. } }
+   { { \s { Orbital data max age (h): } } { 12 } { In the \s Advanced group.
+     Cached orbital elements older than this are downloaded again. Range 1 to
+     168. } }
+   { { \s { Orbital data mirror URL: } } { empty } { In the \s Advanced group.
+     Base URL of a CelesTrak-compatible mirror, tried first when set. It must
+     start with \c { https:// } ; any other value is cleared and the status
+     line reads \s { Mirror URL must start with https:// — ignored. } }
+     }
+}
+
+\s { Analyze night } runs the analysis. The result window shows the night
+log; \s { Save report… } saves it to a file you choose, and \s { Open image }
+opens the annotated night image with the default image viewer of your system.
+
+}
+
+\subsection { Treasure Hunt tab } {
+
+\table [header] {
+   { { Control } { Default } { Effect } }
+   { { \s { Max catalog rows / type: } } { 400 } { Maximum number of objects
+     fetched per catalog. Range 50 to 2000. Each catalog is asked to sort its
+     answer, so the faintest or smallest objects are the ones dropped. } }
+   { { \s { Hunt for: } } { all checked } { \s Galaxies , \s Quasars ,
+     \s { Planetary nebulae } and \s Asteroids . An unchecked type is not
+     queried. } }
+   { { \s { Overlay color: } } { \c { &#35;9FD8D2 } } { Color of the markers,
+     leader lines, labels and cards of the star chart. The swatch button opens
+     a color picker. } }
+}
+
+\s { Hunt treasures } runs the search. The star chart opens as a new image
+window. The result window shows the illustrated report; \s { Open HTML }
+opens it in your web browser, and \s { Save HTML… } saves it to a file you
+choose.
+
+}
+
+\subsection { Shared option: report attribution } {
+
+A checkbox under the mode tabs, \s { Credit Sky Intruders at the end of
+reports } , applies to both modes. It is off by default. See
+\lref attribution { Report attribution } .
+
+}
+
+}
+
+\section { \label network Network connections } {
+
+\subsection { Hosts contacted } {
+
+Every connection is made over HTTPS, through the networking of PixInsight
+itself ( \c NetworkTransfer ). An address that does not start with
+\c { https:// } is refused before any transfer, including a mirror address
+entered by you. The script sets no proxy of its own: a proxy must be
+configured in PixInsight. The script contacts the following hosts, and only
+these:
+
+\table [header] {
+   { { Host } { When } { What is sent } }
+   { { \c celestrak.org } { Night trails. } { The name of the orbital element
+     group requested, for example \c active . The satellite catalog (SATCAT)
+     is a plain file download. } }
+   { { \c raw.githubusercontent.com/caelo-works/tle-mirror } { Night trails,
+     when CelesTrak does not answer. } { The same group name. This is a mirror
+     of CelesTrak data operated by CaeloWorks on GitHub, published with a
+     SHA-256 manifest. It also provides the full catalog group, which only
+     the mirror publishes, and a copy of the SATCAT. } }
+   { { The mirror you enter } { Night trails, only when \s { Orbital data
+     mirror URL: } is filled. } { The group name. Only an \c { https:// }
+     address is accepted. } }
+   { { \c vizier.cds.unistra.fr } { Treasure Hunt: VizieR at the CDS, for
+     galaxies, quasars, planetary nebulae and bright stars. } { The field
+     centre (RA/Dec), the search radius, the catalog and the columns wanted,
+     and the row cap. } }
+   { { \c ssp.imcce.fr } { Treasure Hunt: SkyBoT at the IMCCE, for
+     asteroids. } { The field centre (RA/Dec), the search radius and the
+     capture epoch. } }
+}
+
+}
+
+\subsection { What is never sent } {
+
+Your observer site is never sent: satellite orbits are computed on your
+computer. File names, image data and identifiers of any kind are never sent
+either. There is no telemetry and no usage tracking. Everything downloaded is
+data, orbital elements and catalog rows; nothing downloaded is ever executed.
+
+The script makes no automatic connection to the CaeloWorks website. The
+\e { by CaeloWorks } label in the header of the dialog opens the product page,
+\xref https://pixinsight-scripts.caelo.works/en/scripts/sky-intruders
+{ pixinsight-scripts.caelo.works } , in your web browser only when you click
+it (the French interface opens the French page).
+
+}
+
+\subsection { Data integrity } {
+
+\list [spaced] {
+
+{ \s { Orbital elements } , from every source: each element line carries a
+modulo-10 checksum, verified on download. An element set that fails is
+dropped, and the console says how many were dropped. A download in which more
+than 5 \% of the element sets fail is rejected as corrupt, and the next
+source, or the cache, is used instead. }
+
+{ \s { CaeloWorks mirror } : every file taken from the mirror is checked
+against its SHA-256 manifest, \c { tle/SHA256SUMS } . After one retry, a file
+that still does not match is not used; if the manifest cannot be fetched, no
+mirror file is used at all. CelesTrak or the cache is then used instead. }
+
+{ \s { VizieR, SkyBoT and the CelesTrak SATCAT } publish no checksums. They
+are protected by HTTPS and by strict format validation: an answer that is not
+genuine catalog data, such as an error or maintenance page, is rejected,
+reported, and never cached. }
+
+}
+
+}
+
+}
+
+\section { \label attribution Report attribution } {
+
+The checkbox \s { Credit Sky Intruders at the end of reports } sits under the
+mode tabs and is shared by both modes. Its tooltip reads: \e { Adds the line
+“Report generated by Sky Intruders for PixInsight” and the product page
+address at the end of the night log, its forum text and the Treasure Hunt HTML
+report. Off by default: what you publish is up to you. }
+
+The option is saved in \c settings.json as \c reportAttribution . It is
+\c false by default, including for settings files written by older versions.
+When it is off, no attribution line is added to any report format.
+
+The \e { by CaeloWorks } label in the header of the dialog is not affected by
+this option. It stays in the dialog, and opens the product page only when you
+click it.
+
+}
+
+\section { External programs } {
+
+Sky Intruders starts no program of its own, and no executable is shipped with
+it. Only when you click \s { Open image } , \s { Open HTML } or the
+\e { by CaeloWorks } label, it asks your operating system to open the file or
+the address with its default application. It runs \c { cmd /c start } on
+Windows, \c { /usr/bin/open } on macOS and \c { xdg-open } on Linux, with the
+file path or the address as argument. Nothing is launched without an explicit
+click from you.
+
+}
+
+\section { \label files Files written on your computer } {
+
+\subsection { The data folder } {
+
+Everything persistent is stored in one folder of your home directory
+( \c { \%USERPROFILE\% } on Windows, \c { ~ } on macOS and Linux):
+\c { .caeloworks/sky-intruders/ } . Nothing is written inside the PixInsight
+installation.
+
+\table [header] {
+   { { Path } { Content } { Safe to delete? } }
+   { { \c settings.json } { The dialog settings. } { Yes: every setting is
+     reset to its default. } }
+   { { \c history.json } { Your personal night records. } { Yes, but the
+     records are lost for good. } }
+   { { \c { tle/ } } { The orbital element and SATCAT cache. } { Yes: the data
+     is downloaded again on the next run. } }
+   { { \c { treasure-cache/ } } { The deep catalog answers, kept 30 days. }
+     { Yes: the catalogs are queried again. } }
+}
+
+To stop keeping night records, close the script, open \c settings.json in a
+text editor and set \c { "saveHistory": false } ; delete \c history.json if you
+want the existing records gone too. The script rewrites \c settings.json when
+its window closes, so edit it while the script is closed. To remove everything
+the script stores, delete the whole \c { .caeloworks/sky-intruders } folder
+while the script is closed.
+
+}
+
+\subsection { The temporary folder } {
+
+The script also writes to the system temporary folder, as reported by
+PixInsight:
+
+\list [spaced] {
+
+{ \c { si-night-reg-<token>/ } , the registered frames of a Night trails run:
+removed at the end of every run. A leftover one means that PixInsight was
+stopped during a run; it is safe to delete. }
+
+{ \c { si-render-* } , image encoding scratch files: removed right after
+use. }
+
+{ The copy of the Treasure Hunt HTML report written by \s { Open HTML } , and
+the optional debug overlays \c { si-frame-annotated-<token>-*.png } : removed
+when the script window closes. }
+
+{ \c { SkyIntruders-night-<date>-<token>.png } , the annotated night image:
+\s { kept on purpose, and not cleaned up automatically } . It stays in the
+system temporary folder because it is the image the result window opens. Save
+it elsewhere if you want to keep it; the copy in the temporary folder can be
+deleted at any time. }
+
+}
+
+Files you save yourself, with \s { Save report… } or \s { Save HTML… } , are
+written only where you choose.
+
+}
+
+}
+
+\section { Code signature } {
+
+The entry script of the package is signed with the CaeloWorks Certified
+PixInsight Developer identity; the signature is the \c SkyIntruders.xsgn file
+installed next to it. The script therefore runs with the \e { Allow execution
+of unsigned scripts } option of PixInsight turned off. Modifying the installed
+files invalidates the signature.
+
+}
+
+\section { Third-party notices and licence } {
+
+\list [spaced] {
+
+{ Sky Intruders is released under the GNU General Public License, version 3
+(GPL-3.0). The licence text is installed next to the script. }
+
+{ \xref https://github.com/shashwatak/satellite-js { satellite.js } 5.0.0,
+used for SGP4 propagation: MIT License, bundled in \c { lib/vendor/ } . }
+
+{ \xref https://github.com/kapowaz/circle-flags { circle-flags } , used for
+the country flags: MIT License, see \c { assets/flags/LICENSE.md } . }
+
+}
+
+}
+
+\make

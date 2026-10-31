@@ -27,6 +27,7 @@
 #include "lib/FrameMeta.js"
 #include "lib/TrailDetect.js"
 #include "lib/Net.js"
+#include "lib/Params.js"
 #include "lib/SatMatch.js"
 #include "lib/Meteors.js"
 #include "lib/SatLabels.js"
@@ -65,11 +66,8 @@ function ensureMinimumVersion( maj, min, rel )
 }
 
 // ---------------------------------------------------------------------------
-// Parameters, persisted as JSON (Settings-free: one less v8 API risk).
-
-// The chart accent color the whole Treasure UI defaults to (params, swatch,
-// picker presets, chartField call).
-var SI_DEFAULT_ACCENT = "#9FD8D2";
+// Parameters: defaults and the settings.json merge live in lib/Params.js;
+// the file I/O is here (Settings-free: one less v8 API risk).
 
 // Full-resolution FWHM above which a residual trail is dropped as a cloud
 // band or stacking artifact. A bright satellite trail is 2-9 px FWHM at
@@ -77,101 +75,6 @@ var SI_DEFAULT_ACCENT = "#9FD8D2";
 // SITrailCore.measureTrail (profile +-16 px, so widths up to ~30 px are
 // numeric and a missing half-max crossing reports null).
 var WIDTH_VETO_PX = 12;
-
-var DEFAULT_PARAMS = {
-   kSigma: 5.0,
-   // Detection threshold on the registered DIFFERENCE image: the static sky
-   // is subtracted there, so a lower k is safe and catches the faint streaks
-   // narrowband filters leave (a Starlink loses several magnitudes in Ha).
-   diffKSigma: 4.5,
-   minLengthFrac: 0.15,
-   fillRatioMin: 0.6,
-   maxTrails: 10,
-   tleGroup: "active",
-   // Fresh launches take days to reach the "active" group — without
-   // last-30-days they all show up as unidentified. The full GP catalog
-   // (a mirror-side aggregate) adds rocket bodies, defunct payloads and
-   // debris: the high-orbit population still sunlit deep in the night,
-   // which "active" alone would report as uncataloged.
-   tleExtraGroups: [ "last-30-days", "catalog" ],
-   tleMaxAgeHours: 12,
-   tleBaseUrl: null,   // override to use a CelesTrak mirror
-   matchMaxSepDeg: 0.2,
-   matchMaxAngleDiffDeg: 12,
-   stepSec: 1.0,
-   detectAsteroids: true,
-   // Draw the predicted-but-unmatched sunlit crossers as ghost lines on the
-   // result image (with flag and telemetry, in a distinct pale color).
-   nightShowPredicted: false,
-   nightShowShadow: false,
-   maxSources: 600,
-   lang: "en",
-   observerLatDeg: null,   // fallbacks when FITS headers lack the site
-   observerLonDeg: null,
-   observerAltM: 0,
-   // Mode selector: "night" (trails), "treasure" (hunt).
-   mode: "night",
-   // Treasure Hunt: cap catalog rows fetched per cone search.
-   treasureMaxRows: 400,
-   treasureGalaxies: true,
-   treasureQuasars: true,
-   treasurePne: true,
-   treasureAsteroids: true,
-   treasureAccent: SI_DEFAULT_ACCENT,
-   // --- settings.json only (no dialog control) ---------------------------
-   // Append the night to the personal records (history.json). Headless test
-   // runs switch it off so they never pollute the log.
-   saveHistory: true,
-   // Build the annotated night composite at all.
-   nightResultImage: true,
-   // Composite background: "best" = the sharpest/cleanest single frame (every
-   // trail of the night is drawn on top anyway); "max" = max-combine of the
-   // whole registered set — shows every streak in the pixels, and every
-   // frame's hot pixels with them.
-   nightResultCombine: "best",
-   // Diagnostics: one annotated PNG per registered frame in the temp folder,
-   // and per-trail nearest-candidate data in the result's fitInfo.diag.
-   debugFrameOverlays: false,
-   matchDiagnostics: false
-};
-
-// Keys whose default is null: the type a saved value must have to be taken.
-var NULLABLE_PARAM_TYPES = {
-   tleBaseUrl: "string",
-   observerLatDeg: "number",
-   observerLonDeg: "number"
-};
-
-// A saved value is accepted only when it has the default's type (finite for
-// numbers, arrays of strings for arrays); anything else keeps the default.
-function isAcceptableParam( key, def, v )
-{
-   if ( v === undefined )
-      return false;
-   if ( def === null )
-   {
-      if ( v === null )
-         return true;
-      var want = NULLABLE_PARAM_TYPES[ key ];
-      if ( want === undefined || typeof v !== want )
-         return false;
-      return ( want !== "number" ) || isFinite( v );
-   }
-   if ( Array.isArray( def ) )
-   {
-      if ( !Array.isArray( v ) )
-         return false;
-      for ( var i = 0; i < v.length; ++i )
-         if ( typeof v[ i ] !== "string" )
-            return false;
-      return true;
-   }
-   if ( typeof v !== typeof def )
-      return false;
-   if ( typeof v === "number" )
-      return isFinite( v );
-   return true;
-}
 
 function configDir()
 {
@@ -181,29 +84,14 @@ function configDir()
 function loadParams()
 {
    var p = configDir() + "/settings.json";
-   var out = JSON.parse( JSON.stringify( DEFAULT_PARAMS ) );
+   var saved = null;
    try
    {
       if ( File.exists( p ) )
-      {
-         var saved = JSON.parse( File.readTextFile( p ) );
-         for ( var k in out )
-            if ( isAcceptableParam( k, DEFAULT_PARAMS[ k ], saved[ k ] ) )
-               out[ k ] = saved[ k ];
-         if ( out.nightResultCombine !== "best" && out.nightResultCombine !== "max" )
-            out.nightResultCombine = DEFAULT_PARAMS.nightResultCombine;
-         // HTTPS only: a saved mirror URL over any other scheme is dropped.
-         if ( out.tleBaseUrl !== null && !SINet.isHttpsUrl( out.tleBaseUrl ) )
-            out.tleBaseUrl = null;
-         // tleExtraGroups has no dialog control, so a saved value is a
-         // frozen former default, not a user choice: upgrade the old
-         // default in place so existing installs gain the full catalog.
-         if ( JSON.stringify( out.tleExtraGroups ) === JSON.stringify( [ "last-30-days" ] ) )
-            out.tleExtraGroups = DEFAULT_PARAMS.tleExtraGroups.slice();
-      }
+         saved = JSON.parse( File.readTextFile( p ) );
    }
    catch ( e ) {}
-   return out;
+   return siMergeSavedParams( saved );
 }
 
 function saveParams( params )
@@ -1420,7 +1308,8 @@ function runAnalysisIn( files, params, run )
                  movers: movers };
 
    var history = SIReport.loadHistory();
-   var report = SIReport.build( night, history, params.lang );
+   var report = SIReport.build( night, history, params.lang,
+                                { attribution: params.reportAttribution === true } );
    if ( params.saveHistory !== false ) // headless test runs must not pollute the log
       SIReport.saveHistory( SIReport.appendNight( history, report.summary ) );
 
@@ -2127,6 +2016,7 @@ function runTreasureHunt( window, filePath, params, onProgress )
       mapPng: mapPng, thumbs: thumbs, issues: queryFailures,
       fieldInfo: { raDeg: raDeg, decDeg: decDeg, radiusDeg: radiusDeg,
                    target: meta.keywords[ "OBJECT" ] || null },
+      attribution: params.reportAttribution === true,
       lang: params.lang } );
 
    return { meta: meta, treasures: treasures, summary: summary,
@@ -2279,10 +2169,16 @@ var SI_UI = {
       tagNight: "\ud83d\udef0  <i>Who crossed your photo last night?</i>",
       tagTreasure: "\ud83d\udc8e  <i>What you photographed without knowing.</i>",
       hintNight: "Identify satellite, meteor and asteroid trails across a night of " +
-                 "light frames, then get a night log and a ready-to-post report.",
+                 "light frames, then get a night log and a ready-to-post report. " +
+                 "Satellite orbital data is downloaded from <b>CelesTrak</b> " +
+                 "(celestrak.org), or the CaeloWorks mirror on GitHub when CelesTrak " +
+                 "does not answer.",
       hintTreasure: "Point at a <b>plate-solved</b> image (uses the active window if the list " +
                     "is empty) and discover the galaxies, quasars, nebulae and passing " +
-                    "asteroids hiding in your field.",
+                    "asteroids hiding in your field. Catalogs are queried online: " +
+                    "<b>VizieR</b> (CDS, vizier.cds.unistra.fr) and, for asteroids, " +
+                    "<b>SkyBoT</b> (IMCCE, ssp.imcce.fr) — only the field centre, " +
+                    "radius and capture time are sent.",
       kSigma: "Detection threshold (\u03c3):",
       kSigmaTip: "Threshold on the registered DIFFERENCE image, where the static sky " +
                  "is already subtracted \u2014 the one every normal run (3+ frames) " +
@@ -2305,7 +2201,12 @@ var SI_UI = {
       tleUrl: "Orbital data mirror URL:",
       tleUrlTip: "Base URL (https:// only) of a CelesTrak-compatible mirror, tried first when set. " +
                  "Leave empty for the default sources (CelesTrak, then the " +
-                 "CaeloWorks mirror).",
+                 "CaeloWorks mirror on GitHub, raw.githubusercontent.com/caelo-works/tle-mirror).",
+      attribution: "Credit Sky Intruders at the end of reports",
+      attributionTip: "Adds the line “Report generated by Sky Intruders for PixInsight” " +
+                      "and the product page address at the end of the night log, its forum " +
+                      "text and the Treasure Hunt HTML report. Off by default: what you " +
+                      "publish is up to you.",
       tleUrlNotHttps: "Mirror URL must start with https:// \u2014 ignored.",
       predicted: "Draw predicted crossers on the result image",
       predictedTip: "Satellites the orbit propagation puts inside your field " +
@@ -2338,6 +2239,8 @@ var SI_UI = {
       input: "Input",
       addFiles: "Add files\u2026", addFolder: "Add folder\u2026", clear: "Clear",
       language: "Language:", languageTip: "Interface and report language.",
+      helpTip: "Open the Sky Intruders documentation: what each control does, every " +
+               "network connection, and every file the script writes.",
       analyzeNight: "Analyze night", analyzeTreasure: "Hunt treasures",
       close: "Close",
       statusNone: "<i>No frames added yet.</i>",
@@ -2368,10 +2271,16 @@ var SI_UI = {
       tagNight: "\ud83d\udef0  <i>Qui a travers\u00e9 ta photo cette nuit ?</i>",
       tagTreasure: "\ud83d\udc8e  <i>Ce que tu as photographi\u00e9 sans le savoir.</i>",
       hintNight: "Identifie les tra\u00een\u00e9es de satellites, m\u00e9t\u00e9ores et ast\u00e9ro\u00efdes sur une " +
-                 "nuit de brutes, puis obtiens un journal de nuit et un rapport pr\u00eat \u00e0 publier.",
+                 "nuit de brutes, puis obtiens un journal de nuit et un rapport pr\u00eat \u00e0 publier. " +
+                 "Les donn\u00e9es orbitales sont t\u00e9l\u00e9charg\u00e9es depuis <b>CelesTrak</b> " +
+                 "(celestrak.org), ou le miroir CaeloWorks sur GitHub quand CelesTrak " +
+                 "ne r\u00e9pond pas.",
       hintTreasure: "Pointe une image <b>r\u00e9solue astrom\u00e9triquement</b> (fen\u00eatre active si la " +
                     "liste est vide) et d\u00e9couvre les galaxies, quasars, n\u00e9buleuses et " +
-                    "ast\u00e9ro\u00efdes de passage cach\u00e9s dans ton champ.",
+                    "ast\u00e9ro\u00efdes de passage cach\u00e9s dans ton champ. Les catalogues sont " +
+                    "interrog\u00e9s en ligne : <b>VizieR</b> (CDS, vizier.cds.unistra.fr) et, pour " +
+                    "les ast\u00e9ro\u00efdes, <b>SkyBoT</b> (IMCCE, ssp.imcce.fr) \u2014 seuls le centre " +
+                    "du champ, le rayon et l'heure de prise de vue sont envoy\u00e9s.",
       kSigma: "Seuil de d\u00e9tection (\u03c3) :",
       kSigmaTip: "Seuil sur l'image de DIFF\u00c9RENCE recal\u00e9e, o\u00f9 le ciel statique est " +
                  "d\u00e9j\u00e0 soustrait \u2014 celui de toute analyse normale (3 brutes et plus). " +
@@ -2395,7 +2304,12 @@ var SI_UI = {
       tleUrl: "URL du miroir orbital :",
       tleUrlTip: "URL de base (https:// uniquement) d'un miroir compatible CelesTrak, essay\u00e9 en premier quand " +
                  "il est renseign\u00e9. Vide = sources par d\u00e9faut (CelesTrak, puis le " +
-                 "miroir CaeloWorks).",
+                 "miroir CaeloWorks sur GitHub, raw.githubusercontent.com/caelo-works/tle-mirror).",
+      attribution: "Mentionner Sky Intruders \u00e0 la fin des rapports",
+      attributionTip: "Ajoute la ligne \u00ab Rapport g\u00e9n\u00e9r\u00e9 par Sky Intruders pour PixInsight \u00bb " +
+                      "et l'adresse de la page du produit \u00e0 la fin du journal de nuit, de son " +
+                      "texte pour forum et du rapport HTML de la chasse au tr\u00e9sor. D\u00e9sactiv\u00e9 " +
+                      "par d\u00e9faut : tu d\u00e9cides de ce que tu publies.",
       tleUrlNotHttps: "L'URL du miroir doit commencer par https:// \u2014 ignor\u00e9e.",
       predicted: "Tracer les passages pr\u00e9dits sur l'image r\u00e9sultat",
       predictedTip: "Satellites que la propagation orbitale place dans le champ pendant une " +
@@ -2429,6 +2343,8 @@ var SI_UI = {
       input: "Entr\u00e9e",
       addFiles: "Ajouter des fichiers\u2026", addFolder: "Ajouter un dossier\u2026", clear: "Vider",
       language: "Langue :", languageTip: "Langue de l'interface et du rapport.",
+      helpTip: "Ouvre la documentation de Sky Intruders : le r\u00f4le de chaque r\u00e9glage, " +
+               "chaque connexion r\u00e9seau et chaque fichier \u00e9crit par le script.",
       analyzeNight: "Analyser la nuit", analyzeTreasure: "Chasser les tr\u00e9sors",
       close: "Fermer",
       statusNone: "<i>Aucune brute ajout\u00e9e.</i>",
@@ -3162,6 +3078,13 @@ class SkyIntrudersDialog extends Dialog
          self.updateMode();
       };
 
+      // --- report attribution (shared by both modes) -------------------------
+      // Opt-in line at the end of every report (CPD rule 6.4); texts come
+      // from applyLanguage.
+      this.attributionCheck = new CheckBox( this );
+      this.attributionCheck.checked = ( params.reportAttribution === true );
+      this.attributionCheck.onCheck = ( checked ) => { self.params.reportAttribution = checked; };
+
       // --- shared input list -------------------------------------------------
       this.fileTree = new TreeBox( this );
       this.fileTree.alternateRowColor = true;
@@ -3261,6 +3184,35 @@ class SkyIntrudersDialog extends Dialog
       this.analyzeButton.icon = siIcon( this, ":/icons/play.png" );
       this.analyzeButton.onClick = () => self.runNow();
 
+      // Reference documentation (doc/scripts/SkyIntruders[-fr]), in the UI
+      // language, through PixInsight's own documentation browser.
+      this.helpButton = new ToolButton( this );
+      this.helpButton.icon = siIcon( this, ":/process-interface/browse-documentation.png" );
+      this.helpButton.setScaledFixedSize( 24, 24 );
+      this.helpButton.onClick = () =>
+      {
+         // browseScriptDocumentation knows only the page named after the
+         // #feature-id of a script installed by the updater; the French page,
+         // or a manual install, is opened by path in PixInsight's own
+         // documentation browser (Dialog.openBrowser — no external program).
+         var page = ( self.params.lang == "fr" ) ? "SkyIntruders-fr" : "SkyIntruders";
+         try
+         {
+            if ( page == "SkyIntruders" && Dialog.browseScriptDocumentation( page ) )
+               return;
+            var root = String( CoreApplication.binDirPath ).replace( /\\/g, "/" ).replace( /\/bin\/?$/, "" );
+            var docPath = root + "/doc/scripts/" + page + "/" + page + ".html";
+            if ( File.exists( docPath ) )
+               Dialog.openBrowser( "file:///" + docPath.replace( /^\/+/, "" ), SKYINTRUDERS_TITLE );
+            else if ( !Dialog.browseScriptDocumentation( "SkyIntruders" ) )
+               console.warningln( SKYINTRUDERS_TITLE + ": documentation not found: " + docPath );
+         }
+         catch ( e )
+         {
+            console.warningln( SKYINTRUDERS_TITLE + ": documentation unavailable: " + e.message );
+         }
+      };
+
       this.closeButton = new PushButton( this );
       this.closeButton.text = "Close";
       this.closeButton.icon = siIcon( this, ":/icons/close.png" );
@@ -3268,6 +3220,8 @@ class SkyIntrudersDialog extends Dialog
 
       this.actions = new HorizontalSizer;
       this.actions.spacing = 6;
+      this.actions.add( this.helpButton );
+      this.actions.addSpacing( 6 );
       this.actions.add( this.langLabel );
       this.actions.add( this.langCombo );
       this.actions.addSpacing( 12 );
@@ -3283,6 +3237,7 @@ class SkyIntrudersDialog extends Dialog
       this.sizer.add( this.taglineLabel );
       this.sizer.addSpacing( 2 );
       this.sizer.add( this.tabBox );
+      this.sizer.add( this.attributionCheck );
       this.sizer.add( this.inputGroup, 100 );
       this.sizer.add( this.actions );
 
@@ -3337,6 +3292,7 @@ class SkyIntrudersDialog extends Dialog
       var L = this.params.lang;
       this.buildLabel.toolTip = siProductUrl( L ) + " — build " + SKYINTRUDERS_BUILD;
       this.langCombo.toolTip = uiT( L, "languageTip" );
+      this.helpButton.toolTip = uiT( L, "helpTip" );
       this.langLabel.text = uiT( L, "language" );
       this.nightHint.text = uiT( L, "hintNight" );
       this.treasureHint.text = uiT( L, "hintTreasure" );
@@ -3373,6 +3329,8 @@ class SkyIntrudersDialog extends Dialog
       this.huntRow.toolTip = uiT( L, "huntForTip" );
       this.accentLabel.text = uiT( L, "accentColor" );
       this.accentButton.toolTip = uiT( L, "accentColorTip" );
+      this.attributionCheck.text = uiT( L, "attribution" );
+      this.attributionCheck.toolTip = uiT( L, "attributionTip" );
       this.inputGroup.title = uiT( L, "input" );
       this.addFilesButton.text = uiT( L, "addFiles" );
       this.addDirButton.text = uiT( L, "addFolder" );
@@ -3805,6 +3763,32 @@ function siConstructTest()
       siTrackTempFile( tmpProbe );
       siCleanupTempFiles();
       out.tempCleanupOk = !File.exists( tmpProbe ) && ( SI_SESSION_TEMP_FILES.length === 0 );
+
+      // Report attribution (CPD rule 6.4): the checkbox exists, is labelled in
+      // both languages, and drives params.reportAttribution both ways; the
+      // shipped default is off.
+      var wasAttr = d.params.reportAttribution;
+      d.params.lang = "fr";
+      d.applyLanguage();
+      var frAttr = d.attributionCheck.text;
+      d.params.lang = "en";
+      d.applyLanguage();
+      d.attributionCheck.onCheck( true );
+      var on = ( d.params.reportAttribution === true );
+      d.attributionCheck.onCheck( false );
+      out.attributionOk = on && ( d.params.reportAttribution === false ) &&
+                          ( d.attributionCheck.text === uiT( "en", "attribution" ) ) &&
+                          ( frAttr === uiT( "fr", "attribution" ) ) &&
+                          ( DEFAULT_PARAMS.reportAttribution === false ) &&
+                          ( siMergeSavedParams( {} ).reportAttribution === false );
+      d.params.reportAttribution = wasAttr;
+      // The documentation button, and the page it opens shipped next to the
+      // script when this runs from an installed package.
+      out.helpButtonOk = ( d.helpButton != null ) && ( d.helpButton.toolTip === uiT( "en", "helpTip" ) );
+      // Every check above must hold for the gate to pass.
+      for ( var ck in out )
+         if ( /Ok$/.test( ck ) && out[ ck ] !== true )
+            out.ok = false;
    }
    catch ( e )
    {
